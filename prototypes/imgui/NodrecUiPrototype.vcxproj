@@ -16,7 +16,7 @@
     <DependencyRoot>$(MSBuildThisFileDirectory)..\..\out\prototype-deps\</DependencyRoot>
     <ImGuiRoot>$(DependencyRoot)imgui\</ImGuiRoot>
     <NodeEditorRoot>$(DependencyRoot)imgui-node-editor\</NodeEditorRoot>
-    <OutDir>$(MSBuildThisFileDirectory)..\..\out\imgui-prototype\</OutDir>
+    <OutDir>$(MSBuildThisFileDirectory)..\..\out\imgui-interaction\</OutDir>
     <IntDir>$(OutDir)obj\</IntDir><TargetName>NodrecUiPrototype</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup>
@@ -32,11 +32,16 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="ui.cpp" />
+    <ClCompile Include="blueprint_node_builder.cpp" />
     <ClCompile Include="$(ImGuiRoot)imgui.cpp" /><ClCompile Include="$(ImGuiRoot)imgui_draw.cpp" />
     <ClCompile Include="$(ImGuiRoot)imgui_tables.cpp" /><ClCompile Include="$(ImGuiRoot)imgui_widgets.cpp" />
     <ClCompile Include="$(ImGuiRoot)backends\imgui_impl_win32.cpp" /><ClCompile Include="$(ImGuiRoot)backends\imgui_impl_dx11.cpp" />
     <ClCompile Include="$(NodeEditorRoot)crude_json.cpp" /><ClCompile Include="$(NodeEditorRoot)imgui_canvas.cpp" />
     <ClCompile Include="$(NodeEditorRoot)imgui_node_editor.cpp" /><ClCompile Include="$(NodeEditorRoot)imgui_node_editor_api.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="graph.h" /><ClInclude Include="ui.h" /><ClInclude Include="ui_state.h" /><ClInclude Include="ui_text.h" /><ClInclude Include="blueprint_node_builder.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

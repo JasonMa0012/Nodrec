@@ -32,7 +32,7 @@ $msbuild = & $vswhere -latest -products '*' -version '[17.0,18.0)' -find 'MSBuil
 if (-not $msbuild) { throw 'Visual Studio 2022 MSBuild was not found' }
 & $msbuild (Join-Path $PSScriptRoot 'NodrecUiPrototype.vcxproj') /m /nologo /verbosity:minimal /p:Configuration=Release /p:Platform=x64
 if ($LASTEXITCODE -ne 0) { throw 'Prototype build failed' }
-$executable = Join-Path $repoRoot 'out/imgui-prototype/NodrecUiPrototype.exe'
+$executable = Join-Path $repoRoot 'out/imgui-interaction/NodrecUiPrototype.exe'
 $selfCheck = Start-Process -FilePath $executable -ArgumentList '--self-test' -NoNewWindow -Wait -PassThru
 if ($selfCheck.ExitCode -ne 0) { throw 'Prototype self-check failed' }
 Write-Host ('Built and checked: ' + $executable)
