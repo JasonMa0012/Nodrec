@@ -1,0 +1,16 @@
+[package]
+name = "nodrec-desktop"
+version = "0.1.0"
+description = "Nodrec desktop UI prototype"
+authors = ["Nodrec"]
+edition = "2021"
+
+[lib]
+name = "nodrec_desktop_lib"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+

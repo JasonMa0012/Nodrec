@@ -2,9 +2,9 @@
 
 ## 当前方向
 
-用户于 2026-10-11 确认优先测试 **Dear ImGui + imgui-node-editor**，理由是依赖少、定制灵活及已有类 UE 蓝图实现，详见 [D001](decisions.md)。跨平台是明确后续目标，优先降低重复开发成本。
+用户于 2026-10-11 先确认 Dear ImGui + imgui-node-editor 用于快速验证节点交互（[D001](decisions.md)）。之后用户指出外层 UI 需要更现代，并于 2026-10-12 要求开始使用 **React + Tauri** 实现（[D002](decisions.md)）。当前桌面实现路线已切换；原生运行和内存测量完成前，不把它视为最终产品框架冻结。
 
-React／Tauri 与 Avalonia 保留为候选，当前不继续作为优先原型；最终产品框架尚未定案。
+当前节点画布使用 React Flow，因为用户接受替换为 Web 节点编辑器；这是现有实现的选择，后续可由体验与性能验证调整。
 
 ## Dear ImGui 路线的收益与成本
 
@@ -18,7 +18,7 @@ React／Tauri 与 Avalonia 保留为候选，当前不继续作为优先原型�
 
 依据：[Dear ImGui 定位与限制](https://github.com/ocornut/imgui)、[官方后端](https://github.com/ocornut/imgui/blob/master/docs/BACKENDS.md)、[节点编辑器](https://github.com/thedmd/imgui-node-editor)。
 
-## 当前原型与实际发现
+## Dear ImGui 原型与实际发现
 
 - 原型使用原版 ImGui 1.90.9 和节点编辑器 0.9.4 对应固定提交；构建入口、精确版本与证据见 [Desktop](modules/desktop.md)，不是“已支持最新版本”的结论。
 - 上游 Blueprints 示例依赖额外布局分支；原型采用原版控件验证接入，不整体移植该示例，也不把分支维护成本隐去。
