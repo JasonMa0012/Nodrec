@@ -1,21 +1,35 @@
-import { Fragment, useCallback, useState, type DragEvent, type ReactNode } from 'react'
+import { Fragment, useCallback, useMemo, useState, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core'
+import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragOverEvent, type DragStartEvent } from '@dnd-kit/core'
 import { Group, Panel, Separator } from 'react-resizable-panels'
+import { Responsive, useContainerWidth, verticalCompactor, type Layout } from 'react-grid-layout'
+import 'react-grid-layout/css/styles.css'
+import 'react-resizable/css/styles.css'
 import {
   AudioLines, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, Ellipsis, FileVideo2, Folder,
   FolderPlus, GripVertical, LayoutGrid, ListTree, Minus, Monitor, MousePointer2,
   Pin, Plus, Settings, Square, X, Workflow, Keyboard, Play, Pause, StopCircle,
 } from 'lucide-react'
 import GraphEditor from './GraphEditor'
+import { overviewCollisionDetection, overviewDropPlacement } from './overview-dnd'
 import {
-  allParameters, createBlueprint as makeBlueprint, exposeParameter, isPinned, moveParameterLayout, setPinned,
-  type Blueprint, type BlueprintSelection, type EditorTab, type ParameterDefinition, type ParameterDropPlacement, type ParameterRow, type TreeItem,
+  allParameters, createBlueprint as makeBlueprint, exposeParameter, isPinned, moveOverviewCardVertically, moveParameterLayout, overviewGridHeight, placeOverviewCardBeside, setPinned, swapOverviewCardPositions,
+  type Blueprint, type BlueprintSelection, type EditorTab, type OverviewLayouts, type ParameterDefinition, type ParameterDropPlacement, type ParameterRow, type TreeItem,
 } from './model'
 
 type Page = 'workspace' | 'runs' | 'settings'
 type NameDialog = { kind: 'new' | 'rename'; blueprintId?: string } | null
+type OverviewCardDropPlacement = 'left' | 'right' | 'above' | 'below'
+type OverviewDropInfo = { cardId: string | null; placement: OverviewCardDropPlacement | 'swap' | 'end' } | null
+const overviewWideBreakpoint = 900
+
+function useDragSensors() {
+  return useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  )
+}
 
 function isTauriWindow() { return '__TAURI_INTERNALS__' in window }
 function withWindow(action: 'minimize' | 'toggleMaximize' | 'close') {
@@ -167,8 +181,8 @@ function ParameterDropZone({ pinned, rows, blueprint, cardId, update, activeId }
   </section>
 }
 
-function ParameterField({ blueprint, definition, update, compact = false }: { blueprint: Blueprint; definition: ParameterDefinition; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; compact?: boolean }) {
-  return <label className={`parameter-field${compact ? ' compact' : ''}`}>
+function ParameterField({ blueprint, definition, update, compact = false, inline = false }: { blueprint: Blueprint; definition: ParameterDefinition; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; compact?: boolean; inline?: boolean }) {
+  return <label className={`parameter-field${compact ? ' compact' : ''}${inline ? ' inline' : ''}${definition.kind === 'boolean' ? ' boolean-field' : ''}`}>
     <span className="parameter-label">{definition.label}</span>
     <ParameterControl definition={definition} value={blueprint.values[definition.id] ?? definition.initial} onChange={(value) => update((current) => ({ ...current, values: { ...current.values, [definition.id]: value } }))} compact={compact} />
   </label>
@@ -178,26 +192,132 @@ function cardRows(blueprint: Blueprint, cardId: string, pinned?: boolean) {
   return (blueprint.layouts[cardId] ?? []).filter((row) => pinned === undefined || row.pinned === pinned)
 }
 
-function OverviewCard({ blueprint, cardId, update, openLayout }: { blueprint: Blueprint; cardId: string; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; openLayout: (cardId: string) => void }) {
+function OverviewCard({ blueprint, cardId, update, cardRef, dragProps, dragSource = false, dropTarget = false, dropPlacement, preview = false, dragHint }: { blueprint: Blueprint; cardId: string; update: BlueprintUpdate; cardRef?: (node: HTMLElement | null) => void; dragProps?: Record<string, unknown>; dragSource?: boolean; dropTarget?: boolean; dropPlacement?: OverviewCardDropPlacement | null; preview?: boolean; dragHint?: string }) {
   const card = blueprint.cards.find((item) => item.id === cardId)
   if (!card) return null
   const rows = cardRows(blueprint, cardId, true)
   const definitions = allParameters(blueprint)
-  return <section className="settings-card">
+  return <section ref={cardRef} className={`settings-card${dragSource ? ' drag-source' : ''}${dropTarget ? ' drop-target' : ''}${dropTarget && dropPlacement ? ` drop-target-${dropPlacement}` : ''}${preview ? ' drag-preview' : ''}`}>
+    {!preview && <button className="overview-card-drag-handle" type="button" title={`Move ${card.name}`} aria-label={`Move ${card.name}`} {...dragProps}><GripVertical size={20} /></button>}
+    {preview && dragHint && <span className="overview-drag-hint">{dragHint}</span>}
     <div className="settings-card-head">
       <div className="card-heading"><span className="card-symbol">{cardId === 'audio' ? <AudioLines size={17} /> : cardId === 'video' ? <FileVideo2 size={17} /> : cardId === 'input' ? <Keyboard size={17} /> : cardId === 'recording' ? <Monitor size={17} /> : <Folder size={17} />}</span><h2>{card.name}</h2></div>
-      <button className="icon-button" title="Card details" aria-label={`${card.name} details`} onClick={() => update((current) => ({ ...current, detailCard: cardId }))}><Ellipsis size={17} /></button>
+      <button className="icon-button" disabled={preview} title="Card details" aria-label={`${card.name} details`} onClick={() => update((current) => ({ ...current, detailCard: cardId }))}><Ellipsis size={17} /></button>
     </div>
     <div className="settings-card-body">
       {rows.length === 0 ? <div className="empty-card">No pinned parameters yet. Open details to show all.</div> : rows.map((row, index) => <div className="preview-row" key={`${cardId}-row-${index}`} style={{ gridTemplateColumns: parameterRowTemplate(row) }}>
         {row.columns.map((column) => {
           const definition = definitions.find((item) => item.id === column.id)
-          return definition ? <ParameterField key={column.id} blueprint={blueprint} definition={definition} update={update} compact /> : null
+          return definition ? <ParameterField key={column.id} blueprint={blueprint} definition={definition} update={update} compact inline /> : null
         })}
       </div>)}
     </div>
-    <button className="card-layout-shortcut" onClick={() => openLayout(cardId)}><LayoutGrid size={13} />Edit layout</button>
   </section>
+}
+
+function DraggableOverviewCard({ blueprint, cardId, update, activeCardId, dropInfo }: { blueprint: Blueprint; cardId: string; update: BlueprintUpdate; activeCardId: string | null; dropInfo: OverviewDropInfo }) {
+  const id = `overview:${cardId}`
+  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({ id, data: { cardId } })
+  const { setNodeRef: setDropRef } = useDroppable({ id, data: { cardId } })
+  const setNodeRef = useCallback((node: HTMLElement | null) => { setDragRef(node); setDropRef(node) }, [setDragRef, setDropRef])
+  const isTarget = dropInfo?.cardId === cardId && activeCardId !== cardId
+  const placement = isTarget && dropInfo && dropInfo.placement !== 'swap' && dropInfo.placement !== 'end' ? dropInfo.placement : null
+  return <OverviewCard blueprint={blueprint} cardId={cardId} update={update} cardRef={setNodeRef} dragProps={{ ...attributes, ...listeners }} dragSource={isDragging} dropTarget={isTarget} dropPlacement={placement} />
+}
+
+function OverviewEndDropZone({ active }: { active: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({ id: 'overview:end', data: { placement: 'end' } })
+  return <div ref={setNodeRef} className={`overview-end-drop-zone${active ? ' active' : ''}${isOver ? ' over' : ''}`}>{active ? 'Drop to move to end' : ''}</div>
+}
+
+function OverviewCards({ blueprint, update }: { blueprint: Blueprint; update: BlueprintUpdate }) {
+  const { width, containerRef, mounted } = useContainerWidth({ initialWidth: 1280, measureBeforeMount: true })
+  const [activeCardId, setActiveCardId] = useState<string | null>(null)
+  const [dropInfo, setDropInfo] = useState<OverviewDropInfo>(null)
+  const sensors = useDragSensors()
+  const pinnedRows = useMemo(() => Object.fromEntries(blueprint.cards.map((card) => [card.id, (blueprint.layouts[card.id] ?? []).filter((row) => row.pinned).length])), [blueprint.cards, blueprint.layouts])
+  const layouts = useMemo(() => Object.fromEntries(Object.entries(blueprint.overviewLayouts).map(([breakpoint, layout]) => {
+    const cols = breakpoint === 'wide' ? 12 : 1
+    const sized = (layout ?? []).map((item) => {
+      const rows = pinnedRows[item.i] ?? 0
+      return { ...item, h: overviewGridHeight(rows) }
+    })
+    return [breakpoint, verticalCompactor.compact(sized, cols)]
+  })), [blueprint.overviewLayouts, pinnedRows])
+  const onLayoutChange = useCallback((_layout: Layout, nextLayouts: OverviewLayouts) => {
+    update((current) => JSON.stringify(current.overviewLayouts) === JSON.stringify(nextLayouts) ? current : { ...current, overviewLayouts: nextLayouts })
+  }, [update])
+  const updateDropFeedback = (active: DragMoveEvent['active'], over: DragMoveEvent['over']) => {
+    const sourceId = active.data.current?.cardId
+    if (over?.id === 'overview:end') {
+      setDropInfo((current) => current?.placement === 'end' ? current : { cardId: null, placement: 'end' })
+      return
+    }
+    const targetId = over?.data.current?.cardId
+    if (typeof targetId !== 'string' || typeof sourceId !== 'string' || sourceId === targetId || !over) {
+      setDropInfo((current) => current === null ? current : null)
+      return
+    }
+    const detected = overviewDropPlacement(active.rect.current.translated, over.rect)
+    const placement = width >= overviewWideBreakpoint || detected === 'above' || detected === 'below' ? detected : null
+    const next: Exclude<OverviewDropInfo, null> = { cardId: targetId, placement: placement ?? 'swap' }
+    setDropInfo((current) => current?.cardId === next.cardId && current.placement === next.placement ? current : next)
+  }
+  const handleDragMove = ({ active, over }: DragMoveEvent) => updateDropFeedback(active, over)
+  const handleDragOver = ({ active, over }: DragOverEvent) => updateDropFeedback(active, over)
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    const sourceId = active.data.current?.cardId
+    const targetId = over?.data.current?.cardId
+    setActiveCardId(null)
+    setDropInfo(null)
+    if (typeof sourceId !== 'string') return
+    const breakpoint = width >= overviewWideBreakpoint ? 'wide' : 'narrow'
+    const cols = breakpoint === 'wide' ? 12 : 1
+    if (over?.id !== 'overview:end' && (typeof targetId !== 'string' || sourceId === targetId)) return
+    update((current) => {
+      const layout = current.overviewLayouts[breakpoint] ?? []
+      const detected = over?.id === 'overview:end' ? null : overviewDropPlacement(active.rect.current.translated, over!.rect)
+      const placement = cols > 1 || detected === 'above' || detected === 'below' ? detected : null
+      const moved = over?.id === 'overview:end'
+        ? moveOverviewCardVertically(layout, sourceId, null, 'end', cols)
+        : placement === 'left' || placement === 'right'
+          ? placeOverviewCardBeside(layout, sourceId, targetId as string, placement, cols)
+          : placement === 'above' || placement === 'below'
+            ? moveOverviewCardVertically(layout, sourceId, targetId as string, placement, cols)
+            : swapOverviewCardPositions(layout, sourceId, targetId as string)
+      return moved === layout ? current : { ...current, overviewLayouts: { ...current.overviewLayouts, [breakpoint]: verticalCompactor.compact(moved, cols) } }
+    })
+  }
+  const activeCard = blueprint.cards.find((card) => card.id === activeCardId)
+  const dropCard = blueprint.cards.find((card) => card.id === dropInfo?.cardId)
+  const dragHint = dropInfo?.placement === 'end' ? 'Move to end' : dropCard && dropInfo ? dropInfo.placement === 'swap' ? `Drop to swap with ${dropCard.name}` : `Insert ${dropInfo.placement} of ${dropCard.name}` : undefined
+
+  return <DndContext sensors={sensors} collisionDetection={overviewCollisionDetection} onDragStart={(event) => { setActiveCardId(String(event.active.data.current?.cardId ?? '')); setDropInfo(null) }} onDragMove={handleDragMove} onDragOver={handleDragOver} onDragCancel={() => { setActiveCardId(null); setDropInfo(null) }} onDragEnd={handleDragEnd}>
+    <div className={`settings-grid${dropInfo?.placement === 'end' ? ' drop-target-end' : ''}`} ref={containerRef}>
+    {mounted && <Responsive
+      className="overview-layout-grid"
+      layouts={layouts}
+      breakpoints={{ wide: overviewWideBreakpoint, narrow: 0 }}
+      cols={{ wide: 12, narrow: 1 }}
+      width={width}
+      rowHeight={8}
+      margin={{ wide: [14, 14], narrow: [0, 14] }}
+      containerPadding={[0, 0]}
+      dragConfig={{ enabled: false }}
+      resizeConfig={{ enabled: width >= overviewWideBreakpoint, handles: ['e', 'w'] }}
+      onLayoutChange={onLayoutChange}
+    >
+      {blueprint.cards.map((card) => {
+        const columns = width >= overviewWideBreakpoint ? 12 : 1
+        const item = layouts[columns === 12 ? 'wide' : 'narrow']?.find((entry) => entry.i === card.id)
+        const edgeClasses = [item?.x === 0 && 'overview-grid-left-edge', item && item.x + item.w >= columns && 'overview-grid-right-edge'].filter(Boolean).join(' ')
+        return <div key={card.id} className={edgeClasses}><DraggableOverviewCard blueprint={blueprint} cardId={card.id} update={update} activeCardId={activeCardId} dropInfo={dropInfo} /></div>
+      })}
+    </Responsive>}
+    <OverviewEndDropZone active={activeCardId !== null} />
+    </div>
+    {createPortal(<DragOverlay className="overview-drag-overlay" dropAnimation={null}>{activeCard && <OverviewCard blueprint={blueprint} cardId={activeCard.id} update={update} preview dragHint={dragHint} />}</DragOverlay>, document.body)}
+  </DndContext>
 }
 
 function CardDetails({ blueprint, update, close, editLayout }: { blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; close: () => void; editLayout: (id: string) => void }) {
@@ -230,10 +350,7 @@ function CardLayoutEditor({ blueprint, cardId, update }: { blueprint: Blueprint;
   const card = blueprint.cards.find((item) => item.id === cardId)
   const definitions = allParameters(blueprint)
   const [activeId, setActiveId] = useState<string | null>(null)
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor),
-  )
+  const sensors = useDragSensors()
   if (!card) return <div className="empty-state">This card is no longer available.</div>
   const handleDragStart = (event: DragStartEvent) => setActiveId(typeof event.active.data.current?.parameterId === 'string' ? event.active.data.current.parameterId : null)
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
@@ -421,9 +538,7 @@ function BlueprintContent({ blueprint, update, openCard }: { blueprint: Blueprin
     <GraphEditor blueprint={blueprint} update={update} selectNode={(id) => update((current) => ({ ...current, selectedNode: id, selection: id ? { kind: 'node', key: id } : null }))} />
     <DetailsPanel blueprint={blueprint} update={update} />
   </div>
-  return <main className="overview-page">
-    <div className="settings-grid">{blueprint.cards.map((card) => <OverviewCard key={card.id} blueprint={blueprint} cardId={card.id} update={update} openLayout={openCard} />)}</div>
-  </main>
+  return <main className="overview-page"><OverviewCards blueprint={blueprint} update={update} /></main>
 }
 
 function EmptyPage({ page }: { page: 'runs' | 'settings' }) {

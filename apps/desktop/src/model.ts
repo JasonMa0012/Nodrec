@@ -1,4 +1,5 @@
 import type { Edge, Node } from '@xyflow/react'
+import type { LayoutItem, ResponsiveLayouts } from 'react-grid-layout'
 
 export type Value = string | boolean
 export type ParameterKind = 'readonly' | 'text' | 'choice' | 'boolean'
@@ -12,6 +13,7 @@ export type ParameterDefinition = {
 export type ParameterColumn = { id: string; weight: number }
 export type ParameterRow = { pinned: boolean; columns: ParameterColumn[] }
 export type ParameterDropPlacement = 'above' | 'below' | 'left' | 'right' | 'end'
+export type OverviewLayouts = ResponsiveLayouts<'wide' | 'narrow'>
 export type ParameterCard = { id: string; name: string; parameters: string[] }
 export type TreeFolder = { id: string; name: string }
 export type TreeItem = { id: string; name: string; folderId: string }
@@ -28,6 +30,7 @@ export type Blueprint = {
   labels: Record<string, string>
   cards: ParameterCard[]
   customParameters: ParameterDefinition[]
+  overviewLayouts: OverviewLayouts
   eventFolders: TreeFolder[]
   functionFolders: TreeFolder[]
   variableFolders: TreeFolder[]
@@ -66,6 +69,117 @@ export const parameters: ParameterDefinition[] = [
   { id: 'mouse', label: 'Mouse input', kind: 'boolean', initial: true },
   { id: 'threshold', label: 'Pixel threshold', kind: 'choice', initial: 'Low tolerance', options: ['Exact', 'Low tolerance', 'Medium tolerance'] },
 ]
+
+export function overviewGridHeight(pinnedRows: number): number {
+  // shortcut: estimate card height from row count; measure content if controls become variable-height.
+  return Math.ceil((82 + pinnedRows * 48 + Math.max(0, pinnedRows - 1) * 11 + 14) / 22)
+}
+
+export function swapOverviewCardPositions(layout: readonly LayoutItem[], sourceId: string, targetId: string): readonly LayoutItem[] {
+  const source = layout.find((item) => item.i === sourceId)
+  const target = layout.find((item) => item.i === targetId)
+  if (!source || !target || sourceId === targetId) return layout
+  return layout.map((item) => item.i === sourceId ? { ...item, x: target.x, y: target.y } : item.i === targetId ? { ...item, x: source.x, y: source.y } : item)
+}
+
+export function placeOverviewCardBeside(layout: readonly LayoutItem[], sourceId: string, targetId: string, side: 'left' | 'right', cols: number): readonly LayoutItem[] {
+  const source = layout.find((item) => item.i === sourceId)
+  const target = layout.find((item) => item.i === targetId)
+  if (!source || !target || sourceId === targetId || cols < 2) return layout
+
+  const targetRow = layout.filter((item) => item.y === target.y && item.i !== sourceId).sort((a, b) => a.x - b.x)
+  const sourceColumn = { id: sourceId, weight: source.w }
+  const rows = moveParameterLayout([
+    { pinned: false, columns: targetRow.map((item) => ({ id: item.i, weight: item.w })) },
+    { pinned: false, columns: [sourceColumn] },
+  ], sourceId, targetId, side)
+  const columns = rows[0]?.columns
+  if (!columns || columns.reduce((sum, column) => sum + Math.max(1, layout.find((item) => item.i === column.id)?.minW ?? 1), 0) > cols) return layout
+
+  const widths = allocateOverviewWidths(columns, layout, cols)
+  let x = 0
+  const positions = new Map(columns.map((column, index) => {
+    const position = { x, w: widths[index] ?? 1 }
+    x += position.w
+    return [column.id, position] as const
+  }))
+  const pairHeight = Math.max(...columns.map(({ id }) => layout.find((item) => item.i === id)?.h ?? 1))
+  const nextLayout = layout.map((item) => {
+    const position = positions.get(item.i)
+    return position ? { ...item, ...position, y: target.y } : item
+  })
+  const placed = nextLayout.filter((item) => positions.has(item.i))
+  const overlaps = (a: LayoutItem, b: LayoutItem) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+
+  return nextLayout.map((item) => placed.some((placedItem) => placedItem.i !== item.i && overlaps(item, placedItem))
+    ? { ...item, y: Math.max(item.y, target.y + pairHeight) }
+    : item)
+}
+
+export function moveOverviewCardVertically(layout: readonly LayoutItem[], sourceId: string, targetId: string | null, placement: 'above' | 'below' | 'end', cols: number): readonly LayoutItem[] {
+  const source = layout.find((item) => item.i === sourceId)
+  if (!source || (placement !== 'end' && (!targetId || !layout.some((item) => item.i === targetId))) || sourceId === targetId || cols < 1) return layout
+
+  const grouped = new Map<number, LayoutItem[]>()
+  for (const item of layout) grouped.set(item.y, [...(grouped.get(item.y) ?? []), item])
+  const originalRows = [...grouped.values()].map((items) => items.sort((a, b) => a.x - b.x))
+  const rows = originalRows.map((items) => ({ pinned: false, columns: items.map(({ i, w }) => ({ id: i, weight: w })) }))
+  const movedRows = moveParameterLayout(rows, sourceId, targetId, placement)
+  if (movedRows === rows || movedRows.some((row) => row.columns.reduce((sum, { id }) => sum + Math.max(1, layout.find((item) => item.i === id)?.minW ?? 1), 0) > cols)) return layout
+
+  const byId = new Map(layout.map((item) => [item.i, item]))
+  let y = 0
+  return movedRows.flatMap((row) => {
+    const ids = row.columns.map(({ id }) => id)
+    const unchanged = !ids.includes(sourceId) && originalRows.find((items) => items.length === ids.length && items.every((item, index) => item.i === ids[index]))
+    const widths = unchanged ? null : allocateOverviewWidths(row.columns, layout, cols)
+    let x = 0
+    const items = row.columns.map((column, index) => {
+      const item = byId.get(column.id)!
+      const width = unchanged ? item.w : widths?.[index] ?? cols
+      const position = unchanged ? item.x : x
+      x += width
+      return { ...item, x: position, y, w: width }
+    })
+    y += Math.max(...items.map((item) => item.h))
+    return items
+  })
+}
+
+function allocateOverviewWidths(columns: ParameterColumn[], layout: readonly LayoutItem[], cols: number): number[] {
+  const minimums = columns.map(({ id }) => Math.max(1, layout.find((item) => item.i === id)?.minW ?? 1))
+  const minimumTotal = minimums.reduce((sum, width) => sum + width, 0)
+  const widths = Array(columns.length).fill(0) as number[]
+  const active = new Set(columns.map((_, index) => index))
+  let remaining = cols
+
+  while (active.size) {
+    const weightTotal = [...active].reduce((sum, index) => sum + (columns[index]?.weight ?? 0), 0)
+    const undersized = [...active].filter((index) => remaining * (columns[index]?.weight ?? 0) / weightTotal < (minimums[index] ?? 1))
+    if (!undersized.length) break
+    for (const index of undersized) {
+      widths[index] = minimums[index] ?? 1
+      remaining -= widths[index] ?? 1
+      active.delete(index)
+    }
+  }
+
+  if (minimumTotal > cols) return minimums
+  const weightTotal = [...active].reduce((sum, index) => sum + (columns[index]?.weight ?? 0), 0)
+  const fractions: { index: number; fraction: number }[] = []
+  for (const index of active) {
+    const exact = remaining * (columns[index]?.weight ?? 0) / weightTotal
+    widths[index] = Math.floor(exact)
+    fractions.push({ index, fraction: exact - (widths[index] ?? 0) })
+  }
+  let leftover = remaining - [...active].reduce((sum, index) => sum + (widths[index] ?? 0), 0)
+  fractions.sort((a, b) => b.fraction - a.fraction)
+  for (let index = 0; index < leftover; index++) {
+    const target = fractions[index % fractions.length]?.index
+    if (target !== undefined) widths[target] = (widths[target] ?? 0) + 1
+  }
+  return widths
+}
 
 const pinMap: Record<string, string[]> = {
   recording: ['display', 'region', 'cursor'],
@@ -113,9 +227,29 @@ export function createBlueprint(id: string, name: string, replay = false): Bluep
     pinned: pinMap[card.id]?.includes(parameter) ?? false,
     columns: [{ id: parameter, weight: 1 }],
   }))]))
+  const cardHeight = (cardId: string) => overviewGridHeight(layouts[cardId]?.filter((row) => row.pinned).length ?? 0)
+  const wide: LayoutItem[] = []
+  let wideY = 0
+  for (let index = 0; index < cards.length; index += 2) {
+    const left = cards[index]!
+    const right = cards[index + 1]
+    const leftHeight = cardHeight(left.id)
+    const rightHeight = right ? cardHeight(right.id) : 1
+    wide.push({ i: left.id, x: 0, y: wideY, w: 6, h: leftHeight, minW: 3, maxW: 12 })
+    if (right) wide.push({ i: right.id, x: 6, y: wideY, w: 6, h: rightHeight, minW: 3, maxW: 12 })
+    wideY += Math.max(leftHeight, rightHeight)
+  }
+  let narrowY = 0
+  const narrow: LayoutItem[] = cards.map((card) => {
+    const h = cardHeight(card.id)
+    const item = { i: card.id, x: 0, y: narrowY, w: 1, h, minW: 1, maxW: 1, isResizable: false }
+    narrowY += h
+    return item
+  })
+  const overviewLayouts: OverviewLayouts = { wide, narrow }
   const flow = graph()
   return {
-    id, name, replay, values, labels: Object.fromEntries(parameters.map((item) => [item.id, item.label])), cards, layouts, customParameters: [],
+    id, name, replay, values, labels: Object.fromEntries(parameters.map((item) => [item.id, item.label])), cards, layouts, overviewLayouts, customParameters: [],
     eventFolders: [{ id: 'recording', name: 'Recording' }],
     functionFolders: [{ id: 'utilities', name: 'Utilities' }],
     variableFolders: [{ id: 'capture', name: 'Capture' }, { id: 'video', name: 'Video' }, { id: 'audio', name: 'Audio' }, { id: 'output', name: 'Output' }, ...(replay ? [{ id: 'input', name: 'Input' }] : [])],

@@ -12,6 +12,15 @@
 - 卡片参数拖动修复（2026-10-12）：前端构建、lint、Tauri Release x64 构建通过；Release 实际鼠标拖动确认参数排序、跨固定区并同步图钉、拖成同行及调整列宽。切回 Overview 和卡片详情确认共用布局一致。窗口缩放断点、键盘交互与变量拖入卡片仍待验证。
 - 可复现入口见 prototypes/imgui/build.ps1；构建脚本运行 Release x64 并执行模型自检，不自动启动交互窗口。
 
+## Overview 卡片拖动验证（2026-10-13）
+
+- 入口：在 `apps/desktop` 执行 `npm run test:overview-drag`；需先构建 Release。脚本启动 Nodrec Release 窗口，在回环地址开启临时 WebView2 DevTools 端口，用 CDP `Input.dispatchMouseEvent` 验证同行插入、上方／下方／末尾插入、宽度把手显隐及样式。截图在忽略目录 `out/ui-tests/overview-drag-*.png`。
+- 根因：DPR 2.25 时 viewport 为 1200×760 CSS px，Overview 内容宽约 950 px（实测 961 px）。1250 px 断点让窗口始终单列，拖动命中正常但侧向插入分支被关闭。降至 900 CSS px，并等容器测量完成后显示网格后，自动化验证 Audio 成功插到 Recording settings 右侧。
+- Release 拖动验收曾发现底部空白区没有实际落点：落点的 `useDroppable` 在所属 `DndContext` 外调用，未进入碰撞注册。移入 DnD 子组件后，运行时 rect 列表包含 `overview:end`，可在卡片区外追加到末尾。
+- `npm run lint`、12 项模型测试、TypeScript／Vite、Tauri Release x64 和 WebView 拖动脚本通过。实测 1200×760 CSS px、DPR 2.25：三卡同行铺满网格；上下插入及末尾追加均有预览、指示并改变布局；卡片中央悬停时缩放把手隐藏、靠近边缘时显示，斜纹已移除。CDP 验证 Tauri WebView 鼠标事件／DOM 链路，不代表物理鼠标硬件或窗口标题栏输入。
+- Overview Inline Rows 采用同一 Release 脚本注入长参数名验收：标签完整换行、编辑控件收窄但不小于 84px，卡片内无裁切；编译、模型测试和 Release 构建结果见 Desktop 模块当次记录。
+- Overview 宽度把手复验（2026-10-13）：Release WebView 鼠标事件验证 84px 把手／52px 握柄居中显示在卡片间隙、宽度拖动生效且占位提示为蓝色；释放后 Overview 无横向溢出。外侧列把手保持在卡片边缘内。
+
 | ID | 验证方向 |
 | --- | --- |
 | T01 | 参数连线、事件、函数和子图能运行；无效图可解释；预设使用真实工作流 |
@@ -24,5 +33,6 @@
 | T08 | 简单界面可完成流程，节点可编辑；英文 UI、多语言准备、键盘与无障碍 |
 | T09 | 真实 MCP 客户端完成编辑→录制→回放→帧／报告查询；覆盖 UI 产品能力 |
 | T10 | 核心的平台依赖边界；不支持能力、设备变化、运行退出和数据重载 |
+| T11 | Overview 卡片可拖动重排和调宽；宽屏／窄屏切换、蓝图切换后各自布局保留，详情值和卡片布局同步 |
 
 真实运行记录目标应用、OS、硬件、权限及必要的初始状态。单测、编译和硬件／界面运行验证分别报告；未测的环境保留限制说明。实际测试入口与结果由相关模块文档维护。

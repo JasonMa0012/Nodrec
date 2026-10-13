@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test:model": "node --experimental-strip-types --test src/model.test.mjs",
+    "test:overview-drag": "node scripts/verify-overview-drag.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -20,6 +21,7 @@
     "lucide-react": "^1.55.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-grid-layout": "^2.3.0",
     "react-resizable-panels": "^4.14.4"
   },
   "devDependencies": {
