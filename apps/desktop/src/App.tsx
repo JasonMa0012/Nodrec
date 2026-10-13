@@ -1,12 +1,12 @@
-import { Fragment, useCallback, useMemo, useState, type DragEvent, type ReactNode } from 'react'
+import { Fragment, useCallback, useState, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core'
 import { Group, Panel, Separator } from 'react-resizable-panels'
 import {
   AudioLines, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, Ellipsis, FileVideo2, Folder,
-  FolderPlus, GripVertical, Home, LayoutGrid, ListTree, Minus, Monitor, MousePointer2,
-  Pin, Plus, Search, Settings, Square, X, Workflow, ArrowLeftRight, Keyboard, Play, Pause, StopCircle,
+  FolderPlus, GripVertical, LayoutGrid, ListTree, Minus, Monitor, MousePointer2,
+  Pin, Plus, Settings, Square, X, Workflow, Keyboard, Play, Pause, StopCircle,
 } from 'lucide-react'
 import GraphEditor from './GraphEditor'
 import {
@@ -16,12 +16,6 @@ import {
 
 type Page = 'workspace' | 'runs' | 'settings'
 type NameDialog = { kind: 'new' | 'rename'; blueprintId?: string } | null
-const appPages = [
-  { id: 'overview' as const, label: 'Overview', icon: Home },
-  { id: 'blueprints' as const, label: 'Blueprints', icon: Workflow },
-  { id: 'runs' as const, label: 'Runs', icon: Clock3 },
-  { id: 'settings' as const, label: 'Settings', icon: Settings },
-]
 
 function isTauriWindow() { return '__TAURI_INTERNALS__' in window }
 function withWindow(action: 'minimize' | 'toggleMaximize' | 'close') {
@@ -30,15 +24,30 @@ function withWindow(action: 'minimize' | 'toggleMaximize' | 'close') {
   void appWindow[action]().catch((error) => console.error(`Tauri window ${action} failed`, error))
 }
 
-function TitleBar({ title, sidebarOpen, toggleSidebar }: { title: string; sidebarOpen: boolean; toggleSidebar: () => void }) {
+function TitleBar({ blueprint, update, sidebarOpen, toggleSidebar, navigate }: { blueprint: Blueprint; update: BlueprintUpdate; sidebarOpen: boolean; toggleSidebar: () => void; navigate: (page: Page) => void }) {
   const dragWindow = () => { if (isTauriWindow()) void getCurrentWindow().startDragging().catch((error) => console.error('Tauri window dragging failed', error)) }
-  return <header className="titlebar" data-tauri-drag-region onMouseDown={(event) => { if (event.button === 0 && !(event.target as HTMLElement).closest('button')) dragWindow() }} onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest('button')) withWindow('toggleMaximize') }}>
-    <div className="title-left">
-      <div className="brand-mark" data-tauri-drag-region><span>N</span></div>
-      <span className="brand-name" data-tauri-drag-region>NODREC</span>
-      <button className="icon-button sidebar-toggle" title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'} aria-label="Toggle sidebar" onClick={toggleSidebar}><PanelGlyph collapsed={!sidebarOpen} /></button>
+  const setRecordingState = (action: 'start' | 'pause' | 'stop') => update((current) => ({ ...current, recordState: action === 'start' ? 'recording' : action === 'stop' ? 'ready' : current.recordState === 'recording' ? 'paused' : 'recording' }))
+  const active = blueprint.recordState === 'recording'
+  return <header className="titlebar" data-tauri-drag-region onMouseDown={(event) => { if (event.button === 0 && !(event.target as HTMLElement).closest('button, summary, a, input, select')) dragWindow() }} onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest('button, summary, a, input, select')) withWindow('toggleMaximize') }}>
+    <div className="titlebar-start">
+      <details className="brand-menu">
+        <summary className="brand-menu-trigger" aria-label="Open Nodrec menu"><span className="brand-mark"><span>N</span></span><span className="brand-name">NODREC</span><ChevronDown size={13} /></summary>
+        <div className="brand-menu-popover">
+          <button onClick={(event) => { navigate('workspace'); event.currentTarget.closest('details')?.removeAttribute('open') }}><Workflow size={14} />Workspace</button>
+          <button onClick={(event) => { navigate('runs'); event.currentTarget.closest('details')?.removeAttribute('open') }}><Clock3 size={14} />Runs</button>
+          <button onClick={(event) => { navigate('settings'); event.currentTarget.closest('details')?.removeAttribute('open') }}><Settings size={14} />Settings</button>
+        </div>
+      </details>
+      <button className="icon-button sidebar-toggle" title={sidebarOpen ? 'Collapse blueprint list' : 'Expand blueprint list'} aria-label="Toggle blueprint list" onClick={toggleSidebar}><PanelGlyph collapsed={!sidebarOpen} /></button>
+      <span className="titlebar-divider" />
+      <div className="titlebar-recording-actions">
+        <button className="button secondary" title="Select region" onClick={() => undefined}><MousePointer2 size={14} /><span>Select Region</span></button>
+        <button className={`button primary${active ? ' recording' : ''}`} onClick={() => setRecordingState('start')}>{active ? <><span className="live-dot" /><span>Recording</span></> : <><Play size={14} fill="currentColor" /><span>Start recording</span></>}</button>
+        <button className="button secondary" title={blueprint.recordState === 'paused' ? 'Resume recording' : 'Pause recording'} disabled={blueprint.recordState === 'ready'} onClick={() => setRecordingState('pause')}>{blueprint.recordState === 'paused' ? <Play size={13} /> : <Pause size={13} />}<span>{blueprint.recordState === 'paused' ? 'Resume' : 'Pause'}</span></button>
+        <button className="button secondary" disabled={blueprint.recordState === 'ready'} onClick={() => setRecordingState('stop')}><StopCircle size={14} /><span>Stop</span></button>
+      </div>
     </div>
-    <div className="window-title" data-tauri-drag-region>{title}</div>
+    <div className="titlebar-drag-space" data-tauri-drag-region />
     <div className="window-controls">
       <button aria-label="Minimize" onClick={() => withWindow('minimize')}><Minus size={14} /></button>
       <button aria-label="Maximize" onClick={() => withWindow('toggleMaximize')}><Square size={12} /></button>
@@ -393,20 +402,6 @@ function DetailsPanel({ blueprint, update, compact = false }: { blueprint: Bluep
   </aside>
 }
 
-function RecordingBar({ blueprint, update }: { blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void }) {
-  const setState = (action: 'start' | 'pause' | 'stop') => update((current) => ({ ...current, recordState: action === 'start' ? 'recording' : action === 'stop' ? 'ready' : current.recordState === 'recording' ? 'paused' : 'recording' }))
-  const active = blueprint.recordState === 'recording'
-  return <div className="recording-bar">
-    <div className="recording-actions">
-      <button className="button secondary" onClick={() => undefined}><MousePointer2 size={15} />Select Region</button>
-      <button className={`button primary${active ? ' recording' : ''}`} onClick={() => setState('start')}>{active ? <><span className="live-dot" />Recording</> : <><Play size={14} fill="currentColor" />Start recording</>}</button>
-      <button className="button secondary" disabled={blueprint.recordState === 'ready'} onClick={() => setState('pause')}>{blueprint.recordState === 'paused' ? <Play size={13} /> : <Pause size={13} />}{blueprint.recordState === 'paused' ? 'Resume' : 'Pause'}</button>
-      <button className="button secondary" disabled={blueprint.recordState === 'ready'} onClick={() => setState('stop')}><StopCircle size={14} />Stop</button>
-    </div>
-    <div className="recording-state"><span className={active ? 'status-live' : ''} /><span>Screen: {blueprint.recordState}</span><i />Audio: {blueprint.recordState === 'ready' ? 'ready' : blueprint.recordState}</div>
-  </div>
-}
-
 function CardDetailsPreview({ blueprint, update }: { blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void }) {
   const card = blueprint.cards.find((item) => item.id === blueprint.detailCard)
   return card ? <CardDetails blueprint={blueprint} update={update} close={() => update((current) => ({ ...current, detailCard: null }))} editLayout={(id) => {
@@ -427,7 +422,6 @@ function BlueprintContent({ blueprint, update, openCard }: { blueprint: Blueprin
     <DetailsPanel blueprint={blueprint} update={update} />
   </div>
   return <main className="overview-page">
-    <div className="page-heading"><div><span className="eyebrow">WORKSPACE</span><h1>Overview</h1><p>Capture and playback presets for repeatable desktop workflows.</p></div><div className="heading-badge"><span className="badge-dot" />Example blueprint</div></div>
     <div className="settings-grid">{blueprint.cards.map((card) => <OverviewCard key={card.id} blueprint={blueprint} cardId={card.id} update={update} openLayout={openCard} />)}</div>
   </main>
 }
@@ -453,10 +447,8 @@ export default function App() {
   const [dialog, setDialog] = useState<NameDialog>(null)
   const [menuBlueprint, setMenuBlueprint] = useState<string | null>(null)
   const [undoBlueprint, setUndoBlueprint] = useState<Blueprint | null>(null)
-  const [search, setSearch] = useState('')
   const activeBlueprint = blueprints.find((blueprint) => blueprint.id === activeBlueprintId) ?? blueprints[0]
   const updateBlueprint = useCallback((value: Blueprint | ((current: Blueprint) => Blueprint)) => setBlueprints((current) => current.map((blueprint) => blueprint.id === activeBlueprintId ? (typeof value === 'function' ? value(blueprint) : value) : blueprint)), [activeBlueprintId])
-  const filteredBlueprints = useMemo(() => blueprints.filter((blueprint) => blueprint.name.toLowerCase().includes(search.toLowerCase())), [blueprints, search])
 
   const openTab = (kind: EditorTab['kind'], cardId?: string) => {
     updateBlueprint((current) => {
@@ -471,12 +463,7 @@ export default function App() {
     const tabs = current.tabs.filter((tab) => tab.id !== tabId)
     return { ...current, tabs, activeTab: current.activeTab === tabId ? tabs[Math.max(0, current.tabs.findIndex((tab) => tab.id === tabId) - 1)]?.id ?? 'overview' : current.activeTab }
   })
-  const selectPage = (id: (typeof appPages)[number]['id']) => {
-    if (id === 'runs' || id === 'settings') { setPage(id); return }
-    setPage('workspace')
-    if (id === 'overview') selectTab('overview')
-    else openTab('blueprint')
-  }
+  const selectPage = (nextPage: Page) => setPage(nextPage)
   const createBlueprint = (name: string) => {
     const id = `blueprint-${crypto.randomUUID().slice(0, 8)}`
     const blueprint = makeBlueprint(id, name)
@@ -507,34 +494,22 @@ export default function App() {
   }
 
   if (!activeBlueprint) return null
-  const activeTab = activeBlueprint.tabs.find((tab) => tab.id === activeBlueprint.activeTab) ?? activeBlueprint.tabs[0]
-  const title = page === 'runs' ? 'Runs' : page === 'settings' ? 'Settings' : activeBlueprint.name
   return <div className="desktop-window">
-    <TitleBar title={title} sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((current) => !current)} />
+    <TitleBar blueprint={activeBlueprint} update={updateBlueprint} sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((current) => !current)} navigate={selectPage} />
     <div className={`app-layout${sidebarOpen ? '' : ' sidebar-collapsed'}`}>
-      <nav className="app-rail" aria-label="Main navigation">
-        <div className="rail-spacer" />
-        {appPages.map(({ id, label, icon: Icon }) => <button key={id} className={`rail-item${(page === 'runs' ? id === 'runs' : page === 'settings' ? id === 'settings' : id === 'blueprints' ? activeTab.kind !== 'overview' : activeTab.kind === 'overview') ? ' active' : ''}`} title={label} aria-label={label} onClick={() => selectPage(id)}><Icon size={18} /><span>{label}</span></button>)}
-        <div className="rail-bottom"><button className="user-avatar" title="Jason">JM</button></div>
-      </nav>
       <aside className="blueprint-sidebar">
-        {page === 'workspace' ? <>
-          <div className="sidebar-heading"><div><span className="eyebrow">PROJECT</span><h2>Blueprints</h2></div><button className="icon-button" title="Collapse panel" onClick={() => setSidebarOpen(false)}><ArrowLeftRight size={15} /></button></div>
-          <label className="sidebar-search"><Search size={14} /><input value={search} placeholder="Find a blueprint" onChange={(event) => setSearch(event.target.value)} />{search && <button aria-label="Clear search" onClick={() => setSearch('')}><X size={12} /></button>}</label>
-          <div className="blueprint-list">{filteredBlueprints.map((blueprint) => <div className={`blueprint-nav-item${blueprint.id === activeBlueprintId ? ' active' : ''}`} key={blueprint.id}>
-            <button className="blueprint-select" onClick={() => { setActiveBlueprintId(blueprint.id); setMenuBlueprint(null) }}><span className="blueprint-icon"><Workflow size={15} /></span><span className="blueprint-name">{blueprint.name}</span></button>
+        <div className="blueprint-list">{blueprints.map((blueprint) => <div className={`blueprint-nav-item${blueprint.id === activeBlueprintId ? ' active' : ''}`} key={blueprint.id}>
+            <button className="blueprint-select" onClick={() => { setActiveBlueprintId(blueprint.id); setPage('workspace'); setMenuBlueprint(null) }}><span className="blueprint-icon"><Workflow size={15} /></span><span className="blueprint-name">{blueprint.name}</span></button>
             <button className="blueprint-edit" title="Edit blueprint" aria-label={`Edit ${blueprint.name}`} onClick={() => { setActiveBlueprintId(blueprint.id); openTab('blueprint') }}><ListTree size={14} /></button>
             <div className="blueprint-more-wrap"><button className="blueprint-more" title="More actions" aria-label={`More actions for ${blueprint.name}`} onClick={() => setMenuBlueprint((value) => value === blueprint.id ? null : blueprint.id)}><Ellipsis size={16} /></button>
               {menuBlueprint === blueprint.id && <div className="context-menu"><button onClick={() => { setActiveBlueprintId(blueprint.id); setDialog({ kind: 'rename', blueprintId: blueprint.id }); setMenuBlueprint(null) }}>Rename</button><button onClick={() => duplicateBlueprint(blueprint.id)}><Copy size={13} />Duplicate</button><button className="danger-action" disabled={blueprints.length < 2} onClick={() => removeBlueprint(blueprint.id)}>Delete</button></div>}
             </div>
           </div>)}</div>
-          <button className="new-blueprint" onClick={() => setDialog({ kind: 'new' })}><Plus size={15} />New blueprint</button>
-          {undoBlueprint && <button className="undo-delete" onClick={undoDelete}><span>{undoBlueprint.name} deleted</span><b>Undo</b></button>}
-        </> : <div className="sidebar-empty"><div className="brand-mark small"><span>N</span></div><span className="eyebrow">NODREC</span><p>Select Overview or Blueprints to return to your workspace.</p></div>}
+        <button className="new-blueprint" onClick={() => setDialog({ kind: 'new' })}><Plus size={15} />New blueprint</button>
+        {undoBlueprint && <button className="undo-delete" onClick={undoDelete}><span>{undoBlueprint.name} deleted</span><b>Undo</b></button>}
       </aside>
       <section className="work-area">
         {page === 'workspace' ? <>
-          <RecordingBar blueprint={activeBlueprint} update={updateBlueprint} />
           <div className="workspace-tabs"><div className="tabs-list">{activeBlueprint.tabs.map((tab) => <div className={`workspace-tab${tab.id === activeBlueprint.activeTab ? ' active' : ''}`} key={tab.id}>
             <button onClick={() => selectTab(tab.id)}>{tab.kind === 'overview' ? 'Overview' : tab.kind === 'blueprint' ? 'Blueprint' : activeBlueprint.cards.find((card) => card.id === tab.cardId)?.name ?? 'Card'}</button>
             {tab.kind !== 'overview' && <button className="tab-close" aria-label={`Close ${tab.kind} tab`} onClick={() => closeTab(tab.id)}><X size={12} /></button>}
