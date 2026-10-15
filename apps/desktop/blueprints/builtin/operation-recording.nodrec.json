@@ -1,0 +1,540 @@
+{
+  "id": "operation-recording",
+  "name": "Operation recording",
+  "replay": true,
+  "values": {
+    "display": "Display 1 · 2560 × 1440",
+    "region": "x: 0, y: 0, w: 2560, h: 1440",
+    "cursor": true,
+    "delay": "0",
+    "resolution": "1920 × 1080",
+    "fps": "60",
+    "encoder": "H.264",
+    "bitrate": "20",
+    "systemAudio": true,
+    "microphone": false,
+    "device": "System default",
+    "sampleRate": "48 kHz",
+    "output": "C:/Recordings",
+    "filename": "{blueprint}_{timestamp}",
+    "pointer": "Semantic + absolute fallback",
+    "keyboard": true,
+    "mouse": true,
+    "threshold": "Low tolerance"
+  },
+  "labels": {
+    "display": "Display",
+    "region": "Region",
+    "cursor": "Show cursor",
+    "delay": "Start delay (s)",
+    "resolution": "Resolution",
+    "fps": "Frame rate",
+    "encoder": "Encoder",
+    "bitrate": "Bitrate (Mbps)",
+    "systemAudio": "System audio",
+    "microphone": "Microphone",
+    "device": "Device",
+    "sampleRate": "Sample rate",
+    "output": "Output folder",
+    "filename": "Filename pattern",
+    "pointer": "Pointer mode",
+    "keyboard": "Keyboard input",
+    "mouse": "Mouse input",
+    "threshold": "Pixel threshold"
+  },
+  "cards": [
+    {
+      "id": "recording",
+      "name": "Recording settings",
+      "parameters": [
+        "display",
+        "region",
+        "cursor",
+        "delay"
+      ]
+    },
+    {
+      "id": "video",
+      "name": "Video",
+      "parameters": [
+        "resolution",
+        "fps",
+        "encoder",
+        "bitrate"
+      ]
+    },
+    {
+      "id": "audio",
+      "name": "Audio",
+      "parameters": [
+        "systemAudio",
+        "microphone",
+        "device",
+        "sampleRate"
+      ]
+    },
+    {
+      "id": "output",
+      "name": "Output",
+      "parameters": [
+        "output",
+        "filename"
+      ]
+    },
+    {
+      "id": "input",
+      "name": "Input recording",
+      "parameters": [
+        "pointer",
+        "keyboard",
+        "mouse"
+      ]
+    },
+    {
+      "id": "verification",
+      "name": "Replay & verification",
+      "parameters": [
+        "threshold"
+      ]
+    }
+  ],
+  "layouts": {
+    "recording": [
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "display",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "region",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "cursor",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "delay",
+            "weight": 1
+          }
+        ]
+      }
+    ],
+    "video": [
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "resolution",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "fps",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "encoder",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "bitrate",
+            "weight": 1
+          }
+        ]
+      }
+    ],
+    "audio": [
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "systemAudio",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "microphone",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "device",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "sampleRate",
+            "weight": 1
+          }
+        ]
+      }
+    ],
+    "output": [
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "output",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "filename",
+            "weight": 1
+          }
+        ]
+      }
+    ],
+    "input": [
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "pointer",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "keyboard",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "mouse",
+            "weight": 1
+          }
+        ]
+      }
+    ],
+    "verification": [
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "threshold",
+            "weight": 1
+          }
+        ]
+      }
+    ]
+  },
+  "overviewLayouts": {
+    "wide": [
+      {
+        "i": "recording",
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 12,
+        "minW": 3,
+        "maxW": 12
+      },
+      {
+        "i": "video",
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 10,
+        "minW": 3,
+        "maxW": 12
+      },
+      {
+        "i": "audio",
+        "x": 0,
+        "y": 12,
+        "w": 6,
+        "h": 10,
+        "minW": 3,
+        "maxW": 12
+      },
+      {
+        "i": "output",
+        "x": 6,
+        "y": 12,
+        "w": 6,
+        "h": 7,
+        "minW": 3,
+        "maxW": 12
+      },
+      {
+        "i": "input",
+        "x": 0,
+        "y": 22,
+        "w": 6,
+        "h": 12,
+        "minW": 3,
+        "maxW": 12
+      },
+      {
+        "i": "verification",
+        "x": 6,
+        "y": 22,
+        "w": 6,
+        "h": 7,
+        "minW": 3,
+        "maxW": 12
+      }
+    ],
+    "narrow": [
+      {
+        "i": "recording",
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 12,
+        "minW": 1,
+        "maxW": 1,
+        "isResizable": false
+      },
+      {
+        "i": "video",
+        "x": 0,
+        "y": 12,
+        "w": 1,
+        "h": 10,
+        "minW": 1,
+        "maxW": 1,
+        "isResizable": false
+      },
+      {
+        "i": "audio",
+        "x": 0,
+        "y": 22,
+        "w": 1,
+        "h": 10,
+        "minW": 1,
+        "maxW": 1,
+        "isResizable": false
+      },
+      {
+        "i": "output",
+        "x": 0,
+        "y": 32,
+        "w": 1,
+        "h": 7,
+        "minW": 1,
+        "maxW": 1,
+        "isResizable": false
+      },
+      {
+        "i": "input",
+        "x": 0,
+        "y": 39,
+        "w": 1,
+        "h": 12,
+        "minW": 1,
+        "maxW": 1,
+        "isResizable": false
+      },
+      {
+        "i": "verification",
+        "x": 0,
+        "y": 51,
+        "w": 1,
+        "h": 7,
+        "minW": 1,
+        "maxW": 1,
+        "isResizable": false
+      }
+    ]
+  },
+  "customParameters": [],
+  "eventFolders": [
+    {
+      "id": "recording",
+      "name": "Recording"
+    }
+  ],
+  "functionFolders": [
+    {
+      "id": "utilities",
+      "name": "Utilities"
+    }
+  ],
+  "variableFolders": [
+    {
+      "id": "capture",
+      "name": "Capture"
+    },
+    {
+      "id": "video",
+      "name": "Video"
+    },
+    {
+      "id": "audio",
+      "name": "Audio"
+    },
+    {
+      "id": "output",
+      "name": "Output"
+    },
+    {
+      "id": "input",
+      "name": "Input"
+    }
+  ],
+  "events": [
+    {
+      "id": "event-initialize",
+      "name": "On Initialize",
+      "folderId": "recording"
+    },
+    {
+      "id": "event-operation-preview",
+      "name": "On Start Operation Recording",
+      "folderId": "recording"
+    }
+  ],
+  "functions": [
+    {
+      "id": "function-path",
+      "name": "Prepare Output Path",
+      "folderId": "utilities"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "initialize",
+      "type": "event",
+      "position": {
+        "x": 40,
+        "y": 40
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Initialize",
+        "config": {
+          "eventId": "event-initialize"
+        }
+      }
+    },
+    {
+      "id": "register-operations",
+      "type": "register_control",
+      "position": {
+        "x": 360,
+        "y": 40
+      },
+      "data": {
+        "kind": "register_control",
+        "label": "Register Operation Control",
+        "config": {
+          "control": {
+            "id": "record-operations",
+            "label": "Record operations",
+            "icon": "mouse-pointer-2",
+            "eventId": "event-operation-preview",
+            "enabled": false,
+            "order": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "event-operation-preview",
+      "type": "event",
+      "position": {
+        "x": 40,
+        "y": 260
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Start Operation Recording",
+        "config": {
+          "eventId": "event-operation-preview"
+        }
+      }
+    },
+    {
+      "id": "log-operation-preview",
+      "type": "log",
+      "position": {
+        "x": 360,
+        "y": 260
+      },
+      "data": {
+        "kind": "log",
+        "label": "Log Operation Preview",
+        "config": {
+          "message": "Operation recording is not implemented yet"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-initialize-register",
+      "source": "initialize",
+      "sourceHandle": "out:flow",
+      "target": "register-operations",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-operation-log",
+      "source": "event-operation-preview",
+      "sourceHandle": "out:flow",
+      "target": "log-operation-preview",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    }
+  ],
+  "supported": false,
+  "schemaVersion": 1
+}

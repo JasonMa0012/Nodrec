@@ -9,6 +9,7 @@ const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const executable = path.join(desktop, 'src-tauri', 'target', 'release', 'nodrec-desktop.exe')
 const port = Number(process.env.NODREC_CDP_PORT ?? 9331)
 const endpoint = `http://127.0.0.1:${port}`
+const webviewDataDirectory = path.join(desktop, 'src-tauri', 'target', 'release', `webview2-test-${port}`)
 const artifacts = path.resolve(desktop, '..', '..', 'out', 'ui-tests')
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`Invalid NODREC_CDP_PORT: ${port}`)
 try {
@@ -18,7 +19,7 @@ try {
   if (error.message.startsWith('Refusing')) throw error
 }
 const app = spawn(executable, [], {
-  env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
+  env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: webviewDataDirectory, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
   stdio: 'pipe',
   windowsHide: false,
 })
@@ -81,7 +82,7 @@ try {
     const card = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(item => item.querySelector('.settings-card-head h2')?.textContent === 'Recording settings')
     const field = card?.querySelector('.parameter-field.inline')
     const label = field?.querySelector('.parameter-label')
-    const control = field?.querySelector(':scope > .field-control, :scope > .readonly-value')
+    const control = field?.querySelector('.parameter-control-wrap > .field-control, .parameter-control-wrap > .readonly-value')
     if (!card || !field || !label || !control) return null
     const rect = element => { const value = element.getBoundingClientRect(); return { x: value.x, right: value.right, width: value.width, height: value.height } }
     const before = { label: rect(label), control: rect(control) }
@@ -100,7 +101,7 @@ try {
     label.textContent = original
     return { before, after }
   })()`)
-  if (!longLabelProbe || longLabelProbe.after.fullText !== longLabel || longLabelProbe.after.horizontalOverflow || longLabelProbe.after.verticalOverflow || longLabelProbe.after.whiteSpace !== 'normal' || longLabelProbe.after.control.width < 83 || longLabelProbe.after.control.x < longLabelProbe.after.label.right + 8 || longLabelProbe.after.control.right > longLabelProbe.after.field.right + 1 || longLabelProbe.after.control.width >= longLabelProbe.before.control.width || longLabelProbe.after.cardClipped) throw new Error('Long parameter labels must wrap fully while shrinking the editor without clipping the card.')
+  if (!longLabelProbe || longLabelProbe.after.fullText !== longLabel || longLabelProbe.after.horizontalOverflow || longLabelProbe.after.verticalOverflow || longLabelProbe.after.whiteSpace !== 'normal' || longLabelProbe.after.control.width < 83 || longLabelProbe.after.control.x < longLabelProbe.after.label.right + 8 || longLabelProbe.after.control.right > longLabelProbe.after.field.right + 1 || longLabelProbe.after.control.width >= longLabelProbe.before.control.width || longLabelProbe.after.cardClipped) throw new Error(`Long parameter labels must wrap fully while shrinking the editor without clipping the card: ${JSON.stringify(longLabelProbe)}`)
   const resizeProbe = await evaluate(`(() => {
     const card = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(card => card.querySelector('.settings-card-head h2')?.textContent === 'Recording settings')
     const gridItem = card?.parentElement

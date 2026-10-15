@@ -1,6 +1,15 @@
 # 验收场景
 
-目前已有 Dear ImGui 交互原型自检和 React 前端构建，证据见 Desktop；尚无产品功能测试工程。以下场景用于澄清“做到什么程度算可用”，工具、性能阈值和环境在实践中确定。
+已有蓝图存储／运行单测、Release WebView 模拟录制闭环及 React 前端测试；真实媒体和回放尚未实现。以下场景用于澄清“做到什么程度算可用”，工具、性能阈值和环境在实践中确定。
+
+## 蓝图存储与模拟运行（2026-10-14）
+
+- `apps/desktop/src-tauri` 中 `cargo test --lib`（16 项）验证缺失目录不被启动扫描创建、文件保存／重载、revision 冲突、危险 ID、删除／撤销、节点目录和图连接、条件分支求值、输入端覆盖参数默认值、九种 UE 标量 Make 节点及 Byte 范围、Make 输入端保持 UE 类型约束、Order 整数约束、路径菜单组装和稳定排序；实际内置配置也由同一 schema 校验。
+- 在 `apps/desktop` 执行 `npm run test:blueprint-runtime`，需先运行 `npm run tauri:build`。脚本启动 Release Nodrec，以 WebView2 CDP 验证单项路径菜单悬停展开、菜单互斥及空白收起，蓝图列表收起后工作区仍可见、最大宽度下 Overview 卡片保持并排且高度贴合字段，统一滚动条样式、Details 高度随内容增长／调宽／把手悬停显隐／参数行对齐和完整标签、节点画布贴到右边界、NodeType 与标题编辑、左拖框选、移除缩放按钮后 F 适配视图、右键平移和滚轮缩放；随后验证初始化注册控件、模拟帧开始／暂停／恢复／停止和延迟期间取消，并关闭测试进程。
+- 同一 Release WebView 检查 Overview 与节点参数改动后显示默认值还原按钮、还原后隐藏；框选两个 Register Control 后 Details 实时更新，Order 异值显示 `Multiple values`，重置和批量编辑都作用于两节点并保存。复制出的 Register Control 修改后原节点参数不变，删除副本后原节点仍在。
+- Release WebView 还验证默认双标签、蓝图列表调宽／复位、更多菜单留在视口内、干净蓝图不显示 Save、编辑后出现星号和行内 Save；将 Register Control 的 Order 改为 4 后总控栏相应重排，保存文件里的值也是 4。测试先备份发布目录中的蓝图，结束后还原原文件。
+- Events、Functions、Parameters、Variables 分区标题可展开／折叠，初始展开且切换不标记蓝图为未保存。Branch 节点可在画布空白处右键添加并落在指针位置；Boolean／Byte／Integer／Integer64／Float／Double／Name／String／Text Make 节点可从同一菜单创建。Register Control 的 Order 输入开关显示与 UE 配色一致的 Integer 引脚，关闭后引脚移除。执行引脚位于节点标题栏且不占参数区，显示为无名称白色三角形。Details 中 Control 使用无边框 Header，同级参数与 Header 对齐，仅嵌套 Header 缩进；Register Control 没有嵌套 Children 编辑入口。Ctrl+C／Ctrl+V 和自定义右键菜单通过 WebView 验收；Operation recording 预览按钮保持禁用。模拟录制实际产生帧；暂停期间帧数保持不变，恢复后增加，Stop 结束运行；延迟启动取消后状态保持 Ready。没有测试真实采集、编码或媒体文件。
+- 当前检查通过：Rust 单测 16 项、模型测试 19 项、Oxlint、TypeScript／Vite、Tauri Release x64 和 `npm run test:blueprint-runtime`。旧蓝图没有 Order 时以注册序号作内存默认；旧递归菜单会在加载时转换成路径注册节点。序列化会忽略 React Flow 的选中、拖动和测量状态，选中节点本身不会标记为未保存。WebView CDP 结果不代表物理鼠标／键盘、标题栏、无障碍或其他 DPI 验收。
 
 ## 当前原型验证记录（2026-10-12）
 

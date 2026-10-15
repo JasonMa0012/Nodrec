@@ -15,8 +15,8 @@
         "title": "Nodrec",
         "width": 1200,
         "height": 760,
-        "minWidth": 980,
-        "minHeight": 620,
+        "minWidth": 490,
+        "minHeight": 310,
         "decorations": false,
         "backgroundColor": "#17191e",
         "shadow": true

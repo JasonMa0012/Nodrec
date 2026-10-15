@@ -1,0 +1,1560 @@
+{
+  "id": "screen-recording",
+  "name": "Screen recording",
+  "replay": false,
+  "values": {
+    "display": "Display 1 · 2560 × 1440",
+    "region": "x: 0, y: 0, w: 2560, h: 1440",
+    "cursor": true,
+    "delay": "0",
+    "resolution": "1920 × 1080",
+    "fps": "60",
+    "encoder": "H.264",
+    "bitrate": "20",
+    "systemAudio": true,
+    "microphone": false,
+    "device": "System default",
+    "sampleRate": "48 kHz",
+    "output": "C:/Recordings",
+    "filename": "{blueprint}_{timestamp}",
+    "pointer": "Semantic + absolute fallback",
+    "keyboard": true,
+    "mouse": true,
+    "threshold": "Low tolerance"
+  },
+  "labels": {
+    "display": "Display",
+    "region": "Region",
+    "cursor": "Show cursor",
+    "delay": "Start delay (s)",
+    "resolution": "Resolution",
+    "fps": "Frame rate",
+    "encoder": "Encoder",
+    "bitrate": "Bitrate (Mbps)",
+    "systemAudio": "System audio",
+    "microphone": "Microphone",
+    "device": "Device",
+    "sampleRate": "Sample rate",
+    "output": "Output folder",
+    "filename": "Filename pattern",
+    "pointer": "Pointer mode",
+    "keyboard": "Keyboard input",
+    "mouse": "Mouse input",
+    "threshold": "Pixel threshold"
+  },
+  "cards": [
+    {
+      "id": "recording",
+      "name": "Recording settings",
+      "parameters": [
+        "display",
+        "region",
+        "cursor",
+        "delay"
+      ]
+    },
+    {
+      "id": "video",
+      "name": "Video",
+      "parameters": [
+        "resolution",
+        "fps",
+        "encoder",
+        "bitrate"
+      ]
+    },
+    {
+      "id": "audio",
+      "name": "Audio",
+      "parameters": [
+        "systemAudio",
+        "microphone",
+        "device",
+        "sampleRate"
+      ]
+    },
+    {
+      "id": "output",
+      "name": "Output",
+      "parameters": [
+        "output",
+        "filename"
+      ]
+    }
+  ],
+  "layouts": {
+    "recording": [
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "display",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "region",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "cursor",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "delay",
+            "weight": 1
+          }
+        ]
+      }
+    ],
+    "video": [
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "resolution",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "fps",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "encoder",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "bitrate",
+            "weight": 1
+          }
+        ]
+      }
+    ],
+    "audio": [
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "systemAudio",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "microphone",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "device",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "sampleRate",
+            "weight": 1
+          }
+        ]
+      }
+    ],
+    "output": [
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "output",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": false,
+        "columns": [
+          {
+            "id": "filename",
+            "weight": 1
+          }
+        ]
+      }
+    ]
+  },
+  "overviewLayouts": {
+    "wide": [
+      {
+        "i": "recording",
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 12,
+        "minW": 3,
+        "maxW": 12
+      },
+      {
+        "i": "video",
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 10,
+        "minW": 3,
+        "maxW": 12
+      },
+      {
+        "i": "audio",
+        "x": 0,
+        "y": 12,
+        "w": 6,
+        "h": 10,
+        "minW": 3,
+        "maxW": 12
+      },
+      {
+        "i": "output",
+        "x": 6,
+        "y": 12,
+        "w": 6,
+        "h": 7,
+        "minW": 3,
+        "maxW": 12
+      }
+    ],
+    "narrow": [
+      {
+        "i": "recording",
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 12,
+        "minW": 1,
+        "maxW": 1,
+        "isResizable": false
+      },
+      {
+        "i": "video",
+        "x": 0,
+        "y": 12,
+        "w": 1,
+        "h": 10,
+        "minW": 1,
+        "maxW": 1,
+        "isResizable": false
+      },
+      {
+        "i": "audio",
+        "x": 0,
+        "y": 22,
+        "w": 1,
+        "h": 10,
+        "minW": 1,
+        "maxW": 1,
+        "isResizable": false
+      },
+      {
+        "i": "output",
+        "x": 0,
+        "y": 32,
+        "w": 1,
+        "h": 7,
+        "minW": 1,
+        "maxW": 1,
+        "isResizable": false
+      }
+    ]
+  },
+  "customParameters": [],
+  "eventFolders": [
+    {
+      "id": "recording",
+      "name": "Recording"
+    }
+  ],
+  "functionFolders": [
+    {
+      "id": "utilities",
+      "name": "Utilities"
+    }
+  ],
+  "variableFolders": [
+    {
+      "id": "capture",
+      "name": "Capture"
+    },
+    {
+      "id": "video",
+      "name": "Video"
+    },
+    {
+      "id": "audio",
+      "name": "Audio"
+    },
+    {
+      "id": "output",
+      "name": "Output"
+    }
+  ],
+  "events": [
+    {
+      "id": "event-initialize",
+      "name": "On Initialize",
+      "folderId": "recording"
+    },
+    {
+      "id": "event-select-region",
+      "name": "On Select Region",
+      "folderId": "recording"
+    },
+    {
+      "id": "event-select-display",
+      "name": "On Select Display",
+      "folderId": "recording"
+    },
+    {
+      "id": "event-select-display-1",
+      "name": "On Select Display 1",
+      "folderId": "recording"
+    },
+    {
+      "id": "event-select-window",
+      "name": "On Select Window",
+      "folderId": "recording"
+    },
+    {
+      "id": "event-start",
+      "name": "On Start Recording",
+      "folderId": "recording"
+    },
+    {
+      "id": "event-start-delayed",
+      "name": "On Start After Delay",
+      "folderId": "recording"
+    },
+    {
+      "id": "event-pause",
+      "name": "On Pause Recording",
+      "folderId": "recording"
+    },
+    {
+      "id": "event-resume",
+      "name": "On Resume Recording",
+      "folderId": "recording"
+    },
+    {
+      "id": "event-stop",
+      "name": "On Stop Recording",
+      "folderId": "recording"
+    }
+  ],
+  "functions": [
+    {
+      "id": "function-path",
+      "name": "Prepare Output Path",
+      "folderId": "utilities"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "initialize",
+      "type": "event",
+      "position": {
+        "x": 0,
+        "y": 40
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Initialize",
+        "config": {
+          "eventId": "event-initialize"
+        }
+      }
+    },
+    {
+      "id": "register-select",
+      "type": "register_control",
+      "position": {
+        "x": 330,
+        "y": 0
+      },
+      "data": {
+        "kind": "register_control",
+        "label": "Register Select Region",
+        "config": {
+          "control": {
+            "id": "select-region",
+            "label": "Select Region",
+            "icon": "crop",
+            "eventId": "event-select-region",
+            "enabled": true,
+            "order": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "register-start",
+      "type": "register_control",
+      "position": {
+        "x": 620,
+        "y": 0
+      },
+      "data": {
+        "kind": "register_control",
+        "label": "Register Start",
+        "config": {
+          "control": {
+            "id": "start-recording",
+            "label": "Start recording",
+            "icon": "play",
+            "eventId": "event-start",
+            "enabled": true,
+            "order": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "register-pause",
+      "type": "register_control",
+      "position": {
+        "x": 910,
+        "y": 0
+      },
+      "data": {
+        "kind": "register_control",
+        "label": "Register Pause",
+        "config": {
+          "control": {
+            "id": "pause-recording",
+            "label": "Pause",
+            "icon": "pause",
+            "eventId": "event-pause",
+            "enabled": false,
+            "order": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "register-stop",
+      "type": "register_control",
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "data": {
+        "kind": "register_control",
+        "label": "Register Stop",
+        "config": {
+          "control": {
+            "id": "stop-recording",
+            "label": "Stop",
+            "icon": "stop-circle",
+            "eventId": "event-stop",
+            "enabled": false,
+            "order": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "event-select-region",
+      "type": "event",
+      "position": {
+        "x": 0,
+        "y": 230
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Select Region",
+        "config": {
+          "eventId": "event-select-region"
+        }
+      }
+    },
+    {
+      "id": "log-select-region",
+      "type": "log",
+      "position": {
+        "x": 330,
+        "y": 230
+      },
+      "data": {
+        "kind": "log",
+        "label": "Log Region Selection",
+        "config": {
+          "message": "Screen region selection requested (simulation)"
+        }
+      }
+    },
+    {
+      "id": "event-select-display",
+      "type": "event",
+      "position": {
+        "x": 0,
+        "y": 370
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Select Display",
+        "config": {
+          "eventId": "event-select-display"
+        }
+      }
+    },
+    {
+      "id": "log-event-select-display",
+      "type": "log",
+      "position": {
+        "x": 330,
+        "y": 370
+      },
+      "data": {
+        "kind": "log",
+        "label": "Log Select Display",
+        "config": {
+          "message": "Display selection requested (simulation)"
+        }
+      }
+    },
+    {
+      "id": "event-select-display-1",
+      "type": "event",
+      "position": {
+        "x": 0,
+        "y": 510
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Select Display 1",
+        "config": {
+          "eventId": "event-select-display-1"
+        }
+      }
+    },
+    {
+      "id": "log-event-select-display-1",
+      "type": "log",
+      "position": {
+        "x": 330,
+        "y": 510
+      },
+      "data": {
+        "kind": "log",
+        "label": "Log Select Display 1",
+        "config": {
+          "message": "Display 1 selected (simulation)"
+        }
+      }
+    },
+    {
+      "id": "event-select-window",
+      "type": "event",
+      "position": {
+        "x": 0,
+        "y": 650
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Select Window",
+        "config": {
+          "eventId": "event-select-window"
+        }
+      }
+    },
+    {
+      "id": "log-event-select-window",
+      "type": "log",
+      "position": {
+        "x": 330,
+        "y": 650
+      },
+      "data": {
+        "kind": "log",
+        "label": "Log Select Window",
+        "config": {
+          "message": "Window selection requested (simulation)"
+        }
+      }
+    },
+    {
+      "id": "event-start",
+      "type": "event",
+      "position": {
+        "x": 0,
+        "y": 850
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Start Recording",
+        "config": {
+          "eventId": "event-start"
+        }
+      }
+    },
+    {
+      "id": "log-start",
+      "type": "log",
+      "position": {
+        "x": 330,
+        "y": 850
+      },
+      "data": {
+        "kind": "log",
+        "label": "Log Start",
+        "config": {
+          "message": "Recording started (simulation)"
+        }
+      }
+    },
+    {
+      "id": "pipeline-start",
+      "type": "start_pipeline",
+      "position": {
+        "x": 610,
+        "y": 850
+      },
+      "data": {
+        "kind": "start_pipeline",
+        "label": "Start Media Pipeline",
+        "config": {
+          "outputNodeId": "write"
+        }
+      }
+    },
+    {
+      "id": "control-start-recording",
+      "type": "update_control",
+      "position": {
+        "x": 910,
+        "y": 850
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Update Start Control",
+        "config": {
+          "controlId": "start-recording",
+          "patch": {
+            "label": "Recording",
+            "icon": "square",
+            "enabled": false
+          }
+        }
+      }
+    },
+    {
+      "id": "control-enable-pause",
+      "type": "update_control",
+      "position": {
+        "x": 1200,
+        "y": 850
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Enable Pause Control",
+        "config": {
+          "controlId": "pause-recording",
+          "patch": {
+            "label": "Pause",
+            "icon": "pause",
+            "eventId": "event-pause",
+            "enabled": true
+          }
+        }
+      }
+    },
+    {
+      "id": "control-enable-stop",
+      "type": "update_control",
+      "position": {
+        "x": 1490,
+        "y": 850
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Enable Stop Control",
+        "config": {
+          "controlId": "stop-recording",
+          "patch": {
+            "enabled": true
+          }
+        }
+      }
+    },
+    {
+      "id": "event-start-delayed",
+      "type": "event",
+      "position": {
+        "x": 0,
+        "y": 1030
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Start After Delay",
+        "config": {
+          "eventId": "event-start-delayed"
+        }
+      }
+    },
+    {
+      "id": "log-delayed",
+      "type": "log",
+      "position": {
+        "x": 330,
+        "y": 1030
+      },
+      "data": {
+        "kind": "log",
+        "label": "Log Delayed Start",
+        "config": {
+          "message": "Recording will start after 3 seconds (simulation)"
+        }
+      }
+    },
+    {
+      "id": "control-starting-delayed",
+      "type": "update_control",
+      "position": {
+        "x": 610,
+        "y": 1030
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Disable Start During Delay",
+        "config": {
+          "controlId": "start-recording",
+          "patch": {
+            "label": "Starting…",
+            "icon": "clock-3",
+            "enabled": false
+          }
+        }
+      }
+    },
+    {
+      "id": "control-enable-stop-delayed",
+      "type": "update_control",
+      "position": {
+        "x": 910,
+        "y": 1030
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Enable Stop During Delay",
+        "config": {
+          "controlId": "stop-recording",
+          "patch": {
+            "enabled": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delay-start",
+      "type": "delay",
+      "position": {
+        "x": 1200,
+        "y": 1030
+      },
+      "data": {
+        "kind": "delay",
+        "label": "Wait 3 Seconds",
+        "config": {
+          "milliseconds": 3000
+        }
+      }
+    },
+    {
+      "id": "pipeline-start-delayed",
+      "type": "start_pipeline",
+      "position": {
+        "x": 1490,
+        "y": 1030
+      },
+      "data": {
+        "kind": "start_pipeline",
+        "label": "Start Media Pipeline",
+        "config": {
+          "outputNodeId": "write"
+        }
+      }
+    },
+    {
+      "id": "control-start-delayed",
+      "type": "update_control",
+      "position": {
+        "x": 1780,
+        "y": 1030
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Update Start Control",
+        "config": {
+          "controlId": "start-recording",
+          "patch": {
+            "label": "Recording",
+            "icon": "square",
+            "enabled": false
+          }
+        }
+      }
+    },
+    {
+      "id": "control-pause-delayed",
+      "type": "update_control",
+      "position": {
+        "x": 2070,
+        "y": 1030
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Enable Pause Control",
+        "config": {
+          "controlId": "pause-recording",
+          "patch": {
+            "label": "Pause",
+            "icon": "pause",
+            "eventId": "event-pause",
+            "enabled": true
+          }
+        }
+      }
+    },
+    {
+      "id": "control-stop-delayed",
+      "type": "update_control",
+      "position": {
+        "x": 2360,
+        "y": 1030
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Enable Stop Control",
+        "config": {
+          "controlId": "stop-recording",
+          "patch": {
+            "enabled": true
+          }
+        }
+      }
+    },
+    {
+      "id": "event-pause",
+      "type": "event",
+      "position": {
+        "x": 0,
+        "y": 1260
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Pause Recording",
+        "config": {
+          "eventId": "event-pause"
+        }
+      }
+    },
+    {
+      "id": "pipeline-pause",
+      "type": "pause_pipeline",
+      "position": {
+        "x": 330,
+        "y": 1260
+      },
+      "data": {
+        "kind": "pause_pipeline",
+        "label": "Pause Media Pipeline",
+        "config": {}
+      }
+    },
+    {
+      "id": "control-resume",
+      "type": "update_control",
+      "position": {
+        "x": 610,
+        "y": 1260
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Show Resume Control",
+        "config": {
+          "controlId": "pause-recording",
+          "patch": {
+            "label": "Resume",
+            "icon": "play",
+            "eventId": "event-resume",
+            "enabled": true
+          }
+        }
+      }
+    },
+    {
+      "id": "event-resume",
+      "type": "event",
+      "position": {
+        "x": 0,
+        "y": 1430
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Resume Recording",
+        "config": {
+          "eventId": "event-resume"
+        }
+      }
+    },
+    {
+      "id": "pipeline-resume",
+      "type": "resume_pipeline",
+      "position": {
+        "x": 330,
+        "y": 1430
+      },
+      "data": {
+        "kind": "resume_pipeline",
+        "label": "Resume Media Pipeline",
+        "config": {}
+      }
+    },
+    {
+      "id": "control-pause",
+      "type": "update_control",
+      "position": {
+        "x": 610,
+        "y": 1430
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Show Pause Control",
+        "config": {
+          "controlId": "pause-recording",
+          "patch": {
+            "label": "Pause",
+            "icon": "pause",
+            "eventId": "event-pause",
+            "enabled": true
+          }
+        }
+      }
+    },
+    {
+      "id": "event-stop",
+      "type": "event",
+      "position": {
+        "x": 0,
+        "y": 1600
+      },
+      "data": {
+        "kind": "event",
+        "label": "On Stop Recording",
+        "config": {
+          "eventId": "event-stop"
+        }
+      }
+    },
+    {
+      "id": "pipeline-stop",
+      "type": "stop_pipeline",
+      "position": {
+        "x": 330,
+        "y": 1600
+      },
+      "data": {
+        "kind": "stop_pipeline",
+        "label": "Stop Media Pipeline",
+        "config": {}
+      }
+    },
+    {
+      "id": "control-reset-start",
+      "type": "update_control",
+      "position": {
+        "x": 610,
+        "y": 1600
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Reset Start Control",
+        "config": {
+          "controlId": "start-recording",
+          "patch": {
+            "label": "Start recording",
+            "icon": "play",
+            "enabled": true
+          }
+        }
+      }
+    },
+    {
+      "id": "control-reset-pause",
+      "type": "update_control",
+      "position": {
+        "x": 910,
+        "y": 1600
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Disable Pause Control",
+        "config": {
+          "controlId": "pause-recording",
+          "patch": {
+            "label": "Pause",
+            "icon": "pause",
+            "eventId": "event-pause",
+            "enabled": false
+          }
+        }
+      }
+    },
+    {
+      "id": "control-reset-stop",
+      "type": "update_control",
+      "position": {
+        "x": 1200,
+        "y": 1600
+      },
+      "data": {
+        "kind": "update_control",
+        "label": "Disable Stop Control",
+        "config": {
+          "controlId": "stop-recording",
+          "patch": {
+            "enabled": false
+          }
+        }
+      }
+    },
+    {
+      "id": "region",
+      "type": "region",
+      "position": {
+        "x": 1940,
+        "y": 30
+      },
+      "data": {
+        "kind": "region",
+        "label": "Screen Region",
+        "config": {
+          "display": "Display 1",
+          "x": 0,
+          "y": 0,
+          "width": 2560,
+          "height": 1440
+        }
+      }
+    },
+    {
+      "id": "screen",
+      "type": "screen",
+      "position": {
+        "x": 1940,
+        "y": 230
+      },
+      "data": {
+        "kind": "screen",
+        "label": "Capture Screen",
+        "config": {}
+      }
+    },
+    {
+      "id": "audio",
+      "type": "audio",
+      "position": {
+        "x": 1940,
+        "y": 430
+      },
+      "data": {
+        "kind": "audio",
+        "label": "Capture Audio",
+        "config": {}
+      }
+    },
+    {
+      "id": "encode",
+      "type": "encode",
+      "position": {
+        "x": 2250,
+        "y": 280
+      },
+      "data": {
+        "kind": "encode",
+        "label": "Encode Media",
+        "config": {
+          "encoder": "H.264",
+          "fps": 60
+        }
+      }
+    },
+    {
+      "id": "path",
+      "type": "path",
+      "position": {
+        "x": 2250,
+        "y": 500
+      },
+      "data": {
+        "kind": "path",
+        "label": "Output Path",
+        "config": {
+          "directory": "C:/Recordings",
+          "filename": "{blueprint}_{timestamp}.mp4"
+        }
+      }
+    },
+    {
+      "id": "write",
+      "type": "write",
+      "position": {
+        "x": 2560,
+        "y": 370
+      },
+      "data": {
+        "kind": "write",
+        "label": "Write Output",
+        "config": {}
+      }
+    },
+    {
+      "id": "register-menu-select-region-0",
+      "type": "register_menu",
+      "position": {
+        "x": 1490,
+        "y": 1800
+      },
+      "data": {
+        "kind": "register_menu",
+        "label": "Register Capture Target Menu",
+        "config": {
+          "controlId": "select-region",
+          "path": "Capture Target",
+          "icon": "monitor",
+          "eventId": "event-select-display"
+        }
+      }
+    },
+    {
+      "id": "register-menu-select-region-1",
+      "type": "register_menu",
+      "position": {
+        "x": 1780,
+        "y": 1800
+      },
+      "data": {
+        "kind": "register_menu",
+        "label": "Register Capture Target/Display 1 Menu",
+        "config": {
+          "controlId": "select-region",
+          "path": "Capture Target/Display 1",
+          "icon": "monitor",
+          "eventId": "event-select-display-1"
+        }
+      }
+    },
+    {
+      "id": "register-menu-select-region-2",
+      "type": "register_menu",
+      "position": {
+        "x": 2070,
+        "y": 1800
+      },
+      "data": {
+        "kind": "register_menu",
+        "label": "Register Capture Target/Active Window Menu",
+        "config": {
+          "controlId": "select-region",
+          "path": "Capture Target/Active Window",
+          "icon": "mouse-pointer-2",
+          "eventId": "event-select-window"
+        }
+      }
+    },
+    {
+      "id": "register-menu-start-recording-3",
+      "type": "register_menu",
+      "position": {
+        "x": 2360,
+        "y": 1800
+      },
+      "data": {
+        "kind": "register_menu",
+        "label": "Register Start Menu",
+        "config": {
+          "controlId": "start-recording",
+          "path": "Start",
+          "icon": "play",
+          "eventId": "event-start"
+        }
+      }
+    },
+    {
+      "id": "register-menu-start-recording-4",
+      "type": "register_menu",
+      "position": {
+        "x": 2650,
+        "y": 1800
+      },
+      "data": {
+        "kind": "register_menu",
+        "label": "Register Start/Start after 3 seconds Menu",
+        "config": {
+          "controlId": "start-recording",
+          "path": "Start/Start after 3 seconds",
+          "icon": "clock-3",
+          "eventId": "event-start-delayed"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-initialize-register-select",
+      "source": "initialize",
+      "sourceHandle": "out:flow",
+      "target": "register-select",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-register-select-register-start",
+      "source": "register-select",
+      "sourceHandle": "out:flow",
+      "target": "register-start",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-register-start-register-pause",
+      "source": "register-start",
+      "sourceHandle": "out:flow",
+      "target": "register-pause",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-register-pause-register-stop",
+      "source": "register-pause",
+      "sourceHandle": "out:flow",
+      "target": "register-stop",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-event-select-region-log-select-region",
+      "source": "event-select-region",
+      "sourceHandle": "out:flow",
+      "target": "log-select-region",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-event-select-display-log-event-select-display",
+      "source": "event-select-display",
+      "sourceHandle": "out:flow",
+      "target": "log-event-select-display",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-event-select-display-1-log-event-select-display-1",
+      "source": "event-select-display-1",
+      "sourceHandle": "out:flow",
+      "target": "log-event-select-display-1",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-event-select-window-log-event-select-window",
+      "source": "event-select-window",
+      "sourceHandle": "out:flow",
+      "target": "log-event-select-window",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-event-start-log-start",
+      "source": "event-start",
+      "sourceHandle": "out:flow",
+      "target": "log-start",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-log-start-pipeline-start",
+      "source": "log-start",
+      "sourceHandle": "out:flow",
+      "target": "pipeline-start",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-pipeline-start-control-start-recording",
+      "source": "pipeline-start",
+      "sourceHandle": "out:flow",
+      "target": "control-start-recording",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-control-start-recording-control-enable-pause",
+      "source": "control-start-recording",
+      "sourceHandle": "out:flow",
+      "target": "control-enable-pause",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-control-enable-pause-control-enable-stop",
+      "source": "control-enable-pause",
+      "sourceHandle": "out:flow",
+      "target": "control-enable-stop",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-event-start-delayed-log-delayed",
+      "source": "event-start-delayed",
+      "sourceHandle": "out:flow",
+      "target": "log-delayed",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-log-delayed-control-starting-delayed",
+      "source": "log-delayed",
+      "sourceHandle": "out:flow",
+      "target": "control-starting-delayed",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-control-starting-delayed-control-enable-stop-delayed",
+      "source": "control-starting-delayed",
+      "sourceHandle": "out:flow",
+      "target": "control-enable-stop-delayed",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-control-enable-stop-delayed-delay-start",
+      "source": "control-enable-stop-delayed",
+      "sourceHandle": "out:flow",
+      "target": "delay-start",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-delay-start-pipeline-start-delayed",
+      "source": "delay-start",
+      "sourceHandle": "out:flow",
+      "target": "pipeline-start-delayed",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-pipeline-start-delayed-control-start-delayed",
+      "source": "pipeline-start-delayed",
+      "sourceHandle": "out:flow",
+      "target": "control-start-delayed",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-control-start-delayed-control-pause-delayed",
+      "source": "control-start-delayed",
+      "sourceHandle": "out:flow",
+      "target": "control-pause-delayed",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-control-pause-delayed-control-stop-delayed",
+      "source": "control-pause-delayed",
+      "sourceHandle": "out:flow",
+      "target": "control-stop-delayed",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-event-pause-pipeline-pause",
+      "source": "event-pause",
+      "sourceHandle": "out:flow",
+      "target": "pipeline-pause",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-pipeline-pause-control-resume",
+      "source": "pipeline-pause",
+      "sourceHandle": "out:flow",
+      "target": "control-resume",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-event-resume-pipeline-resume",
+      "source": "event-resume",
+      "sourceHandle": "out:flow",
+      "target": "pipeline-resume",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-pipeline-resume-control-pause",
+      "source": "pipeline-resume",
+      "sourceHandle": "out:flow",
+      "target": "control-pause",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-event-stop-pipeline-stop",
+      "source": "event-stop",
+      "sourceHandle": "out:flow",
+      "target": "pipeline-stop",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-pipeline-stop-control-reset-start",
+      "source": "pipeline-stop",
+      "sourceHandle": "out:flow",
+      "target": "control-reset-start",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-control-reset-start-control-reset-pause",
+      "source": "control-reset-start",
+      "sourceHandle": "out:flow",
+      "target": "control-reset-pause",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-control-reset-pause-control-reset-stop",
+      "source": "control-reset-pause",
+      "sourceHandle": "out:flow",
+      "target": "control-reset-stop",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-region-screen-region",
+      "source": "region",
+      "sourceHandle": "out:region",
+      "target": "screen",
+      "targetHandle": "in:region",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-screen-encode-frames",
+      "source": "screen",
+      "sourceHandle": "out:frames",
+      "target": "encode",
+      "targetHandle": "in:frames",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-audio-encode-audio",
+      "source": "audio",
+      "sourceHandle": "out:audio",
+      "target": "encode",
+      "targetHandle": "in:audio",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-encode-write-video",
+      "source": "encode",
+      "sourceHandle": "out:video",
+      "target": "write",
+      "targetHandle": "in:video",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-path-write-path",
+      "source": "path",
+      "sourceHandle": "out:path",
+      "target": "write",
+      "targetHandle": "in:path",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-register-stop-register-menu-select-region-0",
+      "source": "register-stop",
+      "sourceHandle": "out:flow",
+      "target": "register-menu-select-region-0",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-register-menu-select-region-0-register-menu-select-region-1",
+      "source": "register-menu-select-region-0",
+      "sourceHandle": "out:flow",
+      "target": "register-menu-select-region-1",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-register-menu-select-region-1-register-menu-select-region-2",
+      "source": "register-menu-select-region-1",
+      "sourceHandle": "out:flow",
+      "target": "register-menu-select-region-2",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-register-menu-select-region-2-register-menu-start-recording-3",
+      "source": "register-menu-select-region-2",
+      "sourceHandle": "out:flow",
+      "target": "register-menu-start-recording-3",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-register-menu-start-recording-3-register-menu-start-recording-4",
+      "source": "register-menu-start-recording-3",
+      "sourceHandle": "out:flow",
+      "target": "register-menu-start-recording-4",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    }
+  ],
+  "supported": true,
+  "schemaVersion": 1
+}

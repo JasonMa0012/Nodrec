@@ -9,10 +9,11 @@
     "lint": "oxlint",
     "test:model": "node --experimental-strip-types --test src/model.test.mjs",
     "test:overview-drag": "node scripts/verify-overview-drag.mjs",
+    "test:blueprint-runtime": "node scripts/verify-blueprint-runtime.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:dev": "node scripts/stage-blueprints.mjs debug && tauri dev",
+    "tauri:build": "tauri build && node scripts/stage-blueprints.mjs release"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

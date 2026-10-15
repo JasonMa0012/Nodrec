@@ -8,6 +8,7 @@
 | [架构讨论](architecture.md) | 技术方案比较、当前路线和待确认事项 |
 | [跨模块接口](contracts.md) | 需要协调的数据与接口议题 |
 | [开发规则](development.md) | 文档同步、证据、决策与交接 |
+| [Desktop UI 规范](ui-guidelines.md) | 字体密度、Details 参数行和 Blueprint 画布交互 |
 | [验收场景](testing.md) | 功能验证方向；不是已通过测试 |
 | [技术决策](decisions.md) | 仅收录用户选择并确认的方案 |
 

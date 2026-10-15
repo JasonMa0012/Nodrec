@@ -1,8 +1,100 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { verticalCompactor } from 'react-grid-layout'
-import { createBlueprint, moveOverviewCardVertically, moveParameterLayout, placeOverviewCardBeside, swapOverviewCardPositions } from './model.ts'
+import { allParameters, createBlueprint, hydrateBlueprint, moveOverviewCardVertically, moveParameterLayout, overviewCardContentHeight, overviewGridHeight, pinTypeColor, pinTypeForValue, placeOverviewCardBeside, serializeBlueprint, swapOverviewCardPositions, syncBlueprintEvents } from './model.ts'
 import { overviewCollisionDetection, overviewDropPlacement } from './overview-dnd.ts'
+
+test('blueprint documents persist workflow graphs and controls, but reset editor and runtime state', () => {
+  const blueprint = createBlueprint('capture-test', 'Capture test')
+  blueprint.recordState = 'recording'
+  blueprint.selectedNode = 'pipeline-start'
+  const document = serializeBlueprint(blueprint)
+  const restored = hydrateBlueprint(document, 'builtin', 'revision-token')
+
+  assert.equal(document.schemaVersion, 1)
+  assert.equal('recordState' in document, false)
+  assert.deepEqual(restored.nodes, blueprint.nodes)
+  assert.deepEqual(restored.edges, blueprint.edges)
+  assert.equal(restored.recordState, 'ready')
+  assert.equal(restored.selectedNode, null)
+  assert.equal(restored.revision, 'revision-token')
+  assert.ok(restored.nodes.some((node) => node.data.kind === 'register_control'))
+})
+
+test('workspaces open both editor tabs and registered controls carry explicit sort order', () => {
+  const blueprint = createBlueprint('capture-test', 'Capture test')
+  const controls = blueprint.nodes.filter((node) => node.data.kind === 'register_control').map((node) => node.data.config.control.order)
+  const restored = hydrateBlueprint(serializeBlueprint(blueprint), 'user', 'revision-token')
+
+  assert.deepEqual(blueprint.tabs.map(({ id }) => id), ['overview', 'blueprint'])
+  assert.equal(blueprint.activeTab, 'overview')
+  assert.deepEqual(controls, [0, 1, 2, 3])
+  assert.ok(blueprint.nodes.some((node) => node.data.kind === 'register_menu' && node.data.config.path === 'Capture Target/Display 1'))
+  assert.ok(blueprint.nodes.filter((node) => node.data.kind === 'register_control').every((node) => !('menu' in node.data.config.control)))
+  assert.deepEqual(restored.tabs.map(({ id }) => id), ['overview', 'blueprint'])
+})
+
+test('Blueprint pin colors and primitive value types match Unreal pin categories', () => {
+  const pinTypes = ['flow', 'boolean', 'byte', 'class', 'integer', 'integer64', 'float', 'double', 'name', 'delegate', 'object', 'soft_object', 'soft_class', 'interface', 'string', 'text', 'struct', 'value', 'vector', 'rotator', 'transform']
+  assert.deepEqual(pinTypes.map(pinTypeColor), ['#FFFFFF', '#950000', '#006F65', '#5900BC', '#1FE3AF', '#ACE3AF', '#A1FF45', '#38D500', '#CD82FF', '#FF3838', '#00AAF5', '#95FFFF', '#FF95FF', '#F1FFAA', '#FF00D4', '#E77CAA', '#0059CB', '#817A7A', '#FFCA23', '#A0B4FF', '#FF7300'])
+  assert.equal(pinTypeColor('region'), pinTypeColor('struct'))
+  assert.equal(pinTypeColor('path'), pinTypeColor('string'))
+  assert.equal(pinTypeColor('video_frames'), pinTypeColor('object'))
+  assert.deepEqual([pinTypeForValue(false), pinTypeForValue(4), pinTypeForValue(4.5), pinTypeForValue('Record')], ['boolean', 'integer', 'float', 'string'])
+})
+
+test('legacy nested menus migrate to one registration node per slash-separated path', () => {
+  const document = serializeBlueprint(createBlueprint('capture-test', 'Capture test'))
+  const oldMenuNodes = new Set(document.nodes.filter((node) => node.data.kind === 'register_menu').map((node) => node.id))
+  document.nodes = document.nodes.filter((node) => !oldMenuNodes.has(node.id))
+  document.edges = document.edges.filter((edge) => !oldMenuNodes.has(edge.source) && !oldMenuNodes.has(edge.target))
+  document.nodes = document.nodes.map((node) => node.id === 'register-select' ? {
+    ...node,
+    data: { ...node.data, config: { ...node.data.config, control: { ...node.data.config.control, menu: [{
+      id: 'target', label: 'Capture Target', icon: 'monitor', eventId: 'event-select-display', children: [
+        { id: 'display-1', label: 'Display 1', icon: 'monitor', eventId: 'event-select-display-1' },
+      ],
+    }] } } },
+  } : node)
+
+  const restored = hydrateBlueprint(document, 'user', 'revision-token')
+  const registrations = restored.nodes.filter((node) => node.data.kind === 'register_menu')
+
+  assert.deepEqual(registrations.map((node) => node.data.config.path), ['Capture Target', 'Capture Target/Display 1'])
+  assert.ok(restored.nodes.find((node) => node.id === 'register-select').data.config.control.menu === undefined)
+  assert.ok(restored.edges.some((edge) => edge.source === 'register-stop' && edge.target === registrations[0].id))
+})
+
+test('older blueprints infer a visual Order from their registration sequence', () => {
+  const document = serializeBlueprint(createBlueprint('capture-test', 'Capture test'))
+  document.nodes = document.nodes.map((node) => {
+    if (node.data.kind !== 'register_control') return node
+    const control = { ...node.data.config.control }
+    delete control.order
+    return { ...node, data: { ...node.data, config: { ...node.data.config, control } } }
+  })
+  const restored = hydrateBlueprint(document, 'builtin', 'revision-token')
+
+  assert.deepEqual(restored.nodes.filter((node) => node.data.kind === 'register_control').map((node) => node.data.config.control.order), [0, 1, 2, 3])
+})
+
+test('transient React Flow selection and dragging state do not dirty a blueprint', () => {
+  const blueprint = createBlueprint('capture-test', 'Capture test')
+  const edited = { ...blueprint, nodes: blueprint.nodes.map((node, index) => index === 0 ? { ...node, selected: true, dragging: true, resizing: true, measured: { width: 100, height: 80 }, width: 100, height: 80 } : node) }
+
+  assert.deepEqual(serializeBlueprint(edited), serializeBlueprint(blueprint))
+})
+
+test('event library stays in sync with Event nodes and drops deleted events', () => {
+  const blueprint = createBlueprint('capture-test', 'Capture test')
+  const customEvent = { ...blueprint.nodes.find((node) => node.data.kind === 'event'), id: 'event-custom', data: { kind: 'event', label: 'On Custom Event', config: { eventId: 'event-custom' } } }
+  const nodes = [...blueprint.nodes.map((node) => node.data.config?.eventId === 'event-start' ? { ...node, data: { ...node.data, label: 'On Recording Start' } } : node), customEvent]
+  const synced = syncBlueprintEvents({ ...blueprint, nodes, events: [...blueprint.events, { id: 'orphan', name: 'Orphan', folderId: 'recording' }], selection: { kind: 'event', key: 'event-start' } })
+
+  assert.deepEqual(synced.events.map(({ id, name }) => [id, name]), nodes.filter((node) => node.data.kind === 'event').map((node) => [node.data.config.eventId, node.data.label]))
+  assert.equal(synced.events.some(({ id }) => id === 'orphan'), false)
+  assert.equal(syncBlueprintEvents({ ...synced, nodes: nodes.filter((node) => node.data.config?.eventId !== 'event-start') }).selection, null)
+})
 
 test('dropping beside a parameter creates a column without resizing first', () => {
   const rows = [
@@ -48,8 +140,10 @@ test('blueprints keep independent wide and single-column overview layouts', () =
   assert.deepEqual(screen.overviewLayouts.wide.map(({ i, x, w }) => [i, x, w]), [
     ['recording', 0, 6], ['video', 6, 6], ['audio', 0, 6], ['output', 6, 6],
   ])
-  assert.equal(screen.overviewLayouts.wide[0].h, 12)
-  assert.equal(screen.overviewLayouts.wide[1].h, 10)
+  assert.equal(screen.overviewLayouts.wide[0].h, 9)
+  assert.equal(screen.overviewLayouts.wide[1].h, 8)
+  assert.equal(overviewCardContentHeight([], allParameters(screen)), 112)
+  assert.deepEqual([overviewGridHeight(172), overviewGridHeight(145)], [9, 8])
   assert.ok(screen.overviewLayouts.narrow.every(({ x, w }) => x === 0 && w === 1))
   assert.equal(replay.overviewLayouts.wide.length, replay.cards.length)
   assert.notEqual(screen.overviewLayouts.wide, replay.overviewLayouts.wide)
@@ -80,8 +174,12 @@ test('overview card swaps survive responsive grid compaction', () => {
     const videoAfter = compacted.find(({ i }) => i === 'video')
     const audioAfter = compacted.find(({ i }) => i === 'audio')
 
-    assert.deepEqual([videoAfter.x, videoAfter.y], [audioBefore.x, audioBefore.y])
-    assert.deepEqual([audioAfter.x, audioAfter.y], [videoBefore.x, videoBefore.y])
+    if (breakpoint === 'wide') {
+      assert.deepEqual([videoAfter.x, videoAfter.y], [audioBefore.x, audioBefore.y])
+      assert.deepEqual([audioAfter.x, audioAfter.y], [videoBefore.x, videoBefore.y])
+    } else {
+      assert.ok(audioAfter.y < videoAfter.y, 'the swapped cards should reverse their order in the single-column layout')
+    }
   }
 })
 
