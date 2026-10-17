@@ -75,7 +75,7 @@ pub fn run() {
             #[cfg(windows)]
             if let Some(window) = app.get_webview_window("main") {
                 match touchpad::install(&window) {
-                    Ok(()) => eprintln!("Precision Touchpad input registered; recording WM_POINTER frames"),
+                    Ok(()) => eprintln!("Precision Touchpad input registered; recording WM_POINTER diagnostics"),
                     Err(error) => eprintln!("Precision Touchpad input unavailable: {error}"),
                 }
             }

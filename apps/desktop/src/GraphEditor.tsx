@@ -124,7 +124,7 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
   useEffect(() => {
     let disposed = false
     let unlisten: (() => void) | undefined
-    void listen('precision-touchpad-frame', ({ payload }) => window.dispatchEvent(new CustomEvent('nodrec-precision-touchpad-frame', { detail: payload })))
+    void listen('precision-touchpad-pointer', ({ payload }) => window.dispatchEvent(new CustomEvent('nodrec-precision-touchpad-pointer', { detail: payload })))
       .then((stop) => { if (disposed) stop(); else unlisten = stop })
     return () => { disposed = true; unlisten?.() }
   }, [])

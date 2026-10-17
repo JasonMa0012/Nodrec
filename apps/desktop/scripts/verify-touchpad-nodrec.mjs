@@ -11,7 +11,7 @@ const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const manual = process.argv.includes('--manual')
 const officialDemo = process.argv.includes('--official-demo')
 const hardwareOutput = path.resolve(desktop, `../../out/ui-tests/touchpad-${officialDemo ? 'demo-' : ''}hardware.json`)
-const hardwareTrace = { startedAt: new Date().toISOString(), status: 'starting', events: [], precisionTouchpadFrames: [] }
+const hardwareTrace = { startedAt: new Date().toISOString(), status: 'starting', events: [], precisionTouchpadMessages: [] }
 async function saveHardwareTrace() {
   await mkdir(path.dirname(hardwareOutput), { recursive: true })
   await writeFile(hardwareOutput, JSON.stringify(hardwareTrace, null, 2))
@@ -138,22 +138,22 @@ try {
   await waitForStableViewport()
   const blank = await point()
   assert.ok(blank, 'Nodrec should have a blank Blueprint canvas point for gesture tests')
-    await evaluate(`(() => { window.__gestureTrace = []; window.__precisionTouchpadFrames = []; window.addEventListener('wheel', (event) => window.__gestureTrace.push({ deltaMode: event.deltaMode, deltaX: event.deltaX, deltaY: event.deltaY, ctrlKey: event.ctrlKey, trusted: event.isTrusted }), true); window.addEventListener('nodrec-precision-touchpad-frame', (event) => window.__precisionTouchpadFrames.push(event.detail)) })()`)
+    await evaluate(`(() => { window.__gestureTrace = []; window.__precisionTouchpadMessages = []; window.addEventListener('wheel', (event) => window.__gestureTrace.push({ deltaMode: event.deltaMode, deltaX: event.deltaX, deltaY: event.deltaY, ctrlKey: event.ctrlKey, trusted: event.isTrusted }), true); window.addEventListener('nodrec-precision-touchpad-pointer', (event) => window.__precisionTouchpadMessages.push(event.detail)) })()`)
   if (manual) {
-    console.log('Keep this Nodrec Blueprint window focused. Start a two-finger gesture; once the first input arrives, record for 30 seconds. The trace records WebView wheel deltas and native WM_POINTER contact frames.')
+    console.log('Keep this Nodrec Blueprint window focused. Start a two-finger gesture; once the first input arrives, record for 30 seconds. The trace records WebView wheel deltas and each native WM_POINTER message with its frame-query result.')
     console.log(`Saving continuously to: ${hardwareOutput}`)
     hardwareTrace.status = 'waiting-for-input'
     const capture = async () => {
-      Object.assign(hardwareTrace, await evaluate(`({ userAgent: navigator.userAgent, documentHasFocus: document.hasFocus(), pageVisibility: document.visibilityState, axisLock: getComputedStyle(document.querySelector('.react-flow__pane')).getPropertyValue('scroll-axis-lock'), events: window.__gestureTrace, precisionTouchpadFrames: window.__precisionTouchpadFrames })`))
+      Object.assign(hardwareTrace, await evaluate(`({ userAgent: navigator.userAgent, documentHasFocus: document.hasFocus(), pageVisibility: document.visibilityState, axisLock: getComputedStyle(document.querySelector('.react-flow__pane')).getPropertyValue('scroll-axis-lock'), events: window.__gestureTrace, precisionTouchpadMessages: window.__precisionTouchpadMessages })`))
       hardwareTrace.nativeStartup = appOutput
       await saveHardwareTrace()
     }
     const waitDeadline = Date.now() + 120000
-    while (Date.now() < waitDeadline && hardwareTrace.events.length + hardwareTrace.precisionTouchpadFrames.length === 0) {
+    while (Date.now() < waitDeadline && hardwareTrace.events.length + hardwareTrace.precisionTouchpadMessages.length === 0) {
       await capture()
-      if (hardwareTrace.events.length + hardwareTrace.precisionTouchpadFrames.length === 0) await delay(500)
+      if (hardwareTrace.events.length + hardwareTrace.precisionTouchpadMessages.length === 0) await delay(500)
     }
-    hardwareTrace.status = hardwareTrace.events.length + hardwareTrace.precisionTouchpadFrames.length === 0 ? 'complete-no-input' : 'recording'
+    hardwareTrace.status = hardwareTrace.events.length + hardwareTrace.precisionTouchpadMessages.length === 0 ? 'complete-no-input' : 'recording'
     const recordUntil = Date.now() + 30000
     while (hardwareTrace.status === 'recording' && Date.now() < recordUntil) {
       await capture()
@@ -161,8 +161,10 @@ try {
     }
     hardwareTrace.status = 'complete'
     hardwareTrace.wheelEventCount = hardwareTrace.events.length
-    hardwareTrace.pointerFrameCount = hardwareTrace.precisionTouchpadFrames.length
-    if (hardwareTrace.wheelEventCount + hardwareTrace.pointerFrameCount === 0) hardwareTrace.status = 'complete-no-input'
+    hardwareTrace.pointerMessageCount = hardwareTrace.precisionTouchpadMessages.length
+    hardwareTrace.touchpadPointerMessageCount = hardwareTrace.precisionTouchpadMessages.filter(({ pointer_type }) => pointer_type === 5).length
+    hardwareTrace.pointerFrameCount = hardwareTrace.precisionTouchpadMessages.filter(({ frame_read_succeeded }) => frame_read_succeeded).length
+    if (hardwareTrace.wheelEventCount + hardwareTrace.pointerMessageCount === 0) hardwareTrace.status = 'complete-no-input'
     await saveHardwareTrace()
     console.log(`Hardware trace saved: ${hardwareOutput}`)
     if (hardwareTrace.status === 'complete-no-input') console.warn('No wheel or WM_POINTER events reached this window; this run cannot diagnose the axis lock.')
