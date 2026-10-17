@@ -65,6 +65,23 @@ try {
     return !!grid && items.length >= 4 && items.every(rect => rect.left >= grid.left - 2 && rect.right <= grid.right + 2)
   })()`))
 
+  if (!await evaluate(`(() => { const button = document.querySelector('button[aria-label="Recording settings details"]'); button?.click(); return !!button })()`)) throw new Error('Recording settings details could not be opened.')
+  await until(async () => evaluate(`!!document.querySelector('.card-details-panel .detail-parameter')`))
+  const cardDetailsStyles = await evaluate(`(() => { const panel = document.querySelector('.card-details-panel'); const rows = [...panel.querySelectorAll('.detail-parameter')].map(row => { const field = row.querySelector('.parameter-field.inline'); const label = field?.querySelector('.parameter-label'); const wrap = field?.querySelector('.parameter-control-wrap'); const control = wrap?.querySelector('.checkbox-control, .field-control, .readonly-value'); const track = control?.querySelector('.toggle-track'); const pin = row.querySelector(':scope > .pin-button'); const labelRect = label.getBoundingClientRect(); const wrapRect = wrap.getBoundingClientRect(); const controlRect = control.getBoundingClientRect(); const pinRect = pin.getBoundingClientRect(); const range = document.createRange(); range.selectNodeContents(label); const controlStyle = getComputedStyle(control); const toggleStyle = track && getComputedStyle(control); return { label: label.textContent.trim(), labelWidth: labelRect.width, labelLines: range.getClientRects().length, labelFont: parseFloat(getComputedStyle(label).fontSize), controlFont: parseFloat(controlStyle.fontSize), controlX: wrapRect.left, controlWidth: controlRect.width, controlAfterLabel: controlRect.left >= labelRect.right - 1, pinAfterControl: pinRect.left >= controlRect.right - 1, toggleWidth: track?.getBoundingClientRect().width, toggleBorder: toggleStyle?.borderTopWidth, toggleBackground: toggleStyle?.backgroundColor } }); return { panelBackground: getComputedStyle(panel).backgroundColor, groupFont: parseFloat(getComputedStyle(panel.querySelector('.detail-group-title')).fontSize), rows } })()`)
+  const cardControlXs = cardDetailsStyles.rows.map(row => row.controlX)
+  const cardDetailsValid = cardDetailsStyles.panelBackground === 'rgb(36, 37, 38)' && cardDetailsStyles.groupFont >= 12 && cardDetailsStyles.rows.length >= 3 && Math.max(...cardControlXs) - Math.min(...cardControlXs) <= 2 && cardDetailsStyles.rows.every(row => row.labelWidth >= 36 && row.labelLines >= 1 && row.labelFont >= 12 && row.controlFont >= 12 && row.controlAfterLabel && row.pinAfterControl && (row.toggleWidth === undefined ? row.controlWidth >= 84 : row.toggleBorder === '0px' && row.toggleBackground === 'rgba(0, 0, 0, 0)'))
+  if (!cardDetailsValid) throw new Error(`Card Details parameters should use the shared inline label and field style: ${JSON.stringify(cardDetailsStyles)}`)
+  await saveScreenshot(command, 'card-details-parameters.png')
+  if (!await evaluate(`(() => { const button = document.querySelector('.card-details-panel button[aria-label="Edit layout"]'); button?.click(); return !!button })()`)) throw new Error('The card layout editor could not be opened.')
+  await until(async () => evaluate(`!!document.querySelector('.card-layout-editor .layout-parameter')`))
+  const layoutEditorStyles = await evaluate(`(() => { const editor = document.querySelector('.card-layout-editor'); const tiles = [...editor.querySelectorAll('.layout-parameter:not(.drag-preview)')].map(tile => { const header = tile.querySelector('.layout-field-heading'); const label = header?.querySelector('.parameter-label'); const wrap = header?.querySelector('.parameter-control-wrap'); const control = wrap?.querySelector('.checkbox-control, .field-control, .readonly-value'); const track = control?.querySelector('.toggle-track'); const pin = header?.querySelector('.pin-button'); const labelRect = label.getBoundingClientRect(); const controlRect = control.getBoundingClientRect(); const pinRect = pin.getBoundingClientRect(); const range = document.createRange(); range.selectNodeContents(label); const controlStyle = getComputedStyle(control); const toggleStyle = track && getComputedStyle(control); return { label: label.textContent.trim(), labelWidth: labelRect.width, labelLines: range.getClientRects().length, labelFont: parseFloat(getComputedStyle(label).fontSize), controlFont: parseFloat(controlStyle.fontSize), controlWidth: controlRect.width, controlAfterLabel: controlRect.left >= labelRect.right - 1, pinAfterControl: pinRect.left >= controlRect.right - 1, toggleWidth: track?.getBoundingClientRect().width, toggleBorder: toggleStyle?.borderTopWidth, toggleBackground: toggleStyle?.backgroundColor } }); return { tileBackground: tiles.length ? getComputedStyle(editor.querySelector('.layout-parameter')).backgroundColor : '', tiles } })()`)
+  const layoutEditorValid = layoutEditorStyles.tileBackground === 'rgb(43, 44, 48)' && layoutEditorStyles.tiles.length >= 4 && layoutEditorStyles.tiles.every(tile => tile.labelWidth >= 72 && tile.labelLines >= 1 && tile.labelFont >= 12 && tile.controlFont >= 12 && tile.controlAfterLabel && tile.pinAfterControl && (tile.toggleWidth === undefined ? tile.controlWidth >= 84 : tile.toggleBorder === '0px' && tile.toggleBackground === 'rgba(0, 0, 0, 0)'))
+  if (!layoutEditorValid) throw new Error(`Card layout parameters should use an inline, readable label and field: ${JSON.stringify(layoutEditorStyles)}`)
+  await saveScreenshot(command, 'card-layout-editor-parameters.png')
+  await evaluate(`([...document.querySelectorAll('.workspace-tab > button')].find(button => button.textContent.trim() === 'Overview'))?.click()`)
+  await until(async () => evaluate(`!!document.querySelector('.overview-layout-grid .settings-card')`))
+  await delay(250)
+
   const before = await evaluate(`(() => ({
     dpr: devicePixelRatio,
     viewport: { width: innerWidth, height: innerHeight },
@@ -109,14 +126,20 @@ try {
     const cardRect = card.getBoundingClientRect(), itemRect = gridItem.getBoundingClientRect(), resizeRect = handle.getBoundingClientRect()
     const neighbor = [...gridItem.parentElement.children].find(item => item !== gridItem && Math.abs(item.getBoundingClientRect().top - itemRect.top) < 2 && item.getBoundingClientRect().left > itemRect.right)
     const neighborRect = neighbor?.getBoundingClientRect()
+    const neighborHandleRect = neighbor?.querySelector('.react-resizable-handle-w')?.getBoundingClientRect()
     const grip = getComputedStyle(handle, '::after')
     return {
       center: { x: cardRect.x + cardRect.width / 2, y: cardRect.y + cardRect.height / 2 },
       edge: { x: resizeRect.x + resizeRect.width / 2, y: resizeRect.y + resizeRect.height / 2 },
+      handleWidth: resizeRect.width,
       handleHeight: resizeRect.height,
       gripHeight: grip.height,
       gap: neighborRect ? neighborRect.left - itemRect.right : null,
-      gapCenterError: neighborRect ? Math.abs((resizeRect.left + resizeRect.width / 2) - (itemRect.right + neighborRect.left) / 2) : null,
+      eastEdgeError: Math.abs((resizeRect.left + resizeRect.width / 2) - itemRect.right),
+      westEdgeError: neighborHandleRect && neighborRect ? Math.abs((neighborHandleRect.left + neighborHandleRect.width / 2) - neighborRect.left) : null,
+      gripCenterSeparation: neighborHandleRect ? Math.abs((resizeRect.left + resizeRect.width / 2) - (neighborHandleRect.left + neighborHandleRect.width / 2)) : null,
+      handleSeparation: neighborHandleRect ? neighborHandleRect.left - resizeRect.right : null,
+      hitAreasOverlap: neighborHandleRect ? resizeRect.right > neighborHandleRect.left : true,
       drag: (() => { const rect = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(item => item.querySelector('.settings-card-head h2')?.textContent === 'Audio').querySelector('.overview-card-drag-handle').getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } })(),
       handleFound: !!handle,
       buttonBorder: getComputedStyle(card.querySelector('.overview-card-drag-handle')).borderTopWidth,
@@ -126,11 +149,12 @@ try {
       resizeGripBorders: (() => { const style = getComputedStyle(handle, '::after'); return [style.borderRightWidth, style.borderBottomWidth] })(),
     }
   })()`)
-  if (!resizeProbe.handleFound || resizeProbe.handleHeight < 80 || Number.parseFloat(resizeProbe.gripHeight) < 50 || resizeProbe.gap === null || resizeProbe.gapCenterError > 2) throw new Error('Overview resize handle must be long and centered in the gap between adjacent cards.')
+  if (!resizeProbe.handleFound || resizeProbe.handleWidth < 12 || resizeProbe.handleHeight < 80 || Number.parseFloat(resizeProbe.gripHeight) < 50 || resizeProbe.gap === null || resizeProbe.eastEdgeError > 1 || resizeProbe.westEdgeError > 1 || resizeProbe.gripCenterSeparation < 10 || resizeProbe.handleSeparation < 1 || resizeProbe.hitAreasOverlap) throw new Error(`Overview resize handles must sit on separate card edges without overlapping: ${JSON.stringify(resizeProbe)}`)
   await command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...resizeProbe.center })
   const handleAtCardCenter = await evaluate(`getComputedStyle(document.querySelector('.overview-layout-grid .react-resizable-handle-e')).opacity`)
   await command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...resizeProbe.edge })
   const handleAtEdge = await evaluate(`(() => { const handle = document.querySelector('.overview-layout-grid .react-resizable-handle:hover'); return handle && getComputedStyle(handle).opacity })()`)
+  await saveScreenshot(command, 'overview-resize-handle-hover.png')
   const points = await evaluate(`(() => {
     const source = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(card => card.querySelector('.settings-card-head h2')?.textContent === 'Audio')
     const target = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(card => card.querySelector('.settings-card-head h2')?.textContent === 'Recording settings')
@@ -278,9 +302,9 @@ try {
   const horizontalOverflow = await evaluate(`(() => { const page = document.querySelector('.overview-page'); return { scrollWidth: page.scrollWidth, clientWidth: page.clientWidth, overflow: page.scrollWidth > page.clientWidth + 2 } })()`)
   await saveScreenshot(command, 'overview-resize-after.png')
   const resizeChanged = resizePoints.cards.some((card) => Math.abs((resizedCards.find((item) => item.name === card.name)?.width ?? card.width) - card.width) > 10)
-  const resizeVerified = resizing.placeholder && resizing.background.includes('50, 137, 223') && resizing.opacity === '1' && resizeChanged && !horizontalOverflow.overflow
-  const verified = horizontalVerified && verticalVerified && aboveVerified && belowVerified && resizeVerified
-  console.log(JSON.stringify({ target: { title: devtoolsTarget.title, url: devtoolsTarget.url }, before, longLabelProbe, resizeProbe, handleAtCardCenter, handleAtEdge, points, during, after, firstRow, rowWidthWithGaps, fillsGrid, horizontalVerified, verticalStart, endPoint, endDuring, afterEnd, verticalVerified, abovePoints, aboveDuring, afterAbove, aboveVerified, belowPoints, belowDuring, afterBelow, belowVerified, resizePoints, resizing, resizedCards, resizeChanged, horizontalOverflow, resizeVerified, verified, screenshots: artifacts }, null, 2))
+  const resizeVerified = resizing.placeholder && resizing.background.includes('244, 143, 177') && resizing.opacity === '1' && resizeChanged && !horizontalOverflow.overflow
+  const verified = cardDetailsValid && layoutEditorValid && horizontalVerified && verticalVerified && aboveVerified && belowVerified && resizeVerified
+  console.log(JSON.stringify({ target: { title: devtoolsTarget.title, url: devtoolsTarget.url }, cardDetailsStyles, cardDetailsValid, layoutEditorStyles, layoutEditorValid, before, longLabelProbe, resizeProbe, handleAtCardCenter, handleAtEdge, points, during, after, firstRow, rowWidthWithGaps, fillsGrid, horizontalVerified, verticalStart, endPoint, endDuring, afterEnd, verticalVerified, abovePoints, aboveDuring, afterAbove, aboveVerified, belowPoints, belowDuring, afterBelow, belowVerified, resizePoints, resizing, resizedCards, resizeChanged, horizontalOverflow, resizeVerified, verified, screenshots: artifacts }, null, 2))
   if (!verified) throw new Error('Overview drag did not complete horizontal grouping, end drop, vertical above/below insertion, and resize-handle style checks.')
 } finally {
   socket?.close()

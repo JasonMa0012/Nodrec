@@ -6,14 +6,15 @@ import {
   type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps,
 } from '@xyflow/react'
 import {
-  AudioLines, CirclePlay, Clock3, Copy, FileOutput, GitBranch, ListPlus, Monitor, MousePointer2,
-  Pause, Play, Settings, Square, StopCircle, Video,
+  AudioLines, CirclePlay, Clock3, Copy, FileOutput, FolderOpen, GitBranch, ListPlus, Monitor, MousePointer2,
+  Pause, Play, Settings, Square, StopCircle, Video, Workflow,
 } from 'lucide-react'
 import { exposedInputIds, parameterInputPortId, pinTypeColor, pinTypeForValue, type Blueprint, type BlueprintNodeData, type BlueprintSelection, type NodePortDefinition, type NodeTypeDefinition } from './model'
 
 type CanvasNodeData = BlueprintNodeData & {
   inputs: NodePortDefinition[]
   outputs: NodePortDefinition[]
+  connectedHandles: string[]
   recordState: Blueprint['recordState']
   editTitle: (nodeId: string) => void
 }
@@ -79,9 +80,9 @@ function WorkflowNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const executionY = (index: number, count: number) => `${(index + 1) * 100 / (count + 1)}%`
   return <div className={`flow-node${data.kind === 'event' ? ' event-node' : ''}${selected ? ' selected' : ''}`}>
     <div className={`node-title${executionOutputs.length ? ' has-execution-output' : ''}`} title="Double-click to rename" onDoubleClick={(event) => { event.stopPropagation(); data.editTitle(id) }}>
-      {executionInputs.map((port, index) => <Handle key={`in:${port.id}`} className="flow-handle node-title-flow-handle" id={`in:${port.id}`} type="target" position={Position.Left} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionInputs.length), background: pinTypeColor('flow') }} />)}
+      {executionInputs.map((port, index) => <Handle key={`in:${port.id}`} className={`flow-handle node-title-flow-handle${data.connectedHandles.includes(`in:${port.id}`) ? '' : ' unconnected'}`} id={`in:${port.id}`} type="target" position={Position.Left} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionInputs.length), background: pinTypeColor('flow') }} />)}
       <Icon size={15} />{data.label}
-      {executionOutputs.map((port, index) => <Handle key={`out:${port.id}`} className="flow-handle node-title-flow-handle" id={`out:${port.id}`} type="source" position={Position.Right} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionOutputs.length), background: pinTypeColor('flow') }} />)}
+      {executionOutputs.map((port, index) => <Handle key={`out:${port.id}`} className={`flow-handle node-title-flow-handle${data.connectedHandles.includes(`out:${port.id}`) ? '' : ' unconnected'}`} id={`out:${port.id}`} type="source" position={Position.Right} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionOutputs.length), background: pinTypeColor('flow') }} />)}
     </div>
     <div className="node-body">
       {(inputs.length > 0 || outputs.length > 0) && <div className="node-ports">
@@ -117,8 +118,34 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
   catalog: NodeTypeDefinition[]
   locked: boolean
 }) {
-  const { fitView, screenToFlowPosition } = useReactFlow<CanvasNode>()
+  const { fitView, getViewport, screenToFlowPosition, setViewport } = useReactFlow<CanvasNode>()
   const shellRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const shell = shellRef.current
+    if (!shell) return
+    const pan = (wheel: WheelEvent) => {
+      // shortcut: browsers do not expose the wheel device; recalibrate if hardware deltas overlap.
+      const mouseWheel = wheel.deltaMode !== WheelEvent.DOM_DELTA_PIXEL || Math.max(Math.abs(wheel.deltaX), Math.abs(wheel.deltaY)) >= 80
+      if (!(wheel.target instanceof Element) || !wheel.target.closest('.react-flow') || wheel.target.closest('.nowheel')) return
+      wheel.preventDefault()
+      wheel.stopPropagation()
+      const viewport = getViewport()
+      if (wheel.ctrlKey || mouseWheel) {
+        const bounds = wheel.target.closest('.react-flow')!.getBoundingClientRect()
+        const factor = wheel.ctrlKey && /Mac/.test(navigator.platform) ? 10 : 1
+        const delta = -wheel.deltaY * (wheel.deltaMode === 1 ? .05 : wheel.deltaMode ? 1 : .002) * factor * 4
+        const zoom = Math.max(.01, Math.min(1.6, viewport.zoom * 2 ** delta))
+        const x = wheel.clientX - bounds.left
+        const y = wheel.clientY - bounds.top
+        void setViewport({ x: x - (x - viewport.x) * zoom / viewport.zoom, y: y - (y - viewport.y) * zoom / viewport.zoom, zoom })
+        return
+      }
+      void setViewport({ x: viewport.x - wheel.deltaX * .5, y: viewport.y - wheel.deltaY * .5, zoom: viewport.zoom })
+    }
+    // React wheel listeners are passive; native handling must be able to cancel page scrolling/zooming.
+    shell.addEventListener('wheel', pan, { capture: true, passive: false })
+    return () => shell.removeEventListener('wheel', pan, true)
+  }, [getViewport, setViewport])
   const rightDragStart = useRef<{ x: number; y: number } | null>(null)
   const rightDrag = useRef(false)
   const rightPointerDown = useRef(false)
@@ -144,10 +171,14 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
       ...node.data,
       inputs: definitions.get(node.data.kind) ? configInputPorts(node, definitions.get(node.data.kind)!) : [],
       outputs: definitions.get(node.data.kind) ? configOutputPorts(node, definitions.get(node.data.kind)!, blueprint.values) : [],
+      connectedHandles: blueprint.edges.flatMap((edge) => [
+        edge.source === node.id ? edge.sourceHandle : undefined,
+        edge.target === node.id ? edge.targetHandle : undefined,
+      ].filter((handle): handle is string => typeof handle === 'string')),
       recordState: blueprint.recordState,
       editTitle: editNodeTitle,
     },
-  })), [blueprint.nodes, blueprint.recordState, blueprint.values, definitions, editNodeTitle])
+  })), [blueprint.edges, blueprint.nodes, blueprint.recordState, blueprint.values, definitions, editNodeTitle])
   const edges = useMemo(() => blueprint.edges.map((edge) => {
     const source = nodes.find((node) => node.id === edge.source)
     const target = nodes.find((node) => node.id === edge.target)
@@ -302,17 +333,22 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     const node = target.closest<HTMLElement>('.react-flow__node')
     openContextMenu(event, node?.dataset.id ?? null)
   }}>
-    <div className="graph-canvas">
+        <div className="graph-canvas">
+      <div className="graph-breadcrumb" aria-label={`Current path: ${blueprint.name} / Events`}>
+        <span className="graph-breadcrumb-item"><Workflow size={14} />{blueprint.name}</span>
+        <span className="graph-breadcrumb-divider" aria-hidden="true">/</span>
+        <span className="graph-breadcrumb-item current"><FolderOpen size={14} />Events</span>
+      </div>
       <ReactFlow
         nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onNodesDelete={onNodesDelete}
         onConnect={onConnect} isValidConnection={isValidConnection}
         onSelectionChange={onSelectionChange}
         onNodeClick={(_, node) => { selectNode(node.id); setContextMenu(null); shellRef.current?.focus({ preventScroll: true }) }}
         onPaneClick={() => { selectNode(null); setContextMenu(null); shellRef.current?.focus({ preventScroll: true }) }}
-        nodesDraggable={!locked} nodesConnectable={!locked} panOnDrag={[2]} panOnScroll={false} zoomOnScroll selectionOnDrag={!locked} selectionMode={SelectionMode.Partial} fitView fitViewOptions={{ padding: .2 }} deleteKeyCode={locked ? null : ['Backspace', 'Delete']} minZoom={.3} maxZoom={1.6}
+        nodesDraggable={!locked} nodesConnectable={!locked} panOnDrag={[2]} panOnScroll={false} zoomOnPinch zoomOnScroll selectionOnDrag={!locked} selectionMode={SelectionMode.Partial} fitView fitViewOptions={{ padding: .2 }} deleteKeyCode={locked ? null : ['Backspace', 'Delete']} minZoom={.01} maxZoom={1.6}
         proOptions={{ hideAttribution: true }} defaultEdgeOptions={{ style: { stroke: '#8492a9', strokeWidth: 1.6 } }}
       >
-        <Background variant={BackgroundVariant.Lines} gap={24} size={1} color="#262c37" />
+        <Background variant={BackgroundVariant.Lines} gap={22} size={1} color="#2c2d32" />
       </ReactFlow>
     </div>
     {contextMenu && createPortal(<div className={`graph-context-menu${contextMenu.nodeId ? '' : ' create-node-menu'}`} role="menu" aria-label={contextMenu.nodeId ? 'Node actions' : 'Create node'} style={{ left: Math.max(8, Math.min(window.innerWidth - (contextMenu.nodeId ? 184 : 236), contextMenu.x)), top: Math.max(8, Math.min(window.innerHeight - (contextMenu.nodeId ? 166 : Math.min(window.innerHeight * .65, 520) + 16), contextMenu.y)) }} onContextMenu={(event) => event.preventDefault()}>

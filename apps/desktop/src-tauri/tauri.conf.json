@@ -18,6 +18,7 @@
         "minWidth": 490,
         "minHeight": 310,
         "decorations": false,
+        "zoomHotkeysEnabled": true,
         "backgroundColor": "#17191e",
         "shadow": true
       }

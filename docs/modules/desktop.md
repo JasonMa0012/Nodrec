@@ -11,7 +11,7 @@ React + Tauri 桌面 UI 已接入蓝图文件索引、显式保存和 Rust 工�
 - Overview 卡片使用 React-Grid-Layout 管理每个蓝图独立的响应式位置与宽度，拖动复用参数编辑器的 dnd-kit 传感器、拖动预览和行列插入逻辑。网格测量完成后才显示；中央投放交换位置，侧向投放插入同一行并自动分配整行宽度，上下投放插入独立行，底部空白区可追加到末尾；列宽可继续手动调整。卡片高度通过 ResizeObserver 测量标题和字段正文，正文不再拉伸填满多余空间。顶部中央的横向点阵无按钮底框，卡片悬停时显示；宽度把手仅在鼠标接近或键盘聚焦时显示。内容宽度低于 900 CSS px 时保持单列，达到 900 px 使用 12 列网格。
 - Overview 参数采用 Inline Rows：参数名与控件同行，参数名为 14px、控件文字为 13px；名称优先完整换行，编辑控件收窄但至少保留 84px。布尔项只显示紧凑开关，不拉伸成整行输入框。卡片标题栏收至 44px；字段行序、分列和比例仍来自共享布局，卡片详情与布局编辑器保持原样。
 - 卡片参数放置由卡片自身处理，阻止外层区域重复放置；窄工作区将 Overview 卡片切为单列，标签栏隐藏滚动条并保留横向滚动。
-- Blueprint 使用 React Flow 的 Rust 节点目录，可在画布空白处右键并按鼠标位置添加节点，以可视化控件编辑参数、连线、移动和删除；空白处左键拖动框选，右键拖动画布，按 F 适配视图。节点右键菜单提供复制、重复、删除和粘贴，Ctrl+C／Ctrl+V 可复制／粘贴选中节点，粘贴副本与原节点的数据互不共享。可暴露参数通过 Details 小开关创建同类型输入端口，连线值覆盖参数默认值；Boolean、Byte、Integer、Integer64、Float、Double、Name、String、Text 分别有 Make 节点，Region、Path 和媒体流由对应领域节点构造或产出。引脚和连线采用 UE 默认 GraphEditorSettings 类型颜色，通配值为灰色。执行引脚显示在节点标题栏左右侧，为不带参数名的白色三角形，不占用节点参数区。Register Control 每个节点只注册一个总控按钮；菜单项由 Register Control Menu 节点逐项注册，以路径表达层级。Register Control 的整数 Order 控制总控栏按钮顺序，相同值保持图中注册顺序。框选后的 Details 实时显示当前选择；多选时只显示共同且类型兼容的参数，异值显示 `Multiple values`，编辑作用于全部选中节点。可编辑参数偏离默认值时显示还原按钮。Details 参数采用对齐的单行 Label／Field，自适应显示完整 Label；同级参数与 Header 对齐，仅嵌套 Header 缩进表示层级。NodeType 在标题右侧，节点标题可在 Details 标题单击或画布节点标题双击重命名。Details 面板随内容调整高度、宽度可拖动；它覆盖在延伸到工作区右边界的节点画布上。字体和交互按 [Desktop UI 规范](../ui-guidelines.md) 执行。运行前由 Rust 复核类型、循环、引用和媒体管线。
+- Blueprint 使用 React Flow 的 Rust 节点目录，可在画布空白处右键并按鼠标位置添加节点，以可视化控件编辑参数、连线、移动和删除；空白处左键拖动框选，右键拖动画布。触摸板的细粒度像素滚动平移、捏合缩放；常规鼠标滚轮缩放，右键拖动仍平移，按 F 适配视图。像素滚轮单次绝对增量小于 80 CSS px 时按触摸板平移处理，较大增量及行／页模式滚轮走 React Flow 缩放。节点右键菜单提供复制、重复、删除和粘贴，Ctrl+C／Ctrl+V 可复制／粘贴选中节点，粘贴副本与原节点的数据互不共享。可暴露参数前的右箭头导入按钮创建同类型输入端口；按钮启用时字段只读，连线值覆盖参数默认值。Boolean、Byte、Integer、Integer64、Float、Double、Name、String、Text 分别有 Make 节点，Region、Path 和媒体流由对应领域节点构造或产出。引脚和连线采用 UE 默认 GraphEditorSettings 类型颜色，通配值为灰色。执行引脚显示在节点标题栏左右侧，输入和输出箭头分别朝外，垂直居中；未连接时为空心三角形，不占用节点参数区。Register Control 每个节点只注册一个总控按钮；菜单项由 Register Control Menu 节点逐项注册，以路径表达层级。Register Control 的整数 Order 控制总控栏按钮顺序，相同值保持图中注册顺序。框选后的 Details 实时显示当前选择；多选时只显示共同且类型兼容的参数，异值显示 `Multiple values`，编辑作用于全部选中节点。可编辑参数偏离默认值时显示还原按钮。Details 参数采用对齐的单行 Label／Field，自适应显示完整 Label；输入按钮位于参数名与控件之间，Toggle 在控件列左对齐且不显示外围字段框；分组使用可折叠的 UE 风格标题栏。NodeType 在标题右侧，节点标题可在 Details 标题单击或画布节点标题双击重命名。Details 面板随内容调整高度、宽度可拖动；它覆盖在延伸到工作区右边界的节点画布上。Blueprint 采用高密度布局，蓝图列表作为独立侧栏默认展开，画布路径显示当前蓝图名称和 `Events`。字体和交互按 [Desktop UI 规范](../ui-guidelines.md) 执行。运行前由 Rust 复核类型、循环、引用和媒体管线。
 - 缺少 Order 字段的旧蓝图在加载时按注册顺序推导内存默认值，不自动写回文件；用户显式保存后才持久化。
 - Tauri 窗口最小尺寸为 490×310 CSS px。
 - 启动只扫描 exe 旁 `blueprints/builtin/` 和 `blueprints/user/`，不补建缺失文件。Source templates 位于 `apps/desktop/blueprints/builtin/`，`tauri:dev`／`tauri:build` 构建时仅复制缺少的内置文件。内置和用户蓝图都能保存与删除。
@@ -73,6 +73,33 @@ Overview 卡片拖动修复与验收（2026-10-13）：
 - Release WebView 验证 Overview 和节点参数的还原按钮仅在值偏离默认值时出现；还原后值复位、按钮隐藏。框选两个 Register Control 后 Details 更新为多选，Order 的混合值显示 `Multiple values`；还原后批改 Order 并保存，两个节点均落盘为 7。
 - Ctrl+C／Ctrl+V 复制 Register Control 后修改副本 Order、删除副本，原节点 Order 保持 4 且仍存在。粘贴对节点和连线分别按值克隆。
 - `npm run test:blueprint-runtime` 和 `npm run test:overview-drag` 通过；`npm run lint`、`npm run build` 和 18 项模型测试通过。WebView CDP 验收不覆盖物理输入或多 DPI。
+
+Details 布局与配色复验（2026-10-15）：
+
+- `npm run test:blueprint-runtime` 现在在 Release WebView 检查 Details 表单及分组的实际宽度、行内标签／导入按钮／控件／还原按钮顺序、无换行和横向溢出，Toggle 左对齐且没有外围字段框，输入激活后字段只读、分组可折叠；还检查 Overview 图标、开关、主动作和焦点边框均使用粉色，并核对蓝图路径及执行引脚连接方向／空心状态。
+- 验收脚本在 `out/ui-sketches/` 保存真实 Release WebView 的 Overview 和 Details 截图。Details 布局检查覆盖浏览器 `<details>` 内容容器，避免只看到外层面板尺寸而漏掉内部网格列宽崩塌。
+- Release WebView 验收通过；当前窗口环境下的截图和 DOM/CDP 检查不覆盖物理输入、多 DPI 或其他窗口尺寸。
+
+卡片参数样式与缩放把手复验（2026-10-15）：
+
+- Card Details 与卡片布局编辑器的参数统一为同行 Label／Field；标签可换行、字号至少 12px，控件保留最小宽度，Boolean Toggle 左对齐且不带外框。布局编辑器改用紧凑单行参数项。
+- Overview 相邻卡片把手分别锚在各自边缘，命中区不相交；侧栏默认展开。
+- Release WebView 的 `npm run test:overview-drag` 验证 Card Details／布局编辑器的行列尺寸、字体、Toggle 和主题表面色，并验证把手相对卡片边缘的坐标及命中区间距；截图保存在忽略目录 `out/ui-tests/`。`npm run test:blueprint-runtime` 验证蓝图侧栏默认展开及收起／展开后的可用区域。
+- 其他 DPI、窗口尺寸与物理鼠标操作仍待现场验证。
+
+节点画布滚轮／触摸板手势与回归验收（2026-10-17）：
+
+- 双指平移使用画布外层的原生非被动 wheel 捕获监听，取消网页默认滚动；用户在 WebView2 中复测仍有初始轴锁定。注入序列无法仿真操作系统的真实手势轴转换，所以自动通过不等于硬件验收通过。
+- 画布原生 wheel 处理统一接管缩放，保持鼠标位置对应的画布点不变；滚轮／捏合的缩放指数增量现为 React Flow 默认值的四倍，范围为 1%–160%。Release 回归检查倍率、缩放下限及页面比例不变。
+- 真实硬件对照（用户操作）：Nodrec 和同一 WebView2 宿主中的官方 React Flow Demo 都锁定初始轴；用户在外部浏览器的官方 Demo 可自由转向。Nodrec 采集 222 个 wheel 事件，宿主中的 Demo 采集 314 个，两份都没有同时含两轴非零增量的事件。问题在页面收到输入之前；具体是 Windows 手势转换还是 WebView2 内部处理尚未确定。
+- Windows 触摸板数据调研：WebView 的 `WheelEvent` 只有经系统处理的滚轮 delta。原生应用可注册 `RegisterTouchpadCapableWindow` 并从 `WM_POINTER`／`GetPointerTouchpadInfo` 获得高保真联系人信息；要拿 HID 输入报告，Windows Raw Input 提供 `RegisterRawInputDevices`／`GetRawInputData`，Windows Precision Touchpad HID collection 的 usage 为 Page `0x0D`、Usage `0x05`。后者取决于具体设备／驱动是否暴露该 collection，也可能与 Windows 正常触摸板路径冲突；未做 Nodrec 原生采集实现或本机设备验证。参考：[Precision Touchpad API](https://learn.microsoft.com/en-us/windows/win32/input-precisiontouchpad/precision-touchpad-portal)、[Raw Input](https://learn.microsoft.com/en-us/windows/win32/inputdev/raw-input)、[PTP HID collection](https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/touchpad-windows-precision-touchpad-collection)。
+
+- 真实 Windows 触摸板反馈：平移正常、捏合无响应。排查发现 Tauri 默认关闭 `zoomHotkeysEnabled`，Wry 会同时关闭 WebView2 的 `IsPinchZoomEnabled`；现已开启。新增 Chromium 触摸板来源的合成捏合入口检查通过，画布缩放且页面比例不变；真实设备需重新人工确认，之前 Ctrl+wheel 检查不足以覆盖这个入口。
+
+- Release WebView 根据像素滚轮 delta 增量区分细粒度触摸板滚动和平常的粗粒度滚轮；触摸板滚动平移、Ctrl+滚轮捏合缩放、普通滚轮缩放、右键拖动平移。
+- `npm run test:touchpad-demo` 在官方 React Flow `zoom-pan-2` Demo 验证像素滚动平移且缩放不变、Ctrl+滚轮捏合会缩放；`npm run test:touchpad-nodrec` 对 Nodrec Release WebView 验证鼠标滚轮、垂直／水平触摸板平移、捏合缩放、右键拖动画布，并检查页面比例不变。组合入口为 `npm run test:touchpad-gestures`。
+- `npm run verify` 依次运行 lint、模型／Rust 单测、Tauri Release 构建、Overview 拖动、蓝图运行及触摸板手势验收；各项脚本可单独调用，完整用法见 [自动化验证框架](../testing.md#自动化验证框架)。
+- 测试使用 Edge/CDP 合成输入，能回归 WebView 收到的 WheelEvent 语义，不等同于真实触摸板。像素 delta 阈值是浏览器无法报告输入设备来源时的启发式；本机 Win 触摸板及 MacBook 硬件仍待人工验收。
 
 ## 职责与边界
 

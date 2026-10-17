@@ -2,6 +2,39 @@
 
 已有蓝图存储／运行单测、Release WebView 模拟录制闭环及 React 前端测试；真实媒体和回放尚未实现。以下场景用于澄清“做到什么程度算可用”，工具、性能阈值和环境在实践中确定。
 
+## 自动化验证框架
+
+在 `apps/desktop` 下运行命令。日常改动完成后执行 `npm run verify`；它会先运行静态／单元检查和 Release 构建，再依序运行 UI 回归。
+
+从仓库根目录运行时使用 `npm --prefix apps/desktop run test:touchpad-nodrec`；构建使用 `npm --prefix apps/desktop run tauri:build`。根目录没有 package.json。
+
+也可双击根目录 `tests` 中对应的 BAT；脚本自动切换工作目录、显示退出码并保留窗口。`tauri-build.bat` 构建 Release，`verify.bat` 执行完整验收；各 UI 单项脚本使用已构建的 Release。自动调用时设置 `NODREC_TEST_NO_PAUSE=1` 可跳过暂停。
+
+触摸板方向切换回归先检查画布能真正取消默认滚动，再注入竖直→斜向→水平及水平→斜向→竖直序列，逐步检查两轴位移和缩放不变。此检查不代替真实硬件的连续手势：人工需保持双指不离开触摸板完成上述两组转向，并确认节点／空白区域均正常。
+
+用户反馈合成检查通过后真实手势仍锁轴，因此自动通过不能关闭此缺陷。测试按倍率检查四倍缩放速度和 1% 下限。双击 `tests/test-touchpad-hardware.bat` 会打开 Release 并记录 30 秒真实 wheel 输入；在画布上完成两组转向，日志保存到 `out/ui-tests/touchpad-hardware.json`，含 WebView UA 与两轴滚轮增量。它只采集证据，不自动判定硬件验收通过。
+
+硬件采集启动即建日志，操作期间每 500ms 保存；失败会保存错误，关闭窗口会使未完成的 CDP 请求失败，避免挂起且丢失全部记录。`tests/test-touchpad-demo-hardware.bat` 将同一个官方 Demo 临时载入测试 WebView2，与 Nodrec 使用相同的 Windows 宿主和运行时，采集到 `out/ui-tests/touchpad-demo-hardware.json`，用于区分宿主输入问题和应用处理问题。若需要手指联系人坐标／压力，应走 Windows 原生 Precision Touchpad API；Web WheelEvent 不包含这些原始报告。
+
+| 命令 | 覆盖范围 |
+| --- | --- |
+| `npm run verify` | lint、React 模型单测、Rust 单测、Tauri Release 构建、Overview 拖动、蓝图运行和触摸板手势全量回归 |
+| `npm run verify:unit` | lint、React 模型单测和 Rust 单测 |
+| `npm run build` | TypeScript 检查和 Vite 前端构建 |
+| `npm run test:overview-drag` | Release WebView 的 Overview 拖放与尺寸回归；先构建 Release |
+| `npm run test:blueprint-runtime` | Release WebView 的蓝图、Details、节点编辑和录制状态回归；先构建 Release |
+| `npm run test:touchpad-demo` | 启动 Edge headless，在官方 React Flow `zoom-pan-2` Demo 验证滚动平移和捏合缩放 |
+| `npm run test:touchpad-nodrec` | 启动 Nodrec Release WebView，验证常规鼠标滚轮缩放、像素滚动平移、捏合缩放和右键拖动；先构建 Release |
+| `npm run test:touchpad-gestures` | 先测官方 Demo，再用相同的像素滚动／Ctrl+滚轮事件测 Nodrec |
+| `npm run test:model` | React 模型单测 |
+| `npm run test:rust` | Rust 库单测 |
+
+触摸板测试通过 CDP 的 `Input.dispatchMouseEvent(mouseWheel)` 注入可信像素滚轮事件；普通 mouse wheel 用较大 delta，精细两指滚动用小 delta，捏合用 Ctrl+滚轮。Nodrec 将非 Ctrl、像素模式且绝对 delta 小于 80 CSS px 的滚轮事件解释为连续触摸板平移，其余滚轮事件保留缩放路径。Edge 可用 `EDGE_EXECUTABLE` 环境变量指定路径；默认查找 Windows 常见安装目录。测试结束会关闭其启动的进程，蓝图运行验收会恢复临时修改的内置蓝图。
+
+Nodrec 脚本另用 `Input.synthesizePinchGesture`（`gestureSourceType: mouse`）覆盖 Chromium 触摸板手势入口，检查画布缩放且页面比例不变。仅注入 Ctrl+wheel 会绕过 WebView2 原生手势开关，不能作为捏合入口可用的证据。Tauri 的 `zoomHotkeysEnabled` 必须开启：当前 Wry 同时用它设置 `IsPinchZoomEnabled`。
+
+这些测试验证合成事件在浏览器／WebView 中的处理结果，不会模拟实际触摸板硬件，也不能证明 macOS 的 WKWebView 行为。人工验收必须在新构建的应用中分别执行双指平移、张合缩放、鼠标滚轮缩放和右键平移，并记录应用路径和版本；未完成时不得标记真实触摸板已通过。当前阈值是缺少输入设备来源字段时使用的启发式；真实设备 delta 落在另一侧时需现场校准。全量 `verify` 适用于 Windows x64 开发机；触摸板 Demo 需要 Edge 和网络访问。
+
 ## 蓝图存储与模拟运行（2026-10-14）
 
 - `apps/desktop/src-tauri` 中 `cargo test --lib`（16 项）验证缺失目录不被启动扫描创建、文件保存／重载、revision 冲突、危险 ID、删除／撤销、节点目录和图连接、条件分支求值、输入端覆盖参数默认值、九种 UE 标量 Make 节点及 Byte 范围、Make 输入端保持 UE 类型约束、Order 整数约束、路径菜单组装和稳定排序；实际内置配置也由同一 schema 校验。

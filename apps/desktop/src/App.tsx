@@ -9,7 +9,7 @@ import { Responsive, useContainerWidth, verticalCompactor, type Layout } from 'r
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 import {
-  AudioLines, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, Crop, Ellipsis, FileVideo2, Folder,
+  ArrowRightToLine, AudioLines, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, Crop, Ellipsis, FileVideo2, Folder,
   FolderPlus, GripVertical, LayoutGrid, Minus, Monitor, MousePointer2,
   Pin, Plus, RotateCcw, Save, Settings, Square, X, Workflow, Keyboard, Play, Pause, StopCircle, Video,
 } from 'lucide-react'
@@ -152,10 +152,10 @@ function ParameterCard({ definition, value, pinned, onChange, selected = false, 
   return <div className={`layout-parameter${selected ? ' selected' : ''}${preview ? ' drag-preview' : ''}`} data-parameter-id={definition.id} onClick={onSelect}>
     <div className="layout-field-heading">
       {dragProps ? <button type="button" className="parameter-drag-handle" aria-label={`Drag ${definition.label}`} {...dragProps}><GripVertical size={13} /></button> : <GripVertical size={13} />}
-      <span>{definition.label}</span>
+      <span className="parameter-label">{definition.label}</span>
+      <ParameterControl definition={definition} value={value} onChange={onChange} compact />
       <button type="button" className={`icon-button pin-button${pinned ? ' pinned' : ''}`} aria-label={pinned ? 'Unpin parameter' : 'Pin parameter'} onClick={(event) => { event.stopPropagation(); onPin?.() }}><Pin size={14} /></button>
     </div>
-    <ParameterControl definition={definition} value={value} onChange={onChange} compact />
   </div>
 }
 
@@ -431,7 +431,7 @@ function CardDetails({ blueprint, update, close, editLayout }: { blueprint: Blue
             {row.columns.map((column) => {
               const definition = definitions.find((item) => item.id === column.id)
               return definition ? <div className="detail-parameter" key={column.id}>
-                <ParameterField blueprint={blueprint} definition={definition} update={update} />
+                <ParameterField blueprint={blueprint} definition={definition} update={update} compact inline />
                 <button className={`icon-button pin-button${pinned ? ' pinned' : ''}`} title={pinned ? 'Unpin from overview' : 'Pin to overview'} aria-label={pinned ? `Unpin ${definition.label}` : `Pin ${definition.label}`} onClick={() => update((current) => setPinned(current, card.id, definition.id, !pinned))}><Pin size={15} /></button>
               </div> : null
             })}
@@ -656,44 +656,46 @@ function ConfigField({ name, values, path, blueprint, defaultConfigs, eventNodeS
   if (value === undefined || !canRenderConfig(name, values)) return null
   const multiple = values.some((item) => !sameConfigValue(item, value))
   if (Array.isArray(value) && multiple) return <div className="parameter-field config-field"><span className="parameter-label">{label}</span><span className="readonly-value">Multiple values</span></div>
-  if (Array.isArray(value)) return <fieldset className="config-group config-array">
-    <legend>{label}</legend>
-    {value.map((item, index) => <div className="config-array-item" key={isConfigObject(item) && typeof item.id === 'string' ? item.id : index}>
+  if (Array.isArray(value)) return <details className="config-group config-array" open>
+    <summary><ChevronDown size={14} />{label}</summary>
+    <div className="config-group-content">{value.map((item, index) => <div className="config-array-item" key={isConfigObject(item) && typeof item.id === 'string' ? item.id : index}>
       <ConfigField name={`${label} ${index + 1}`} values={values.map((array) => (array as unknown[])[index])} path={[...path, index]} blueprint={blueprint} defaultConfigs={defaultConfigs} eventNodeSelected={eventNodeSelected} inputParameters={inputParameters} exposedInputsByNode={exposedInputsByNode} toggleInput={toggleInput} updateValue={updateValue} resetValue={resetValue} />
       <button type="button" className="config-remove" aria-label={`Remove ${label} ${index + 1}`} onClick={() => updateValue(path, value.filter((_, itemIndex) => itemIndex !== index))}><X size={12} /></button>
     </div>)}
-    <button type="button" className="config-add" onClick={() => updateValue(path, [...value, ''])}><Plus size={12} />Add item</button>
-  </fieldset>
+    <button type="button" className="config-add" onClick={() => updateValue(path, [...value, ''])}><Plus size={12} />Add item</button></div>
+  </details>
   if (isConfigObject(value)) {
     const keys = Object.keys(value).filter((key) => canRenderConfig(key, values.map((item) => isConfigObject(item) ? item[key] : undefined)))
     if (keys.length === 0) return null
-    return <fieldset className="config-group">
-      <legend>{label}</legend>
-      {keys.map((key) => <ConfigField key={`${path.join('.')}.${key}`} name={key} values={values.map((item) => (item as Record<string, unknown>)[key])} path={[...path, key]} blueprint={blueprint} defaultConfigs={defaultConfigs} eventNodeSelected={eventNodeSelected} inputParameters={inputParameters} exposedInputsByNode={exposedInputsByNode} toggleInput={toggleInput} updateValue={updateValue} resetValue={resetValue} />)}
-    </fieldset>
+    return <details className="config-group" open>
+      <summary><ChevronDown size={14} />{label}</summary>
+      <div className="config-group-content">{keys.map((key) => <ConfigField key={`${path.join('.')}.${key}`} name={key} values={values.map((item) => (item as Record<string, unknown>)[key])} path={[...path, key]} blueprint={blueprint} defaultConfigs={defaultConfigs} eventNodeSelected={eventNodeSelected} inputParameters={inputParameters} exposedInputsByNode={exposedInputsByNode} toggleInput={toggleInput} updateValue={updateValue} resetValue={resetValue} />)}</div>
+    </details>
   }
 
   const options = configOptions(name, blueprint)
   const readOnlyEventId = eventNodeSelected && name === 'eventId' && path.length === 1
   const inputId = configPathId(path)
   const canExposeInput = inputParameters.includes(inputId)
-  const inputEnabled = exposedInputsByNode.length > 0 && exposedInputsByNode.every((inputs) => inputs.has(inputId))
-  const inputMixed = exposedInputsByNode.some((inputs) => inputs.has(inputId)) && !inputEnabled
+  const inputEnabled = canExposeInput && exposedInputsByNode.length > 0 && exposedInputsByNode.every((inputs) => inputs.has(inputId))
+  const inputMixed = canExposeInput && exposedInputsByNode.some((inputs) => inputs.has(inputId)) && !inputEnabled
+  const inputLocked = inputEnabled || inputMixed
   const defaultValues = defaultConfigs.map((config) => readConfigPath(config, path))
-  const showReset = !readOnlyEventId && values.some((item, index) => defaultValues[index]?.found ? !sameConfigValue(item, defaultValues[index].value) : item !== undefined)
-  return <div className="parameter-field config-field"><span className="parameter-label">{canExposeInput && <button type="button" className="parameter-input-toggle" role="checkbox" aria-checked={inputMixed ? 'mixed' : inputEnabled} aria-label={`Expose ${label} as input`} title="Expose as node input" onClick={() => toggleInput(path, !inputEnabled || inputMixed)}><span /></button>}<span>{label}</span></span>
-    <span className="parameter-control-wrap">
-      {typeof value === 'boolean' && multiple ? <select className="field-control" aria-label={label} value="" onChange={(event) => updateValue(path, event.target.value === 'true')}>
+  const showReset = !readOnlyEventId && !inputLocked && values.some((item, index) => defaultValues[index]?.found ? !sameConfigValue(item, defaultValues[index].value) : item !== undefined)
+  return <div className={`parameter-field config-field${inputLocked ? ' input-bound' : ''}${inputMixed ? ' input-mixed' : ''}`}><span className="parameter-label">{label}</span>
+    {canExposeInput ? <button type="button" className={`parameter-input-button${inputEnabled ? ' active' : ''}${inputMixed ? ' mixed' : ''}`} aria-pressed={inputMixed ? 'mixed' : inputEnabled} aria-label={`${inputEnabled ? 'Disable' : 'Enable'} ${label} node input`} title={inputEnabled ? 'Node input enabled' : 'Enable node input'} onClick={() => toggleInput(path, !inputEnabled || inputMixed)}><ArrowRightToLine size={15} /></button> : <span className="parameter-input-button-space" aria-hidden="true" />}
+    <span className={`parameter-control-wrap${inputLocked ? ' input-bound' : ''}${typeof value === 'boolean' && !multiple ? ' boolean-control' : ''}`}>
+      {typeof value === 'boolean' && multiple ? <select className="field-control" aria-label={label} value="" disabled={inputLocked} onChange={(event) => updateValue(path, event.target.value === 'true')}>
         <option value="">Multiple values</option><option value="true">On</option><option value="false">Off</option>
-      </select> : typeof value === 'boolean' ? <span className="field-control checkbox-control compact"><input aria-label={label} type="checkbox" checked={value} onChange={(event) => updateValue(path, event.target.checked)} /><span className="toggle-track"><i /></span></span>
-        : typeof value === 'number' ? <input className="field-control" aria-label={label} type="number" step={Number.isInteger(value) ? '1' : 'any'} min={name === 'milliseconds' ? 0 : undefined} max={name === 'milliseconds' ? 60000 : undefined} value={multiple ? '' : value} placeholder={multiple ? 'Multiple values' : undefined} onChange={(event) => updateValue(path, event.target.value === '' ? 0 : Number(event.target.value))} />
-          : options.length > 0 ? <select className="field-control" aria-label={label} value={multiple ? '' : String(value ?? '')} disabled={readOnlyEventId} onChange={(event) => updateValue(path, event.target.value)}>
+      </select> : typeof value === 'boolean' ? <span className="field-control checkbox-control compact"><input aria-label={label} type="checkbox" checked={value} disabled={inputLocked} onChange={(event) => updateValue(path, event.target.checked)} /><span className="toggle-track"><i /></span></span>
+        : typeof value === 'number' ? <input className="field-control" aria-label={label} type="number" step={Number.isInteger(value) ? '1' : 'any'} min={name === 'milliseconds' ? 0 : undefined} max={name === 'milliseconds' ? 60000 : undefined} value={multiple ? '' : value} placeholder={multiple ? 'Multiple values' : undefined} readOnly={inputLocked} onChange={(event) => updateValue(path, event.target.value === '' ? 0 : Number(event.target.value))} />
+          : options.length > 0 ? <select className="field-control" aria-label={label} value={multiple ? '' : String(value ?? '')} disabled={readOnlyEventId || inputLocked} onChange={(event) => updateValue(path, event.target.value)}>
             {multiple && <option value="">Multiple values</option>}
             {!multiple && !options.some((option) => option.value === String(value ?? '')) && <option value={String(value ?? '')}>{String(value ?? '')} (unresolved)</option>}
             {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
-            : <input className="field-control" aria-label={label} value={multiple ? '' : String(value ?? '')} placeholder={multiple ? 'Multiple values' : undefined} readOnly={readOnlyEventId} onChange={(event) => updateValue(path, event.target.value)} />}
-      {showReset && <button type="button" className="parameter-reset" aria-label={`Reset ${label}`} title="Reset to default" onClick={(event) => { event.stopPropagation(); resetValue(path) }}><RotateCcw size={13} /></button>}
+            : <input className="field-control" aria-label={label} value={multiple ? '' : String(value ?? '')} placeholder={multiple ? 'Multiple values' : undefined} readOnly={readOnlyEventId || inputLocked} onChange={(event) => updateValue(path, event.target.value)} />}
+      {showReset ? <button type="button" className="parameter-reset" aria-label={`Reset ${label}`} title="Reset to default" onClick={(event) => { event.stopPropagation(); resetValue(path) }}><RotateCcw size={13} /></button> : <span className="parameter-reset-space" aria-hidden="true" />}
     </span>
   </div>
 }
@@ -799,7 +801,7 @@ function CardDetailsPreview({ blueprint, update }: { blueprint: Blueprint; updat
 }
 
 function BlueprintContent({ blueprint, update, openCard, catalog, locked }: { blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; openCard: (id: string) => void; catalog: NodeTypeDefinition[]; locked: boolean }) {
-  const [detailsWidth, setDetailsWidth] = useState(300)
+  const [detailsWidth, setDetailsWidth] = useState(380)
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
   const selectGraphNodes = useCallback((ids: string[]) => {
     setEditingNodeId(null)
