@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { listen } from '@tauri-apps/api/event'
 import {
   addEdge, applyEdgeChanges, applyNodeChanges, Background, BackgroundVariant, Handle, Position,
   ReactFlow, ReactFlowProvider, SelectionMode, useReactFlow,
@@ -121,6 +122,13 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
   const { fitView, getViewport, screenToFlowPosition, setViewport } = useReactFlow<CanvasNode>()
   const shellRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+    void listen('precision-touchpad-frame', ({ payload }) => window.dispatchEvent(new CustomEvent('nodrec-precision-touchpad-frame', { detail: payload })))
+      .then((stop) => { if (disposed) stop(); else unlisten = stop })
+    return () => { disposed = true; unlisten?.() }
+  }, [])
+  useEffect(() => {
     const shell = shellRef.current
     if (!shell) return
     const pan = (wheel: WheelEvent) => {
@@ -133,7 +141,7 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
       if (wheel.ctrlKey || mouseWheel) {
         const bounds = wheel.target.closest('.react-flow')!.getBoundingClientRect()
         const factor = wheel.ctrlKey && /Mac/.test(navigator.platform) ? 10 : 1
-        const delta = -wheel.deltaY * (wheel.deltaMode === 1 ? .05 : wheel.deltaMode ? 1 : .002) * factor * 4
+        const delta = -wheel.deltaY * (wheel.deltaMode === 1 ? .05 : wheel.deltaMode ? 1 : .002) * factor * (wheel.ctrlKey ? 4 : 1)
         const zoom = Math.max(.01, Math.min(1.6, viewport.zoom * 2 ** delta))
         const x = wheel.clientX - bounds.left
         const y = wheel.clientY - bounds.top

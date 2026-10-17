@@ -14,7 +14,7 @@
 
 用户反馈合成检查通过后真实手势仍锁轴，因此自动通过不能关闭此缺陷。测试按倍率检查四倍缩放速度和 1% 下限。双击 `tests/test-touchpad-hardware.bat` 会打开 Release 并记录 30 秒真实 wheel 输入；在画布上完成两组转向，日志保存到 `out/ui-tests/touchpad-hardware.json`，含 WebView UA 与两轴滚轮增量。它只采集证据，不自动判定硬件验收通过。
 
-硬件采集启动即建日志，操作期间每 500ms 保存；失败会保存错误，关闭窗口会使未完成的 CDP 请求失败，避免挂起且丢失全部记录。`tests/test-touchpad-demo-hardware.bat` 将同一个官方 Demo 临时载入测试 WebView2，与 Nodrec 使用相同的 Windows 宿主和运行时，采集到 `out/ui-tests/touchpad-demo-hardware.json`，用于区分宿主输入问题和应用处理问题。若需要手指联系人坐标／压力，应走 Windows 原生 Precision Touchpad API；Web WheelEvent 不包含这些原始报告。
+硬件采集启动即建日志，操作期间每 500ms 保存；失败会保存错误，关闭窗口会使未完成的 CDP 请求失败，避免挂起且丢失全部记录。Release 同时接入 Windows Precision Touchpad：原生 `WM_POINTER` 事件帧提供触点 Himetric 坐标；WebView listener 独立保存浏览器收到的 wheel 增量。双击 `tests/test-touchpad-hardware.bat` 后保持打开的 Nodrec 窗口为焦点，脚本等到首个触摸板事件（最多 120 秒）后再采集 30 秒，在这段时间完成两组连续转向。日志分别报告 pointer frame 和 wheel 数量；两者为零代表此次操作没有到达测试窗口，不算验收。`tests/test-touchpad-demo-hardware.bat` 将同一个官方 Demo 临时载入测试 WebView2，仍只采集 WebView wheel 事件。
 
 | 命令 | 覆盖范围 |
 | --- | --- |

@@ -90,9 +90,9 @@ Details 布局与配色复验（2026-10-15）：
 节点画布滚轮／触摸板手势与回归验收（2026-10-17）：
 
 - 双指平移使用画布外层的原生非被动 wheel 捕获监听，取消网页默认滚动；用户在 WebView2 中复测仍有初始轴锁定。注入序列无法仿真操作系统的真实手势轴转换，所以自动通过不等于硬件验收通过。
-- 画布原生 wheel 处理统一接管缩放，保持鼠标位置对应的画布点不变；滚轮／捏合的缩放指数增量现为 React Flow 默认值的四倍，范围为 1%–160%。Release 回归检查倍率、缩放下限及页面比例不变。
+- 画布原生 wheel 处理统一接管缩放，保持鼠标位置对应的画布点不变；鼠标滚轮用 React Flow 默认速度，触控板捏合使用四倍速度，范围为 1%–160%。Release 回归检查倍率、缩放下限及页面比例不变。
 - 真实硬件对照（用户操作）：Nodrec 和同一 WebView2 宿主中的官方 React Flow Demo 都锁定初始轴；用户在外部浏览器的官方 Demo 可自由转向。Nodrec 采集 222 个 wheel 事件，宿主中的 Demo 采集 314 个，两份都没有同时含两轴非零增量的事件。问题在页面收到输入之前；具体是 Windows 手势转换还是 WebView2 内部处理尚未确定。
-- Windows 触摸板数据调研：WebView 的 `WheelEvent` 只有经系统处理的滚轮 delta。原生应用可注册 `RegisterTouchpadCapableWindow` 并从 `WM_POINTER`／`GetPointerTouchpadInfo` 获得高保真联系人信息；要拿 HID 输入报告，Windows Raw Input 提供 `RegisterRawInputDevices`／`GetRawInputData`，Windows Precision Touchpad HID collection 的 usage 为 Page `0x0D`、Usage `0x05`。后者取决于具体设备／驱动是否暴露该 collection，也可能与 Windows 正常触摸板路径冲突；未做 Nodrec 原生采集实现或本机设备验证。参考：[Precision Touchpad API](https://learn.microsoft.com/en-us/windows/win32/input-precisiontouchpad/precision-touchpad-portal)、[Raw Input](https://learn.microsoft.com/en-us/windows/win32/inputdev/raw-input)、[PTP HID collection](https://learn.microsoft.com/en-us/windows-hardware/design/component-guidelines/touchpad-windows-precision-touchpad-collection)。
+- Windows 触摸板诊断已接入 `src-tauri/src/touchpad.rs`：对外层及 WebView2 子 HWND 注册 `RegisterTouchpadCapableWindow` 并监听 `WM_POINTER` 帧，记录双指 Himetric 坐标，同时保留 WebView wheel 轨迹。Release 确认注册了 `WRY_WEBVIEW` 和 `Chrome_WidgetWin_0`。最新 120 秒前台采集没有收到任何 pointer 或 wheel 事件，因此轴锁定来源仍无法判断。WebView `WheelEvent` 只有经系统处理的 delta。PTP 高保真联系人 API 与原始 HID 报告的边界及系统独占限制见 [Windows API 调研](https://learn.microsoft.com/en-us/windows/win32/input-precisiontouchpad/precision-touchpad-portal)。
 
 - 真实 Windows 触摸板反馈：平移正常、捏合无响应。排查发现 Tauri 默认关闭 `zoomHotkeysEnabled`，Wry 会同时关闭 WebView2 的 `IsPinchZoomEnabled`；现已开启。新增 Chromium 触摸板来源的合成捏合入口检查通过，画布缩放且页面比例不变；真实设备需重新人工确认，之前 Ctrl+wheel 检查不足以覆盖这个入口。
 

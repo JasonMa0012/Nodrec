@@ -1,4 +1,6 @@
 mod storage;
+#[cfg(windows)]
+mod touchpad;
 mod workflow;
 
 use serde_json::Value;
@@ -69,6 +71,16 @@ pub fn run() {
     let store = storage::BlueprintStore::beside_executable().expect("cannot locate the Nodrec application directory");
     tauri::Builder::default()
         .manage(AppState { store, workflow: workflow::WorkflowRuntime::default(), store_lock: Mutex::new(()) })
+        .setup(|app| {
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                match touchpad::install(&window) {
+                    Ok(()) => eprintln!("Precision Touchpad input registered; recording WM_POINTER frames"),
+                    Err(error) => eprintln!("Precision Touchpad input unavailable: {error}"),
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_blueprints,
             save_blueprint,
