@@ -10,11 +10,9 @@
 
 也可双击根目录 `tests` 中对应的 BAT；脚本自动切换工作目录、显示退出码并保留窗口。`tauri-build.bat` 构建 Release，`verify.bat` 执行完整验收；各 UI 单项脚本使用已构建的 Release。自动调用时设置 `NODREC_TEST_NO_PAUSE=1` 可跳过暂停。
 
+触摸板异常已暂停排查，主分支已移除原生采集、硬件 BAT 和外部官方 Demo 测试；实验分支、最新反馈与恢复方法见 [触摸板平移异常](bugs/touchpad-axis-lock.md)。合成回归不能关闭该缺陷。
+
 触摸板方向切换回归先检查画布能真正取消默认滚动，再注入竖直→斜向→水平及水平→斜向→竖直序列，逐步检查两轴位移和缩放不变。此检查不代替真实硬件的连续手势：人工需保持双指不离开触摸板完成上述两组转向，并确认节点／空白区域均正常。
-
-用户反馈合成检查通过后真实手势仍锁轴，因此自动通过不能关闭此缺陷。测试按倍率检查四倍缩放速度和 1% 下限。双击 `tests/test-touchpad-hardware.bat` 会打开 Release 并记录 30 秒真实 wheel 输入；在画布上完成两组转向，日志保存到 `out/ui-tests/touchpad-hardware.json`，含 WebView UA 与两轴滚轮增量。它只采集证据，不自动判定硬件验收通过。
-
-硬件采集启动即建日志，操作期间每 500ms 保存；失败会保存错误，关闭窗口会使未完成的 CDP 请求失败，避免挂起且丢失全部记录。Release 同时接入 Windows Precision Touchpad：原生 `WM_POINTER` 事件帧提供触点 Himetric 坐标；WebView listener 独立保存浏览器收到的 wheel 增量。双击 `tests/test-touchpad-hardware.bat` 后保持打开的 Nodrec 窗口为焦点，脚本等到首个触摸板事件（最多 120 秒）后再采集 30 秒，在这段时间完成两组连续转向。日志分别报告 pointer frame 和 wheel 数量；两者为零代表此次操作没有到达测试窗口，不算验收。`tests/test-touchpad-demo-hardware.bat` 将同一个官方 Demo 临时载入测试 WebView2，仍只采集 WebView wheel 事件。
 
 | 命令 | 覆盖范围 |
 | --- | --- |
@@ -23,17 +21,22 @@
 | `npm run build` | TypeScript 检查和 Vite 前端构建 |
 | `npm run test:overview-drag` | Release WebView 的 Overview 拖放与尺寸回归；先构建 Release |
 | `npm run test:blueprint-runtime` | Release WebView 的蓝图、Details、节点编辑和录制状态回归；先构建 Release |
-| `npm run test:touchpad-demo` | 启动 Edge headless，在官方 React Flow `zoom-pan-2` Demo 验证滚动平移和捏合缩放 |
 | `npm run test:touchpad-nodrec` | 启动 Nodrec Release WebView，验证常规鼠标滚轮缩放、像素滚动平移、捏合缩放和右键拖动；先构建 Release |
-| `npm run test:touchpad-gestures` | 先测官方 Demo，再用相同的像素滚动／Ctrl+滚轮事件测 Nodrec |
 | `npm run test:model` | React 模型单测 |
 | `npm run test:rust` | Rust 库单测 |
 
-触摸板测试通过 CDP 的 `Input.dispatchMouseEvent(mouseWheel)` 注入可信像素滚轮事件；普通 mouse wheel 用较大 delta，精细两指滚动用小 delta，捏合用 Ctrl+滚轮。Nodrec 将非 Ctrl、像素模式且绝对 delta 小于 80 CSS px 的滚轮事件解释为连续触摸板平移，其余滚轮事件保留缩放路径。Edge 可用 `EDGE_EXECUTABLE` 环境变量指定路径；默认查找 Windows 常见安装目录。测试结束会关闭其启动的进程，蓝图运行验收会恢复临时修改的内置蓝图。
+触摸板测试通过 CDP 的 `Input.dispatchMouseEvent(mouseWheel)` 注入可信像素滚轮事件；普通 mouse wheel 用较大 delta，精细两指滚动用小 delta，捏合用 Ctrl+滚轮。Nodrec 将非 Ctrl、像素模式且绝对 delta 小于 80 CSS px 的滚轮事件解释为连续触摸板平移，其余滚轮事件保留缩放路径。测试结束会关闭其启动的进程，蓝图运行验收会恢复临时修改的内置蓝图。
 
 Nodrec 脚本另用 `Input.synthesizePinchGesture`（`gestureSourceType: mouse`）覆盖 Chromium 触摸板手势入口，检查画布缩放且页面比例不变。仅注入 Ctrl+wheel 会绕过 WebView2 原生手势开关，不能作为捏合入口可用的证据。Tauri 的 `zoomHotkeysEnabled` 必须开启：当前 Wry 同时用它设置 `IsPinchZoomEnabled`。
 
-这些测试验证合成事件在浏览器／WebView 中的处理结果，不会模拟实际触摸板硬件，也不能证明 macOS 的 WKWebView 行为。人工验收必须在新构建的应用中分别执行双指平移、张合缩放、鼠标滚轮缩放和右键平移，并记录应用路径和版本；未完成时不得标记真实触摸板已通过。当前阈值是缺少输入设备来源字段时使用的启发式；真实设备 delta 落在另一侧时需现场校准。全量 `verify` 适用于 Windows x64 开发机；触摸板 Demo 需要 Edge 和网络访问。
+这些测试验证合成事件在浏览器／WebView 中的处理结果，不会模拟实际触摸板硬件，也不能证明 macOS 的 WKWebView 行为。人工验收必须在新构建的应用中分别执行双指平移、张合缩放、鼠标滚轮缩放和右键平移，并记录应用路径和版本；未完成时不得标记真实触摸板已通过。当前阈值是缺少输入设备来源字段时使用的启发式；真实设备 delta 落在另一侧时需现场校准。全量 `verify` 适用于 Windows x64 开发机。
+
+## 触摸板实验归档与清理（2026-10-19）
+
+- 原生触点采集、宿主输入补丁、硬件与官方 Demo 对照脚本保存在 `codex/fix-touchpad-axis-lock`；主分支移除这些诊断入口及直接 Windows API 依赖，保留 `test:touchpad-nodrec` 合成回归。
+- 清理后完整 `npm run verify` 复跑通过：lint、19 项模型测试、16 项 Rust 测试、前端与 Tauri Release x64 构建、Overview 拖放、蓝图运行及 Nodrec 合成手势回归。启动日志没有原生触摸板诊断输出。
+- 首轮 Rust 的 `deleted_blueprints_are_recoverable_without_startup_resurrection` 在删除后列表应为空的断言失败；未修改存储代码，完整复跑时通过。该次失败原因未定位，不能据复跑通过认定已修复。
+- 未重新验收真实触摸板或 MacBook。归档与清理不解决初始轴锁定、横向过快和不跟手，最新用户反馈及原始日志位置见 [排查记录](bugs/touchpad-axis-lock.md)。
 
 ## 蓝图存储与模拟运行（2026-10-14）
 

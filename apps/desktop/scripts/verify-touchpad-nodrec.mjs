@@ -5,25 +5,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import net from 'node:net'
-import { mkdir, writeFile } from 'node:fs/promises'
 
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const manual = process.argv.includes('--manual')
-const officialDemo = process.argv.includes('--official-demo')
-const hardwareOutput = path.resolve(desktop, `../../out/ui-tests/touchpad-${officialDemo ? 'demo-' : ''}hardware.json`)
-const hardwareTrace = { startedAt: new Date().toISOString(), status: 'starting', events: [], precisionTouchpadMessages: [] }
-async function saveHardwareTrace() {
-  await mkdir(path.dirname(hardwareOutput), { recursive: true })
-  await writeFile(hardwareOutput, JSON.stringify(hardwareTrace, null, 2))
-}
-if (manual) {
-  await saveHardwareTrace()
-  process.on('uncaughtExceptionMonitor', (error) => {
-    hardwareTrace.status = 'failed'
-    hardwareTrace.error = error.stack ?? String(error)
-    void saveHardwareTrace()
-  })
-}
 const executable = path.join(desktop, 'src-tauri', 'target', 'release', 'nodrec-desktop.exe')
 const configuredPort = process.env.NODREC_GESTURE_CDP_PORT
 const port = configuredPort === undefined ? await freePort() : Number(configuredPort)
@@ -35,7 +18,7 @@ try {
 } catch (error) { if (error.message.startsWith('Refusing')) throw error }
 
 const webviewDataDirectory = path.join(desktop, 'src-tauri', 'target', 'release', `webview2-touchpad-${port}`)
-const app = spawn(executable, [], { env: { ...process.env, ...(manual ? { NODREC_TOUCHPAD_TEST: '1' } : {}), WEBVIEW2_USER_DATA_FOLDER: webviewDataDirectory, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` }, stdio: 'pipe', windowsHide: false })
+const app = spawn(executable, [], { env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: webviewDataDirectory, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` }, stdio: 'pipe', windowsHide: false })
 let appOutput = ''
 app.stdout.setEncoding('utf8').on('data', (chunk) => { appOutput += chunk })
 app.stderr.setEncoding('utf8').on('data', (chunk) => { appOutput += chunk })
@@ -128,48 +111,13 @@ try {
   await command('Page.enable')
   await command('Runtime.enable')
   await command('Page.bringToFront')
-  if (officialDemo) {
-    await command('Page.navigate', { url: 'https://example-apps.xyflow.com/react/learn/zoom-pan-2/index.html' })
-  } else {
   await waitUntil(() => evaluate(`document.querySelector('.blueprint-nav-item.active .blueprint-name')?.textContent.trim() === 'Screen recording'`), 15000)
   await evaluate(`([...document.querySelectorAll('.workspace-tab button')].find((button) => button.textContent.trim() === 'Blueprint'))?.click()`)
-  }
   await waitUntil(() => evaluate(`!!document.querySelector('.react-flow__pane')`))
   await waitForStableViewport()
   const blank = await point()
   assert.ok(blank, 'Nodrec should have a blank Blueprint canvas point for gesture tests')
-    await evaluate(`(() => { window.__gestureTrace = []; window.__precisionTouchpadMessages = []; window.addEventListener('wheel', (event) => window.__gestureTrace.push({ deltaMode: event.deltaMode, deltaX: event.deltaX, deltaY: event.deltaY, ctrlKey: event.ctrlKey, trusted: event.isTrusted }), true); window.addEventListener('nodrec-precision-touchpad-pointer', (event) => window.__precisionTouchpadMessages.push(event.detail)) })()`)
-  if (manual) {
-    console.log('Keep this Nodrec Blueprint window focused. Start a two-finger gesture; once the first input arrives, record for 30 seconds. The trace records WebView wheel deltas and each native WM_POINTER message with its frame-query result.')
-    console.log(`Saving continuously to: ${hardwareOutput}`)
-    hardwareTrace.status = 'waiting-for-input'
-    const capture = async () => {
-      Object.assign(hardwareTrace, await evaluate(`({ userAgent: navigator.userAgent, documentHasFocus: document.hasFocus(), pageVisibility: document.visibilityState, axisLock: getComputedStyle(document.querySelector('.react-flow__pane')).getPropertyValue('scroll-axis-lock'), events: window.__gestureTrace, precisionTouchpadMessages: window.__precisionTouchpadMessages })`))
-      hardwareTrace.nativeStartup = appOutput
-      await saveHardwareTrace()
-    }
-    const waitDeadline = Date.now() + 120000
-    while (Date.now() < waitDeadline && hardwareTrace.events.length + hardwareTrace.precisionTouchpadMessages.length === 0) {
-      await capture()
-      if (hardwareTrace.events.length + hardwareTrace.precisionTouchpadMessages.length === 0) await delay(500)
-    }
-    hardwareTrace.status = hardwareTrace.events.length + hardwareTrace.precisionTouchpadMessages.length === 0 ? 'complete-no-input' : 'recording'
-    const recordUntil = Date.now() + 30000
-    while (hardwareTrace.status === 'recording' && Date.now() < recordUntil) {
-      await capture()
-      await delay(500)
-    }
-    hardwareTrace.status = 'complete'
-    hardwareTrace.wheelEventCount = hardwareTrace.events.length
-    hardwareTrace.pointerMessageCount = hardwareTrace.precisionTouchpadMessages.length
-    hardwareTrace.touchpadPointerMessageCount = hardwareTrace.precisionTouchpadMessages.filter(({ pointer_type }) => pointer_type === 5).length
-    hardwareTrace.pointerFrameCount = hardwareTrace.precisionTouchpadMessages.filter(({ frame_read_succeeded }) => frame_read_succeeded).length
-    if (hardwareTrace.wheelEventCount + hardwareTrace.pointerMessageCount === 0) hardwareTrace.status = 'complete-no-input'
-    await saveHardwareTrace()
-    console.log(`Hardware trace saved: ${hardwareOutput}`)
-    if (hardwareTrace.status === 'complete-no-input') console.warn('No wheel or WM_POINTER events reached this window; this run cannot diagnose the axis lock.')
-    process.exitCode = 0
-  } else {
+  await evaluate(`(() => { window.__gestureTrace = []; window.addEventListener('wheel', (event) => window.__gestureTrace.push({ deltaMode: event.deltaMode, deltaX: event.deltaX, deltaY: event.deltaY, ctrlKey: event.ctrlKey, trusted: event.isTrusted }), true) })()`)
 
   const beforeMouseWheel = await viewport()
   const pageZoomBefore = await evaluate(`({ devicePixelRatio: window.devicePixelRatio, viewportScale: window.visualViewport?.scale ?? 1 })`)
@@ -244,14 +192,6 @@ try {
   assert.equal((await viewport()).zoom, .01, 'zoom out should reach the 1% practical floor')
 
   console.log(JSON.stringify({ nodrec: target.url, nativeStartup: appOutput, simulatedGestures: { nativePinch: 'Input.synthesizePinchGesture (mouse source)', mouseWheel: mouseWheelEvent, twoFingerScroll: trackpadEvent, trackpadPinch: pinchEvent, rightButtonDrag: 'pan' }, beforeMouseWheel, afterNativePinch, afterMouseWheel, afterTrackpadScroll, afterHorizontalScroll, afterPinch, afterRightDrag }, null, 2))
-  }
-} catch (error) {
-  if (manual) {
-    hardwareTrace.status = 'failed'
-    hardwareTrace.error = error.stack ?? String(error)
-    await saveHardwareTrace()
-  }
-  throw error
 } finally {
   socket?.close()
   if (app.exitCode === null) {

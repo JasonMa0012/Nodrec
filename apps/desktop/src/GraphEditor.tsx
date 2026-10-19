@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { listen } from '@tauri-apps/api/event'
 import {
   addEdge, applyEdgeChanges, applyNodeChanges, Background, BackgroundVariant, Handle, Position,
   ReactFlow, ReactFlowProvider, SelectionMode, useReactFlow,
@@ -121,13 +120,6 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
 }) {
   const { fitView, getViewport, screenToFlowPosition, setViewport } = useReactFlow<CanvasNode>()
   const shellRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    let disposed = false
-    let unlisten: (() => void) | undefined
-    void listen('precision-touchpad-pointer', ({ payload }) => window.dispatchEvent(new CustomEvent('nodrec-precision-touchpad-pointer', { detail: payload })))
-      .then((stop) => { if (disposed) stop(); else unlisten = stop })
-    return () => { disposed = true; unlisten?.() }
-  }, [])
   useEffect(() => {
     const shell = shellRef.current
     if (!shell) return

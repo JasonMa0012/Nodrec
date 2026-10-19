@@ -10,6 +10,7 @@
 | [开发规则](development.md) | 文档同步、证据、决策与交接 |
 | [Desktop UI 规范](ui-guidelines.md) | 字体密度、Details 参数行和 Blueprint 画布交互 |
 | [验收场景](testing.md) | 功能验证方向；不是已通过测试 |
+| [触摸板平移异常](bugs/touchpad-axis-lock.md) | 暂停排查的现象、证据、实验分支和恢复步骤 |
 | [技术决策](decisions.md) | 仅收录用户选择并确认的方案 |
 
 ## 模块文档
