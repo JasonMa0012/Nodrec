@@ -1,6 +1,17 @@
 # 验收场景
 
-已有蓝图存储／运行单测、Release WebView 模拟录制闭环及 React 前端测试；真实媒体和回放尚未实现。以下场景用于澄清“做到什么程度算可用”，工具、性能阈值和环境在实践中确定。
+已有蓝图存储／运行单测、React 前端测试和 Release WebView 真实无声 H.264 录屏闭环；音频和回放尚未实现。以下场景用于澄清“做到什么程度算可用”，工具、性能阈值和环境在实践中确定。
+
+## 真实录屏验证（2026-10-21）
+
+- 构建：`npm run tauri:build`；单测：`npm run verify:unit`。录屏专项：`npm run test:recording`，自动构建原生探针并在独立 target 目录复制 Release exe／蓝图，不改用户安装旁蓝图。
+- 专项覆盖非零物理坐标、897×360→898×360、原生硬件编码器名、开始／暂停／继续／停止、暂停扣时、暂停时直接停止、MP4 完整解码及画面变化、越界区域、已有最终／部分文件保护，以及录制时重复关闭窗口后的文件完成。产物、UI 截图和 JSON 结果留在 `src-tauri/target/recording-check-*`。也可运行 `tests/test-recording.bat`；完整 `verify` 已包含录屏专项。
+- `cargo run --release --manifest-path src-tauri/Cargo.toml --example recording-smoke -- <唯一绝对路径.mp4> <秒数> hardware 1080` 可执行设备实录；将 hardware 改为 software、1080 改为 odd／1440 可测软件、奇数区域和 1440p。最后追加 pause 测暂停／继续；`recording-smoke verify <路径.mp4>` 使用系统解码器读取至 EOS 并导出首帧 BMP、统计画面变化。探针要求可见桌面；可解码不等于画面正确，仍需检查首帧。
+- 本机：Windows x64、AMD Radeon 8060S、显示器 2880×1800／225% DPI。硬件和软件奇数区域短录均可解码且首帧目视正确；软件路径扣除了 2 秒暂停。AMD 1440p60 短录完成，停止约 9 ms。Release 区域端到端停止约 7–8 ms。
+- 早期一分钟探针虽能解码但画面全黑，不能作为正确录屏证据；已修复编码前 GPU 命令未 Flush 的原因，再次验证首帧。后续长录制以修复后的产物为准。
+- 修复后的 1080p60 长录制：612.434 秒、36,747 帧，停止／MP4 发布 17 ms；系统解码器读至 EOS 得到全部 36,747 帧，末帧 PTS 612.433 秒，首帧目视正确。产物为 `src-tauri/target/recording-1080p60-10min.mp4`，日志同目录 `.log`。原生探针私有内存抽样：约 1 分钟 108.5 MB、2.5 分钟 109.1 MB、5.3 分钟 111.1 MB、9.8 分钟 111.5 MB；不包含 WebView 和 GPU 显存，也不是 UE／游戏负载对测。
+- 独立一分钟复测：1080p60、60.019 秒、3,602 帧，停止／发布 37 ms；完整解码至 EOS、末帧 PTS 60.017 秒，产物为 `recording-1080p60-1min-valid.mp4`。当前 `verify:unit` 包含 23 项模型测试和 22 项 Rust 测试。
+- 尚未验证：30 分钟独立停止、真实 UE／游戏与 Bandicam 各 3 次的匹配负载对测、NVIDIA／Intel、副屏／混合 DPI／旋转、显示器断开、磁盘写满、HDR 拒绝的真实设备场景。1080p60 平均 FPS 降幅 ≤5%、相对 Bandicam 多降 ≤2 个百分点和正常停止 ≤3 秒均是验收目标，不是性能承诺。
 
 ## 自动化验证框架
 

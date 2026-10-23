@@ -7,6 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter};
+use crate::recording::{RecordingPlan, RecordingSession, RecordingStats};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,12 +62,12 @@ pub fn node_catalog() -> Vec<NodeType> {
         node_type("pause_pipeline", "Pause Pipeline", "Media", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec![], json!({})),
         node_type("resume_pipeline", "Resume Pipeline", "Media", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec![], json!({})),
         node_type("stop_pipeline", "Stop Pipeline", "Media", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec![], json!({})),
-        node_type("region", "Screen Region", "Values", vec![], vec![port("region", "Region", "region")], vec!["display", "x", "y", "width", "height"], json!({"display":"Display 1","x":0,"y":0,"width":2560,"height":1440})),
+        node_type("region", "Screen Region", "Values", vec![], vec![port("region", "Region", "region")], vec!["display", "mode", "x", "y", "width", "height"], json!({"display":"Display 1","mode":"Full Display","x":0,"y":0,"width":897,"height":360})),
         node_type("path", "Output Path", "Values", vec![], vec![port("path", "Path", "path")], vec!["directory", "filename"], json!({"directory":"C:/Recordings","filename":"{blueprint}_{timestamp}.mp4"})),
-        node_type("screen", "Capture Screen", "Streams", vec![port("region", "Region", "region")], vec![port("frames", "Frames", "video_frames")], vec![], json!({})),
+        node_type("screen", "Capture Screen", "Streams", vec![port("region", "Region", "region")], vec![port("frames", "Frames", "video_frames")], vec!["cursor"], json!({"cursor":true})),
         node_type("audio", "Capture Audio", "Streams", vec![], vec![port("audio", "Audio", "audio_samples")], vec![], json!({})),
-        node_type("encode", "Encode Media", "Streams", vec![port("frames", "Frames", "video_frames"), port("audio", "Audio", "audio_samples")], vec![port("video", "Video", "encoded_video")], vec!["encoder", "fps"], json!({"encoder":"H.264","fps":60})),
-        node_type("write", "Write Output", "Streams", vec![port("video", "Video", "encoded_video"), port("path", "Path", "path")], vec![], vec![], json!({})),
+        node_type("encode", "Encode H.264", "Streams", vec![port("frames", "Frames", "video_frames"), port("audio", "Audio (not supported yet)", "audio_samples")], vec![port("video", "Video", "encoded_video")], vec!["encoder", "fps", "resolution", "bitrate", "encodingMode"], json!({"encoder":"H.264","fps":60,"resolution":"Source Size","bitrate":"20","encodingMode":"Hardware Auto"})),
+        node_type("write", "Write MP4", "Streams", vec![port("video", "Video", "encoded_video"), port("path", "Path", "path")], vec![], vec![], json!({})),
     ]
 }
 
@@ -89,6 +90,7 @@ pub struct RuntimeSnapshot {
     pub controls: Vec<Value>,
     pub logs: Vec<RuntimeLog>,
     pub error: Option<String>,
+    pub recording: Option<RecordingStats>,
 }
 
 #[derive(Clone, Serialize)]
@@ -111,6 +113,8 @@ struct RuntimeState {
     controls: Vec<Value>,
     logs: VecDeque<RuntimeLog>,
     error: Option<String>,
+    session: Option<RecordingSession>,
+    recording: Option<RecordingStats>,
 }
 
 #[derive(Clone, Default)]
@@ -139,6 +143,7 @@ impl WorkflowRuntime {
         state.run_id = None;
         state.frame_count = 0;
         state.error = None;
+        state.recording = None;
         state.status = "ready";
         state.controls.clear();
         if diagnostics.is_empty() {
@@ -148,7 +153,17 @@ impl WorkflowRuntime {
     }
 
     pub fn snapshot(&self) -> RuntimeSnapshot {
-        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(session) = &state.session {
+            let stats = session.stats();
+            state.frame_count = stats.encoded_frames;
+            if stats.finished && matches!(state.status, "starting" | "recording" | "paused") {
+                state.status = if stats.error.is_some() { "failed" } else { "ready" };
+                state.error = stats.error.clone();
+                state.busy_generation = None;
+            }
+            state.recording = Some(stats);
+        }
         RuntimeSnapshot {
             blueprint_id: state.blueprint_id.clone(),
             run_id: state.run_id.clone(),
@@ -157,6 +172,7 @@ impl WorkflowRuntime {
             controls: state.controls.clone(),
             logs: state.logs.iter().cloned().collect(),
             error: state.error.clone(),
+            recording: state.recording.clone(),
         }
     }
 
@@ -180,6 +196,7 @@ impl WorkflowRuntime {
                     state.run_id = Some(format!("run-{}", now_nanos()));
                     state.frame_count = 0;
                     state.error = None;
+                    state.recording = None;
                 }
                 (Some("pause_pipeline"), "recording") | (Some("resume_pipeline"), "paused") => {}
                 (Some("stop_pipeline"), "starting" | "recording" | "paused" | "failed") => state.status = "stopping",
@@ -205,6 +222,9 @@ impl WorkflowRuntime {
         state.busy_generation = None;
         state.status = "ready";
         state.run_id = None;
+        let session = state.session.take();
+        drop(state);
+        if let Some(session) = session { let _ = session.stop(); }
     }
 
     fn run_event(&self, app: AppHandle, event_id: String, generation: u64) {
@@ -273,34 +293,34 @@ impl WorkflowRuntime {
     }
 
     fn start_pipeline(&self, app: &AppHandle, document: &Value, config: &Value, generation: u64) -> Result<(), String> {
-        if !stream_pipeline_is_complete(document, config.get("outputNodeId").and_then(Value::as_str)) {
-            return Err("Connect screen and audio sources through Encode Media and Output Path to Write Output before recording".into());
-        }
-        {
+        let plan = recording_plan(document, config.get("outputNodeId").and_then(Value::as_str))?;
+        let ready = {
             let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
             if state.generation != generation || state.status != "starting" { return Ok(()); }
+            let session = RecordingSession::launch(plan);
+            let ready = session.ready.clone();
+            state.session = Some(session);
+            ready
+        };
+        RecordingSession::wait_for_ready(&ready)?;
+        if !self.is_current(generation) { return Ok(()); }
+        {
+            let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
+            if state.generation != generation { return Ok(()); }
             state.status = "recording";
         }
-        self.log(app, "Screen capture, audio capture, encoding, and output are running in simulation mode")?;
+        self.log(app, "Screen capture, H.264 encoding, and MP4 writing are running")?;
         self.emit_status(app);
         let runtime = self.clone();
         let app = app.clone();
         let run_id = self.snapshot().run_id;
         thread::spawn(move || loop {
             thread::sleep(Duration::from_millis(500));
-            let log = {
-                let mut state = runtime.state.lock().unwrap_or_else(|error| error.into_inner());
-                if state.status == "paused" { None }
-                else if state.status != "recording" || state.run_id != run_id { return; }
-                else {
-                    state.frame_count += 1;
-                    let frame = state.frame_count;
-                    let message = format!("Simulated frame {frame}: captured, encoded, and written");
-                    Some(runtime.push_log(&mut state, message))
-                }
-            };
-            if let Some(log) = log { let _ = app.emit("workflow-log", &log); }
-            runtime.emit_status(&app);
+            let snapshot = runtime.snapshot();
+            if snapshot.run_id != run_id || !matches!(snapshot.status.as_str(), "recording" | "paused" | "starting") {
+                runtime.emit_status(&app);
+                return;
+            }
         });
         Ok(())
     }
@@ -309,6 +329,8 @@ impl WorkflowRuntime {
         let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
         if state.generation != generation { return Ok(()); }
         if state.status != from { return Err(format!("Cannot change pipeline from {} to {to}", state.status)); }
+        let session = state.session.as_ref().ok_or_else(|| "No recording session is active".to_string())?;
+        session.pause(to == "paused");
         state.status = to;
         let log = self.push_log(&mut state, message.into());
         drop(state);
@@ -318,16 +340,24 @@ impl WorkflowRuntime {
     }
 
     fn stop_pipeline(&self, app: &AppHandle, generation: u64) -> Result<(), String> {
-        let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
-        if state.generation != generation { return Ok(()); }
-        state.status = "stopping";
-        let log = self.push_log(&mut state, "Pipeline stopped and simulation resources released".into());
-        drop(state);
-        let _ = app.emit("workflow-log", &log);
+        let session = {
+            let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
+            if state.generation != generation { return Ok(()); }
+            state.status = "stopping";
+            state.session.take()
+        };
         self.emit_status(app);
+        if let Some(session) = session {
+            let stats = session.stop()?;
+            let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
+            state.frame_count = stats.encoded_frames;
+            state.recording = Some(stats);
+        }
+        let result = self.snapshot().recording.map(|stats| format!("MP4 finalized and closed: {} ({} ms)", stats.output_path, stats.stop_ms.unwrap_or(0)))
+            .unwrap_or_else(|| "MP4 finalized: no active recording; pending start cancelled".into());
+        self.log(app, &result)?;
         Ok(())
     }
-
     fn update_control(&self, app: &AppHandle, config: &Value) -> Result<(), String> {
         let id = config.get("controlId").and_then(Value::as_str).ok_or_else(|| "Update Control needs a controlId".to_string())?;
         let patch = config.get("patch").and_then(Value::as_object).ok_or_else(|| "Update Control needs a patch object".to_string())?;
@@ -365,6 +395,12 @@ impl WorkflowRuntime {
     }
 
     fn fail(&self, app: &AppHandle, generation: u64, error: String) {
+        let mut state = self.state.lock().unwrap_or_else(|poison| poison.into_inner());
+        if state.generation != generation { return; }
+        let session = state.session.take();
+        if let Some(session) = &session { session.request_stop(); }
+        drop(state);
+        if let Some(session) = session { let _ = session.stop(); }
         let mut state = self.state.lock().unwrap_or_else(|poison| poison.into_inner());
         if state.generation != generation { return; }
         state.status = "failed";
@@ -502,6 +538,13 @@ fn resolved_node_config(document: &Value, node: &Value) -> Result<Value, String>
     let catalog = node_catalog();
     let node_type = catalog.iter().find(|item| item.kind == kind).ok_or_else(|| format!("Unknown node type '{kind}'"))?;
     let mut config = node_config(node).clone();
+    if matches!(kind, "region" | "screen" | "encode" | "path") {
+        let supplied = config.as_object().cloned().unwrap_or_default();
+        config = node_type.default_config.clone();
+        // Legacy regions described a rectangle before the mode field existed.
+        if kind == "region" && !supplied.contains_key("mode") { config["mode"] = json!("Rectangle"); }
+        config.as_object_mut().unwrap().extend(supplied);
+    }
     let exposed = exposed_parameter_ids(node, node_type);
     for path in exposed {
         let input = config_input_port_id(kind, &path);
@@ -669,7 +712,7 @@ pub fn validate_document(document: &Value, for_run: bool) -> Vec<String> {
         let operator = node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("operator")).and_then(Value::as_str).unwrap_or_default();
         if !matches!(operator, "equal" | "not_equal" | "contains") { errors.push(format!("Compare Values '{}' has an unsupported operator", node_id(node))); }
     }
-    if for_run {
+    if for_run && errors.is_empty() {
         if !errors.is_empty() { return errors; }
         let start_events: Vec<_> = node_values.iter().filter(|node| node_kind(node) == "event" && node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("eventId")).and_then(Value::as_str) == Some("event-start")).collect();
         if start_events.is_empty() { errors.push("Blueprint has no Event with ID 'event-start'".into()); }
@@ -681,7 +724,7 @@ pub fn validate_document(document: &Value, for_run: bool) -> Vec<String> {
                     if pipelines.is_empty() { errors.push("Event 'event-start' has no Start Pipeline action".into()); }
                     for start_node in pipelines {
                         let output = start_node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("outputNodeId")).and_then(Value::as_str);
-                        if !stream_pipeline_is_complete(document, output) { errors.push("Screen and audio streams must connect through Encode Media, Output Path, and Write Output".into()); }
+                        if let Err(error) = recording_plan(document, output) { errors.push(error); }
                     }
                 }
                 Err(error) => errors.push(error),
@@ -797,7 +840,7 @@ fn evaluate_value(document: &Value, id: &str, visiting: &mut HashSet<String>, de
             "make_text" => config.get("value").cloned().filter(Value::is_string).ok_or_else(|| format!("Make Text '{id}' needs a string value")),
             "read_parameter" => {
                 let key = config.get("parameterId").and_then(Value::as_str).ok_or_else(|| format!("Read Parameter '{id}' needs a parameterId"))?;
-                document.get("values").and_then(|values| values.get(key)).cloned().filter(|value| value.is_string() || value.is_boolean()).ok_or_else(|| format!("Parameter '{key}' has no supported value"))
+                document.get("values").and_then(|values| values.get(key)).cloned().filter(|value| value.is_string() || value.is_boolean() || value.is_number()).ok_or_else(|| format!("Parameter '{key}' has no supported value"))
             }
             "compare" => {
                 let left = input_value(document, id, "left", visiting, depth)?.ok_or_else(|| format!("Compare Values '{id}' needs a Left input"))?;
@@ -875,27 +918,64 @@ fn insert_menu_path(items: &mut Vec<Value>, segments: &[String], depth: usize, i
     insert_menu_path(children, segments, depth + 1, icon, event_id)
 }
 
-fn stream_pipeline_is_complete(document: &Value, output_id: Option<&str>) -> bool {
-    let Some(output_id) = output_id else { return false; };
-    let node_ids: HashMap<_, _> = nodes(document).iter().map(|node| (node_id(node), node_kind(node))).collect();
-    if node_ids.get(output_id) != Some(&"write") { return false; }
-    let connected = |target: &str, target_handle: &str, source_kind: &str, source_handle: &str| {
-        edges(document).iter().any(|edge| {
-            let source = edge.get("source").and_then(Value::as_str).unwrap_or_default();
-            let dest = edge.get("target").and_then(Value::as_str).unwrap_or_default();
-            dest == target && edge.get("targetHandle").and_then(Value::as_str) == Some(target_handle)
-                && node_ids.get(source) == Some(&source_kind)
-                && edge.get("sourceHandle").and_then(Value::as_str) == Some(source_handle)
-        })
-    };
-    let encode = edges(document).iter().find(|edge| edge.get("target").and_then(Value::as_str) == Some(output_id) && edge.get("targetHandle").and_then(Value::as_str) == Some("in:video"))
-        .and_then(|edge| edge.get("source")).and_then(Value::as_str);
-    let Some(encode) = encode.filter(|id| node_ids.get(id) == Some(&"encode")) else { return false; };
-    connected(encode, "in:frames", "screen", "out:frames")
-        && connected(encode, "in:audio", "audio", "out:audio")
-        && connected(output_id, "in:path", "path", "out:path")
+fn pipeline_source<'a>(document: &'a Value, target: &str, input: &str, kind: &str, output: &str) -> Result<&'a Value, String> {
+    let incoming: Vec<_> = edges(document).iter().filter(|edge| edge["target"] == target && edge["targetHandle"] == format!("in:{input}")).collect();
+    if incoming.len() != 1 { return Err(format!("Connect exactly one {kind} source to {target}.{input}")); }
+    let edge = incoming[0];
+    let source = nodes(document).iter().find(|node| node["id"] == edge["source"])
+        .ok_or_else(|| format!("Missing source for {target}.{input}"))?;
+    if node_kind(source) != kind || edge["sourceHandle"] != format!("out:{output}") { return Err(format!("{target}.{input} requires {kind}.{output}")); }
+    if matches!(kind, "screen" | "encode") && edges(document).iter().filter(|edge| edge["source"] == node_id(source) && edge["sourceHandle"] == format!("out:{output}")).count() != 1 {
+        return Err("Recording supports one source, one encoder and one output per run".into());
+    }
+    Ok(source)
 }
 
+fn recording_plan(document: &Value, output_id: Option<&str>) -> Result<RecordingPlan, String> {
+    let output = nodes(document).iter().find(|node| Some(node_id(node)) == output_id && node_kind(node) == "write")
+        .ok_or_else(|| "Start Pipeline must reference a Write MP4 node".to_string())?;
+    let encoder = pipeline_source(document, node_id(output), "video", "encode", "video")?;
+    if edges(document).iter().any(|edge| edge["target"] == node_id(encoder) && edge["targetHandle"] == "in:audio") {
+        return Err("Audio recording is not implemented yet; disconnect the audio input".into());
+    }
+    let screen = pipeline_source(document, node_id(encoder), "frames", "screen", "frames")?;
+    let region = pipeline_source(document, node_id(screen), "region", "region", "region")?;
+    let path = pipeline_source(document, node_id(output), "path", "path", "path")?;
+    let e = resolved_node_config(document, encoder)?;
+    let r = resolved_node_config(document, region)?;
+    let s = resolved_node_config(document, screen)?;
+    let p = resolved_node_config(document, path)?;
+    let string = |value: &Value, key: &str| -> Result<String, String> { value.get(key).and_then(Value::as_str).map(str::to_string).ok_or_else(|| format!("{key} must be a string")) };
+    let number = |value: &Value, key: &str| -> Result<u32, String> {
+        let number = value.get(key).and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
+        number.and_then(|n| u32::try_from(n).ok()).ok_or_else(|| format!("{key} must be a nonnegative integer"))
+    };
+    if string(&e, "encoder")? != "H.264" { return Err("Only H.264 encoding is supported".into()); }
+    let mode = string(&r, "mode")?;
+    if !["Full Display", "Rectangle"].contains(&mode.as_str()) { return Err("Region mode must be Full Display or Rectangle".into()); }
+    let encoding = string(&e, "encodingMode")?;
+    if !["Hardware Auto", "Software"].contains(&encoding.as_str()) { return Err("Encoding mode must be Hardware Auto or Software".into()); }
+    let (ow, oh) = match string(&e, "resolution")?.as_str() {
+        "Source Size" | "Source size" => (0,0),
+        "1920 × 1080" => (1920,1080), "2560 × 1440" => (2560,1440),
+        _ => return Err("Resolution must be Source Size, 1920 × 1080, or 2560 × 1440".into()),
+    };
+    let bitrate = e.get("bitrate").and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .filter(|n| n.is_finite() && (0.1..=200.).contains(n)).ok_or_else(|| "Bitrate must be between 0.1 and 200 Mbps".to_string())?;
+    let fps = number(&e,"fps")?;
+    if ![24,30,60,120].contains(&fps) { return Err("Frame rate must be 24, 30, 60, or 120".into()); }
+    let mut filename = string(&p, "filename")?.replace("{blueprint}", document["id"].as_str().unwrap_or("recording")).replace("{timestamp}", &now_nanos().to_string());
+    if !filename.to_ascii_lowercase().ends_with(".mp4") { filename.push_str(".mp4"); }
+    if filename.contains(['/', '\\', ':', '{', '}']) || filename == ".mp4" { return Err("Filename must be a filename, with only {blueprint} and {timestamp} placeholders".into()); }
+    let width = number(&r,"width")?; let height = number(&r,"height")?;
+    if mode == "Rectangle" && (width == 0 || height == 0) { return Err("Rectangle width and height must be positive".into()); }
+    Ok(RecordingPlan {
+        display: string(&r,"display")?, full_display: mode == "Full Display", x: number(&r,"x")?, y: number(&r,"y")?, width, height,
+        output_width: ow, output_height: oh, fps, bitrate: (bitrate*1_000_000.).round() as u32,
+        software: encoding == "Software", cursor: s.get("cursor").and_then(Value::as_bool).ok_or_else(|| "Cursor must be a boolean".to_string())?,
+        path: std::path::Path::new(&string(&p,"directory")?).join(filename),
+    })
+}
 fn now_nanos() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos()
 }
@@ -912,7 +992,7 @@ mod tests {
             ("start", "event", Some("event-start"), json!({"eventId":"event-start"})),
             ("pipeline", "start_pipeline", None, json!({"outputNodeId":"write"})),
             ("screen", "screen", None, json!({})),
-            ("audio", "audio", None, json!({})),
+            ("region", "region", None, json!({})),
             ("encode", "encode", None, json!({})),
             ("path", "path", None, json!({})),
             ("write", "write", None, json!({})),
@@ -925,7 +1005,7 @@ mod tests {
             ("initialize", "register", "flow", "flow"),
             ("start", "pipeline", "flow", "flow"),
             ("screen", "encode", "frames", "frames"),
-            ("audio", "encode", "audio", "audio"),
+            ("region", "screen", "region", "region"),
             ("encode", "write", "video", "video"),
             ("path", "write", "path", "path"),
         ].iter().enumerate().map(|(index, (source, target, from, to))| json!({
@@ -1018,8 +1098,53 @@ mod tests {
         assert!(validate_document(&doc, true).is_empty(), "{:?}", validate_document(&doc, true));
         let mut disconnected = doc.clone();
         disconnected["edges"].as_array_mut().unwrap().retain(|edge| edge["id"] != "e2");
-        assert!(validate_document(&disconnected, true).iter().any(|error| error.contains("Screen and audio streams")));
+        assert!(validate_document(&disconnected, true).iter().any(|error| error.contains("screen source")));
         assert!(validate_document(&disconnected, false).is_empty());
+    }
+
+    #[test]
+    fn recording_plan_rejects_audio_fanout_and_invalid_parameters() {
+        let mut doc = document();
+        let plan = recording_plan(&doc, Some("write")).unwrap();
+        assert_eq!((plan.fps,plan.bitrate), (60,20_000_000));
+        assert!(!plan.software);
+        doc["nodes"][6]["data"]["config"] = json!({"encodingMode":"Software","fps":30,"resolution":"1920 × 1080","bitrate":"12.5"});
+        let plan = recording_plan(&doc, Some("write")).unwrap();
+        assert!(plan.software); assert_eq!((plan.output_width,plan.fps,plan.bitrate), (1920,30,12_500_000));
+        doc["nodes"][6]["data"]["config"]["fps"] = json!(0);
+        assert!(recording_plan(&doc, Some("write")).is_err());
+        doc["nodes"][6]["data"]["config"]["fps"] = json!(60);
+        doc["edges"].as_array_mut().unwrap().push(json!({"source":"region","sourceHandle":"out:audio","target":"encode","targetHandle":"in:audio"}));
+        assert!(recording_plan(&doc, Some("write")).unwrap_err().contains("Audio"));
+        doc["edges"].as_array_mut().unwrap().pop();
+        doc["edges"].as_array_mut().unwrap().push(json!({"source":"screen","sourceHandle":"out:frames","target":"another-encoder","targetHandle":"in:frames"}));
+        assert!(recording_plan(&doc, Some("write")).unwrap_err().contains("one source"));
+    }
+
+    #[test]
+    fn recording_plan_resolves_exposed_parameters_and_preserves_legacy_regions() {
+        let mut doc = document();
+        doc["nodes"][5]["data"]["config"] = json!({"display":"Display 1","width":897,"height":360,"x":0,"y":0});
+        assert!(!recording_plan(&doc, Some("write")).unwrap().full_display);
+        doc["nodes"][6]["data"]["config"] = json!({"fps":60,"exposedInputs":["fps"]});
+        doc["nodes"].as_array_mut().unwrap().push(json!({"id":"custom-fps","type":"make_integer","data":{"kind":"make_integer","config":{"value":30}}}));
+        doc["edges"].as_array_mut().unwrap().push(json!({"source":"custom-fps","sourceHandle":"out:value","target":"encode","targetHandle":"in:param:fps"}));
+        assert_eq!(recording_plan(&doc,Some("write")).unwrap().fps,30);
+        doc["nodes"][7]["data"]["config"] = json!({"filename":"../existing.mp4","directory":"C:/Recordings"});
+        assert!(recording_plan(&doc,Some("write")).is_err());
+    }
+
+    #[test]
+    fn invalid_cycles_are_rejected_before_resolving_media_parameters() {
+        let mut doc = document();
+        for id in ["a", "b"] {
+            doc["nodes"].as_array_mut().unwrap().push(json!({"id":id,"type":"make_integer","data":{"kind":"make_integer","config":{"value":60,"exposedInputs":["value"]}}}));
+        }
+        doc["nodes"][6]["data"]["config"] = json!({"fps":60,"exposedInputs":["fps"]});
+        for (source,target,input) in [("a","b","value"),("b","a","value"),("a","encode","fps")] {
+            doc["edges"].as_array_mut().unwrap().push(json!({"id":format!("{source}-{target}"),"source":source,"sourceHandle":"out:value","target":target,"targetHandle":format!("in:param:{input}")}));
+        }
+        assert!(validate_document(&doc, true).iter().any(|error| error.contains("cycle")));
     }
 
     #[test]

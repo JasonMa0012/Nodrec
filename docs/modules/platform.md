@@ -2,7 +2,7 @@
 
 ## 当前实现
 
-未实现，无平台接口或跨平台构建证据。
+Windows 捕获／编码后端封装在 `recording/windows.rs`，通过仅 Windows 启用的 `windows` crate 调用 WGC、D3D11 和 Media Foundation。通用 `RecordingPlan`／`RecordingSession` 边界不向前端暴露 Windows 句柄；非 Windows 启动录屏返回不支持。已在本机 AMD／Windows x64 验证，不代表其他 OS、GPU 或 Windows 版本通过。
 
 ## 职责与边界
 

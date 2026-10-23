@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { verticalCompactor } from 'react-grid-layout'
 import { allParameters, createBlueprint, hydrateBlueprint, moveOverviewCardVertically, moveParameterLayout, overviewCardContentHeight, overviewGridHeight, pinTypeColor, pinTypeForValue, placeOverviewCardBeside, serializeBlueprint, swapOverviewCardPositions, syncBlueprintEvents } from './model.ts'
+import { connectedNodeIds, ribbonOffsets, routePoints, roundedPath } from './graph-interactions.ts'
 import { overviewCollisionDetection, overviewDropPlacement } from './overview-dnd.ts'
 
 test('blueprint documents persist workflow graphs and controls, but reset editor and runtime state', () => {
@@ -19,6 +20,20 @@ test('blueprint documents persist workflow graphs and controls, but reset editor
   assert.equal(restored.selectedNode, null)
   assert.equal(restored.revision, 'revision-token')
   assert.ok(restored.nodes.some((node) => node.data.kind === 'register_control'))
+})
+
+test('recording templates connect editable parameters to the real silent pipeline', () => {
+  const blueprint = createBlueprint('recording', 'Recording')
+  assert.equal(typeof blueprint.values.fps, 'number')
+  assert.equal(typeof blueprint.values.width, 'number')
+  assert.equal(blueprint.values.encodingMode, 'Hardware Auto')
+  assert.equal(blueprint.nodes.find(node => node.id === 'encode').data.config.encoder, 'H.264')
+  assert.equal(blueprint.edges.some(edge => edge.target === 'encode' && edge.targetHandle === 'in:audio'), false)
+  for (const [target, field, parameter] of [['region', 'width', 'width'], ['encode', 'fps', 'fps'], ['path', 'directory', 'output']]) {
+    const reader = blueprint.nodes.find(node => node.data.kind === 'read_parameter' && node.data.config.parameterId === parameter)
+    assert.ok(blueprint.edges.some(edge => edge.source === reader.id && edge.target === target && edge.targetHandle === `in:param:${field}`))
+  }
+  assert.equal(hydrateBlueprint(serializeBlueprint(blueprint), 'user', 'v1').values.width, 897)
 })
 
 test('workspaces open both editor tabs and registered controls carry explicit sort order', () => {
@@ -140,8 +155,9 @@ test('blueprints keep independent wide and single-column overview layouts', () =
   assert.deepEqual(screen.overviewLayouts.wide.map(({ i, x, w }) => [i, x, w]), [
     ['recording', 0, 6], ['video', 6, 6], ['audio', 0, 6], ['output', 6, 6],
   ])
-  assert.equal(screen.overviewLayouts.wide[0].h, 9)
-  assert.equal(screen.overviewLayouts.wide[1].h, 8)
+  for (const item of screen.overviewLayouts.wide) {
+    assert.equal(item.h, overviewGridHeight(overviewCardContentHeight(screen.layouts[item.i].filter((row) => row.pinned), allParameters(screen))))
+  }
   assert.equal(overviewCardContentHeight([], allParameters(screen)), 112)
   assert.deepEqual([overviewGridHeight(172), overviewGridHeight(145)], [9, 8])
   assert.ok(screen.overviewLayouts.narrow.every(({ x, w }) => x === 0 && w === 1))
@@ -175,8 +191,9 @@ test('overview card swaps survive responsive grid compaction', () => {
     const audioAfter = compacted.find(({ i }) => i === 'audio')
 
     if (breakpoint === 'wide') {
-      assert.deepEqual([videoAfter.x, videoAfter.y], [audioBefore.x, audioBefore.y])
-      assert.deepEqual([audioAfter.x, audioAfter.y], [videoBefore.x, videoBefore.y])
+      assert.equal(videoAfter.x, audioBefore.x)
+      assert.equal(audioAfter.x, videoBefore.x)
+      assert.ok(audioAfter.y < videoAfter.y, 'the tall capture card may compact the other column independently')
     } else {
       assert.ok(audioAfter.y < videoAfter.y, 'the swapped cards should reverse their order in the single-column layout')
     }
@@ -307,4 +324,89 @@ test('overview vertical insertions create rows and a blank-area drop appends the
   const last = Math.max(...appended.filter(({ i }) => i !== 'video').map(({ y, h }) => y + h))
   assert.equal(video.y, last)
   assert.equal(video.w, 12)
+})
+
+
+test('function graphs persist independently and discard transient node state', () => {
+  const blueprint = createBlueprint('functions-test', 'Functions test')
+  const node = { ...structuredClone(blueprint.nodes[0]), selected: true, measured: { width: 100, height: 60 } }
+  blueprint.functions[0].graph = { nodes: [node], edges: [] }
+  const document = serializeBlueprint(blueprint)
+  const restored = hydrateBlueprint(document, 'user', 'revision')
+  assert.equal(restored.functions[0].graph.nodes.length, 1)
+  assert.equal('selected' in document.functions[0].graph.nodes[0], false)
+  assert.equal('measured' in document.functions[0].graph.nodes[0], false)
+  assert.deepEqual(restored.nodes, serializeBlueprint(blueprint).nodes)
+  assert.equal(hydrateBlueprint({ ...document, functions: [{ id: 'legacy', name: 'Legacy', folderId: 'utilities' }] }, 'user', 'revision').functions[0].graph, undefined)
+})
+
+
+test('selection relevance traverses both directions, cycles and multiple components', () => {
+  const edges = [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }, { source: 'c', target: 'a' }, { source: 'd', target: 'e' }]
+  assert.deepEqual([...connectedNodeIds(['b'], edges)].sort(), ['a', 'b', 'c'])
+  assert.equal(connectedNodeIds(['b', 'd'], edges).size, 5)
+  assert.equal(connectedNodeIds([], edges).size, 0)
+})
+
+test('routing points round trip without changing executable edge endpoints', () => {
+  const blueprint = createBlueprint('route-test', 'Routing test')
+  const edge = blueprint.edges[0]
+  edge.data = { routePoints: [{ x: 12, y: 34 }, { x: -10, y: 99 }] }
+  const restored = hydrateBlueprint(serializeBlueprint(blueprint), 'user', 'revision')
+  assert.deepEqual(restored.edges[0], edge)
+  assert.deepEqual(routePoints({ routePoints: [null, { x: Infinity, y: 2 }, { x: 1, y: 2 }] }), [{ x: 1, y: 2 }])
+})
+
+test('rounded Subway paths retain 45 degree straight sections and soften their junctions', () => {
+  for (const end of [{ x: 300, y: 100 }, { x: 50, y: 300 }, { x: 300, y: -100 }, { x: 300, y: 0 }, { x: 0, y: 100 }, { x: -100, y: 0 }, { x: -100, y: -100 }, { x: 0, y: 0 }]) {
+    const path = roundedPath({ x: 0, y: 0 }, end)
+    assert.ok(!/NaN|Infinity|C/.test(path))
+    const values = path.match(/-?\d+(?:\.\d+)?/g).map(Number)
+    assert.deepEqual(values.slice(0, 2), [0, 0])
+    assert.deepEqual(values.slice(-2), [end.x, end.y])
+    let previous = [0, 0]
+    for (const segment of path.matchAll(/([LQ]) ([\d. -]+)/g)) {
+      const coordinates = segment[2].trim().split(/\s+/).map(Number)
+      if (segment[1] === 'L') {
+        const dx = Math.abs(coordinates[0] - previous[0])
+        const dy = Math.abs(coordinates[1] - previous[1])
+        assert.ok(dx < 1e-8 || dy < 1e-8 || Math.abs(dx - dy) < 1e-8, path)
+      }
+      previous = coordinates.slice(-2)
+    }
+  }
+  assert.match(roundedPath({ x: 0, y: 0 }, { x: 300, y: 100 }), /Q/)
+  assert.equal(roundedPath({ x: 0, y: 0 }, { x: 300, y: 0 }).includes('Q'), false)
+  for (const end of [{ x: 300, y: 100 }, { x: 4, y: 2 }]) {
+    const path = roundedPath({ x: 0, y: 0 }, end)
+    let previous = [0, 0]
+    let diagonal = false
+    for (const segment of path.matchAll(/([LQ]) ([\d. -]+)/g)) {
+      const values = segment[2].trim().split(/\s+/).map(Number)
+      if (segment[1] === 'L' && Math.abs(values[0] - previous[0]) > 1e-8 && Math.abs(values[1] - previous[1]) > 1e-8) diagonal = true
+      previous = values.slice(-2)
+    }
+    assert.ok(diagonal && path.includes('Q'), 'both a diagonal straight section and curved junctions must remain')
+  }
+})
+
+test('Ribbon separates overlapping corridors deterministically and reuses clear lanes', () => {
+  const routes = [
+    { id: 'a', start: { x: 0, y: 500 }, end: { x: 400, y: 0 } },
+    { id: 'b', start: { x: 0, y: 540 }, end: { x: 400, y: 40 } },
+    { id: 'c', start: { x: 0, y: 580 }, end: { x: 400, y: 80 } },
+    { id: 'd', start: { x: 0, y: 800 }, end: { x: 400, y: 900 } },
+  ]
+  const offsets = ribbonOffsets(routes)
+  assert.equal(new Set(['a', 'b', 'c'].map(id => offsets.get(id))).size, 3)
+  assert.equal(offsets.get('d'), 0)
+  assert.deepEqual(ribbonOffsets([...routes].reverse()), offsets)
+  for (const route of routes) {
+    const path = roundedPath(route.start, route.end, offsets.get(route.id))
+    assert.ok(path.startsWith(`M ${route.start.x} ${route.start.y}`))
+    assert.ok(path.endsWith(`L ${route.end.x} ${route.end.y}`))
+  }
+  const aligned = { start: { x: 0, y: 0 }, end: { x: 400, y: 0 } }
+  const alignedOffsets = ribbonOffsets([{ id: 'a', ...aligned }, { id: 'b', ...aligned }])
+  assert.notEqual(roundedPath(aligned.start, aligned.end, alignedOffsets.get('a')), roundedPath(aligned.start, aligned.end, alignedOffsets.get('b')))
 })

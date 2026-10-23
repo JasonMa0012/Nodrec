@@ -1,8 +1,8 @@
 import type { Edge, Node } from '@xyflow/react'
 import type { LayoutItem, ResponsiveLayouts } from 'react-grid-layout'
 
-export type Value = string | boolean
-export type ParameterKind = 'readonly' | 'text' | 'choice' | 'boolean'
+export type Value = string | boolean | number
+export type ParameterKind = 'readonly' | 'text' | 'choice' | 'boolean' | 'number'
 export type ParameterDefinition = {
   id: string
   label: string
@@ -16,7 +16,7 @@ export type ParameterDropPlacement = 'above' | 'below' | 'left' | 'right' | 'end
 export type OverviewLayouts = ResponsiveLayouts<'wide' | 'narrow'>
 export type ParameterCard = { id: string; name: string; parameters: string[] }
 export type TreeFolder = { id: string; name: string }
-export type TreeItem = { id: string; name: string; folderId: string }
+export type TreeItem = { id: string; name: string; folderId: string; graph?: { nodes: BlueprintNode[]; edges: Edge[] } }
 export type BlueprintSelection = { kind: 'nodes'; keys: string[] } | { kind: 'node' | 'parameter' | 'card' | 'event' | 'function' | 'folder'; key: string } | null
 export type NodeKind = 'event' | 'register_control' | 'register_menu' | 'update_control' | 'log' | 'delay' | 'branch' | 'read_parameter' | 'constant' | 'make_boolean' | 'make_byte' | 'make_integer' | 'make_integer64' | 'make_float' | 'make_double' | 'make_name' | 'make_string' | 'make_text' | 'compare' | 'start_pipeline' | 'pause_pipeline' | 'resume_pipeline' | 'stop_pipeline' | 'region' | 'path' | 'screen' | 'audio' | 'encode' | 'write'
 export type BlueprintNodeData = { label: string; kind: NodeKind; note?: string; config?: Record<string, unknown> }
@@ -27,7 +27,7 @@ export type NodePortDefinition = { id: string; label: string; valueType: PinValu
 export type NodeTypeDefinition = { kind: NodeKind; label: string; category: string; inputs: NodePortDefinition[]; outputs: NodePortDefinition[]; inputParameters: string[]; defaultConfig: Record<string, unknown> }
 export type ControlMenuItem = { id: string; label: string; icon: string; eventId: string; children?: ControlMenuItem[] }
 export type RegisteredControl = { id: string; label: string; icon: string; eventId: string; order: number; enabled: boolean; menu: ControlMenuItem[] }
-export type EditorTab = { id: string; kind: 'overview' | 'blueprint' | 'card'; cardId?: string }
+export type EditorTab = { id: string; kind: 'overview' | 'blueprint' | 'card' | 'function'; cardId?: string; functionId?: string }
 export type Blueprint = {
   id: string
   name: string
@@ -108,18 +108,24 @@ export function syncBlueprintEvents(blueprint: Blueprint): Blueprint {
 }
 
 export const parameters: ParameterDefinition[] = [
-  { id: 'display', label: 'Display', kind: 'readonly', initial: 'Display 1 · 2560 × 1440' },
+  { id: 'display', label: 'Display', kind: 'choice', initial: 'Display 1' },
+  { id: 'regionMode', label: 'Capture mode', kind: 'choice', initial: 'Full Display', options: ['Full Display', 'Rectangle'] },
+  { id: 'x', label: 'X (physical px)', kind: 'number', initial: 0 },
+  { id: 'y', label: 'Y (physical px)', kind: 'number', initial: 0 },
+  { id: 'width', label: 'Width (physical px)', kind: 'number', initial: 897 },
+  { id: 'height', label: 'Height (physical px)', kind: 'number', initial: 360 },
   { id: 'region', label: 'Region', kind: 'readonly', initial: 'x: 0, y: 0, w: 2560, h: 1440' },
   { id: 'cursor', label: 'Show cursor', kind: 'boolean', initial: true },
   { id: 'delay', label: 'Start delay (s)', kind: 'choice', initial: '0', options: ['0', '3', '5'] },
-  { id: 'resolution', label: 'Resolution', kind: 'choice', initial: '1920 × 1080', options: ['Source size', '1920 × 1080', '2560 × 1440', '3840 × 2160'] },
-  { id: 'fps', label: 'Frame rate', kind: 'choice', initial: '60', options: ['24', '30', '60', '120'] },
-  { id: 'encoder', label: 'Encoder', kind: 'choice', initial: 'H.264', options: ['H.264', 'HEVC', 'AV1'] },
+  { id: 'resolution', label: 'Resolution', kind: 'choice', initial: 'Source Size', options: ['Source Size', '1920 × 1080', '2560 × 1440'] },
+  { id: 'fps', label: 'Frame rate', kind: 'choice', initial: 60, options: ['24', '30', '60', '120'] },
+  { id: 'encoder', label: 'Encoder', kind: 'choice', initial: 'H.264', options: ['H.264'] },
+  { id: 'encodingMode', label: 'Encoding mode', kind: 'choice', initial: 'Hardware Auto', options: ['Hardware Auto', 'Software'] },
   { id: 'bitrate', label: 'Bitrate (Mbps)', kind: 'text', initial: '20' },
-  { id: 'systemAudio', label: 'System audio', kind: 'boolean', initial: true },
-  { id: 'microphone', label: 'Microphone', kind: 'boolean', initial: false },
-  { id: 'device', label: 'Device', kind: 'choice', initial: 'System default', options: ['System default', 'Headphones'] },
-  { id: 'sampleRate', label: 'Sample rate', kind: 'choice', initial: '48 kHz', options: ['48 kHz', '44.1 kHz'] },
+  { id: 'systemAudio', label: 'System audio', kind: 'readonly', initial: 'Not available yet' },
+  { id: 'microphone', label: 'Microphone', kind: 'readonly', initial: 'Not available yet' },
+  { id: 'device', label: 'Device', kind: 'readonly', initial: 'Not available yet' },
+  { id: 'sampleRate', label: 'Sample rate', kind: 'readonly', initial: 'Not available yet' },
   { id: 'output', label: 'Output folder', kind: 'text', initial: 'C:/Recordings' },
   { id: 'filename', label: 'Filename pattern', kind: 'text', initial: '{blueprint}_{timestamp}' },
   { id: 'pointer', label: 'Pointer mode', kind: 'choice', initial: 'Semantic + absolute fallback', options: ['Semantic + absolute fallback', 'Absolute coordinates'] },
@@ -245,8 +251,8 @@ function allocateOverviewWidths(columns: ParameterColumn[], layout: readonly Lay
 }
 
 const pinMap: Record<string, string[]> = {
-  recording: ['display', 'region', 'cursor'],
-  video: ['resolution', 'fps'],
+  recording: ['display', 'regionMode', 'x', 'y', 'width', 'height', 'cursor'],
+  video: ['resolution', 'fps', 'encodingMode', 'bitrate'],
   audio: ['systemAudio', 'microphone'],
   output: ['output'],
   input: ['pointer', 'keyboard', 'mouse'],
@@ -254,9 +260,9 @@ const pinMap: Record<string, string[]> = {
 }
 
 const cardList = (replay: boolean): ParameterCard[] => [
-  { id: 'recording', name: 'Recording settings', parameters: ['display', 'region', 'cursor', 'delay'] },
-  { id: 'video', name: 'Video', parameters: ['resolution', 'fps', 'encoder', 'bitrate'] },
-  { id: 'audio', name: 'Audio', parameters: ['systemAudio', 'microphone', 'device', 'sampleRate'] },
+  { id: 'recording', name: 'Recording settings', parameters: ['display', 'regionMode', 'x', 'y', 'width', 'height', 'cursor'] },
+  { id: 'video', name: 'Video', parameters: ['resolution', 'fps', 'encoder', 'encodingMode', 'bitrate'] },
+  { id: 'audio', name: 'Audio (not available yet)', parameters: ['systemAudio', 'microphone', 'device', 'sampleRate'] },
   { id: 'output', name: 'Output', parameters: ['output', 'filename'] },
   ...(replay ? [
     { id: 'input', name: 'Input recording', parameters: ['pointer', 'keyboard', 'mouse'] },
@@ -275,7 +281,7 @@ function graph(): { nodes: BlueprintNode[]; edges: Edge[] } {
   const control = (id: string, label: string, icon: string, eventId: string, enabled: boolean, order: number) => ({ id, label, icon, eventId, order, enabled })
 
   add('initialize', 'event', 'On Initialize', 0, 40, { eventId: 'event-initialize' })
-  add('register-select', 'register_control', 'Register Select Region', 330, 0, { control: control('select-region', 'Select Region', 'crop', 'event-select-region', true, 0) })
+  add('register-select', 'register_control', 'Register Region Picker (later)', 330, 0, { control: control('select-region', 'Region picker (later)', 'crop', 'event-select-region', false, 0) })
   add('register-start', 'register_control', 'Register Start', 620, 0, { control: control('start-recording', 'Start recording', 'play', 'event-start', true, 1) })
   add('register-pause', 'register_control', 'Register Pause', 910, 0, { control: control('pause-recording', 'Pause', 'pause', 'event-pause', false, 2) })
   add('register-stop', 'register_control', 'Register Stop', 1200, 0, { control: control('stop-recording', 'Stop', 'stop-circle', 'event-stop', false, 3) })
@@ -288,12 +294,12 @@ function graph(): { nodes: BlueprintNode[]; edges: Edge[] } {
   flow('register-stop', 'menu-capture-target'); flow('menu-capture-target', 'menu-display-1'); flow('menu-display-1', 'menu-active-window'); flow('menu-active-window', 'menu-start'); flow('menu-start', 'menu-delayed-start')
 
   add('event-select-region', 'event', 'On Select Region', 0, 230, { eventId: 'event-select-region' })
-  add('log-select-region', 'log', 'Log Region Selection', 330, 230, { message: 'Screen region selection requested (simulation)' })
+  add('log-select-region', 'log', 'Log Region Selection', 330, 230, { message: 'Region picker is not implemented; enter physical pixel coordinates in Overview' })
   flow('event-select-region', 'log-select-region')
   for (const [id, label, message, y] of [
-    ['event-select-display', 'On Select Display', 'Display selection requested (simulation)', 370],
-    ['event-select-display-1', 'On Select Display 1', 'Display 1 selected (simulation)', 510],
-    ['event-select-window', 'On Select Window', 'Window selection requested (simulation)', 650],
+    ['event-select-display', 'On Select Display', 'Select a display in Overview', 370],
+    ['event-select-display-1', 'On Select Display 1', 'Select a display in Overview', 510],
+    ['event-select-window', 'On Select Window', 'Window capture is not implemented yet', 650],
   ] as const) {
     add(id, 'event', label, 0, y, { eventId: id })
     const logId = `log-${id}`
@@ -302,15 +308,17 @@ function graph(): { nodes: BlueprintNode[]; edges: Edge[] } {
   }
 
   add('event-start', 'event', 'On Start Recording', 0, 850, { eventId: 'event-start' })
-  add('log-start', 'log', 'Log Start', 330, 850, { message: 'Recording started (simulation)' })
-  add('pipeline-start', 'start_pipeline', 'Start Media Pipeline', 610, 850, { outputNodeId: 'write' })
-  add('control-start-recording', 'update_control', 'Update Start Control', 910, 850, { controlId: 'start-recording', patch: { label: 'Recording', icon: 'square', enabled: false } })
-  add('control-enable-pause', 'update_control', 'Enable Pause Control', 1200, 850, { controlId: 'pause-recording', patch: { label: 'Pause', icon: 'pause', eventId: 'event-pause', enabled: true } })
-  add('control-enable-stop', 'update_control', 'Enable Stop Control', 1490, 850, { controlId: 'stop-recording', patch: { enabled: true } })
-  flow('event-start', 'log-start'); flow('log-start', 'pipeline-start'); flow('pipeline-start', 'control-start-recording'); flow('control-start-recording', 'control-enable-pause'); flow('control-enable-pause', 'control-enable-stop')
+  add('log-start', 'log', 'Log Start', 330, 850, { message: 'Starting recording' })
+  add('control-starting', 'update_control', 'Disable Start During Startup', 610, 850, { controlId: 'start-recording', patch: { label: 'Starting…', icon: 'clock-3', enabled: false } })
+  add('control-stop-starting', 'update_control', 'Enable Stop During Startup', 910, 850, { controlId: 'stop-recording', patch: { enabled: true } })
+  add('pipeline-start', 'start_pipeline', 'Start Media Pipeline', 1210, 850, { outputNodeId: 'write' })
+  add('control-start-recording', 'update_control', 'Update Start Control', 1530, 850, { controlId: 'start-recording', patch: { label: 'Recording', icon: 'square', enabled: false } })
+  add('control-enable-pause', 'update_control', 'Enable Pause Control', 1830, 850, { controlId: 'pause-recording', patch: { label: 'Pause', icon: 'pause', eventId: 'event-pause', enabled: true } })
+  add('control-enable-stop', 'update_control', 'Enable Stop Control', 2130, 850, { controlId: 'stop-recording', patch: { enabled: true } })
+  flow('event-start', 'log-start'); flow('log-start', 'control-starting'); flow('control-starting', 'control-stop-starting'); flow('control-stop-starting', 'pipeline-start'); flow('pipeline-start', 'control-start-recording'); flow('control-start-recording', 'control-enable-pause'); flow('control-enable-pause', 'control-enable-stop')
 
   add('event-start-delayed', 'event', 'On Start After Delay', 0, 1030, { eventId: 'event-start-delayed' })
-  add('log-delayed', 'log', 'Log Delayed Start', 330, 1030, { message: 'Recording will start after 3 seconds (simulation)' })
+  add('log-delayed', 'log', 'Log Delayed Start', 330, 1030, { message: 'Recording will start after 3 seconds' })
   add('control-starting-delayed', 'update_control', 'Disable Start During Delay', 610, 1030, { controlId: 'start-recording', patch: { label: 'Starting…', icon: 'clock-3', enabled: false } })
   add('control-enable-stop-delayed', 'update_control', 'Enable Stop During Delay', 910, 1030, { controlId: 'stop-recording', patch: { enabled: true } })
   add('delay-start', 'delay', 'Wait 3 Seconds', 1200, 1030, { milliseconds: 3000 })
@@ -336,17 +344,29 @@ function graph(): { nodes: BlueprintNode[]; edges: Edge[] } {
   add('control-reset-stop', 'update_control', 'Disable Stop Control', 1200, 1600, { controlId: 'stop-recording', patch: { enabled: false } })
   flow('event-stop', 'pipeline-stop'); flow('pipeline-stop', 'control-reset-start'); flow('control-reset-start', 'control-reset-pause'); flow('control-reset-pause', 'control-reset-stop')
 
-  add('region', 'region', 'Screen Region', 1940, 30, { display: 'Display 1', x: 0, y: 0, width: 2560, height: 1440 })
-  add('screen', 'screen', 'Capture Screen', 1940, 230)
-  add('audio', 'audio', 'Capture Audio', 1940, 430)
-  add('encode', 'encode', 'Encode Media', 2250, 280, { encoder: 'H.264', fps: 60 })
+  add('region', 'region', 'Screen Region', 1940, 30, { display: 'Display 1', mode: 'Full Display', x: 0, y: 0, width: 897, height: 360 })
+  add('screen', 'screen', 'Capture Screen', 1940, 230, { cursor: true })
+  add('encode', 'encode', 'Encode H.264', 2250, 280, { encoder: 'H.264', fps: 60, resolution: 'Source Size', bitrate: '20', encodingMode: 'Hardware Auto' })
   add('path', 'path', 'Output Path', 2250, 500, { directory: 'C:/Recordings', filename: '{blueprint}_{timestamp}.mp4' })
-  add('write', 'write', 'Write Output', 2560, 370)
+  add('write', 'write', 'Write MP4', 2560, 370)
   value('region', 'region', 'screen', 'region')
   value('screen', 'frames', 'encode', 'frames')
-  value('audio', 'audio', 'encode', 'audio')
   value('encode', 'video', 'write', 'video')
   value('path', 'path', 'write', 'path')
+  for (const [target, input, parameterId] of [
+    ['region', 'display', 'display'], ['region', 'mode', 'regionMode'],
+    ['region', 'x', 'x'], ['region', 'y', 'y'], ['region', 'width', 'width'], ['region', 'height', 'height'],
+    ['screen', 'cursor', 'cursor'], ['encode', 'fps', 'fps'], ['encode', 'resolution', 'resolution'],
+    ['encode', 'bitrate', 'bitrate'], ['encode', 'encodingMode', 'encodingMode'],
+    ['path', 'directory', 'output'], ['path', 'filename', 'filename'],
+  ] as const) {
+    const targetNode = nodes.find((node) => node.id === target)!
+    const config = targetNode.data.config!
+    config.exposedInputs = [...(config.exposedInputs as string[] ?? []), input]
+    const id = `parameter-${parameterId}`
+    add(id, 'read_parameter', `Read ${parameterId}`, 1550, 2000 + nodes.filter((node) => node.data.kind === 'read_parameter').length * 100, { parameterId })
+    value(id, 'value', target!, `param:${input}`)
+  }
   return { nodes, edges }
 }
 
@@ -396,8 +416,9 @@ export type BlueprintDocument = Omit<Blueprint, 'recordState' | 'selectedParamet
 
 export function serializeBlueprint(blueprint: Blueprint): BlueprintDocument {
   const { recordState: _recordState, selectedParameter: _selectedParameter, selectedNode: _selectedNode, detailCard: _detailCard, selection: _selection, openFolders: _openFolders, tabs: _tabs, activeTab: _activeTab, scope: _scope, revision: _revision, ...document } = blueprint
-  const nodes = blueprint.nodes.map(({ selected: _selected, dragging: _dragging, resizing: _resizing, measured: _measured, width: _width, height: _height, ...node }) => node)
-  return { ...document, nodes, events: syncBlueprintEvents(blueprint).events, schemaVersion: 1 }
+  const cleanNodes = (nodes: BlueprintNode[]) => nodes.map(({ selected: _selected, dragging: _dragging, resizing: _resizing, measured: _measured, width: _width, height: _height, ...node }) => node)
+  const functions = blueprint.functions.map((item) => item.graph ? { ...item, graph: { ...item.graph, nodes: cleanNodes(item.graph.nodes) } } : item)
+  return { ...document, nodes: cleanNodes(blueprint.nodes), functions, events: syncBlueprintEvents(blueprint).events, schemaVersion: 1 }
 }
 
 export function hydrateBlueprint(document: BlueprintDocument, scope: BlueprintScope, revision: string): Blueprint {

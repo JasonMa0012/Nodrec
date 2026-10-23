@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  addEdge, applyEdgeChanges, applyNodeChanges, Background, BackgroundVariant, Handle, Position,
-  ReactFlow, ReactFlowProvider, SelectionMode, useReactFlow,
-  type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps,
+  addEdge, applyEdgeChanges, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Handle, Position, reconnectEdge,
+  ReactFlow, ReactFlowProvider, SelectionMode, useReactFlow, useNodesInitialized, useStore,
+  type Connection, type ConnectionLineComponentProps, type Edge, type EdgeProps, type EdgeChange, type Node, type NodeChange, type NodeProps,
 } from '@xyflow/react'
 import {
   AudioLines, CirclePlay, Clock3, Copy, FileOutput, FolderOpen, GitBranch, ListPlus, Monitor, MousePointer2,
   Pause, Play, Settings, Square, StopCircle, Video, Workflow,
 } from 'lucide-react'
+import { connectedNodeIds, ribbonOffsets, routePoints, roundedPath, type RoutePoint } from './graph-interactions'
 import { exposedInputIds, parameterInputPortId, pinTypeColor, pinTypeForValue, type Blueprint, type BlueprintNodeData, type BlueprintSelection, type NodePortDefinition, type NodeTypeDefinition } from './model'
 
 type CanvasNodeData = BlueprintNodeData & {
@@ -20,6 +21,44 @@ type CanvasNodeData = BlueprintNodeData & {
 }
 type CanvasNode = Node<CanvasNodeData>
 
+type RoutedEdgeData = { routePoints?: RoutePoint[]; ribbonOffset: number; setPoints: (id: string, points: RoutePoint[]) => void; locked: boolean }
+
+function RoutedEdge({ id, sourceX, sourceY, targetX, targetY, style, markerEnd, data }: EdgeProps<Edge<RoutedEdgeData>>) {
+  const { screenToFlowPosition } = useReactFlow()
+  const points = routePoints(data)
+  const anchors = [{ x: sourceX, y: sourceY }, ...points, { x: targetX, y: targetY }]
+  return <>
+    {anchors.slice(1).map((end, index) => {
+      const start = anchors[index]!
+      const path = roundedPath(start, end, points.length ? 0 : data?.ribbonOffset)
+      return <g key={index} onDoubleClick={(event) => {
+        event.stopPropagation()
+        if (!data || data.locked) return
+        const point = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+        data.setPoints(id, [...points.slice(0, index), point, ...points.slice(index)])
+      }}><BaseEdge path={path} style={style} markerEnd={index === anchors.length - 2 ? markerEnd : undefined} interactionWidth={16} /></g>
+    })}
+    {points.map((point, index) => <circle key={index} className="route-pin nodrag nopan" cx={point.x} cy={point.y} r={5} fill={style?.stroke ?? '#fff'} tabIndex={0} role="button" aria-label="Routing pin: drag to move, double-click or Delete to remove" onPointerDown={(event) => {
+      event.stopPropagation()
+      if (!data || data.locked || event.button !== 0) return
+      event.currentTarget.setPointerCapture(event.pointerId)
+    }} onPointerMove={(event) => {
+      if (!data || data.locked || !event.currentTarget.hasPointerCapture(event.pointerId)) return
+      event.stopPropagation()
+      data.setPoints(id, points.map((item, i) => i === index ? screenToFlowPosition({ x: event.clientX, y: event.clientY }) : item))
+    }} onPointerUp={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }} onDoubleClick={(event) => { event.stopPropagation(); if (data && !data.locked) data.setPoints(id, points.filter((_, i) => i !== index)) }} onKeyDown={(event) => {
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return
+      event.stopPropagation(); event.preventDefault()
+      if (data && !data.locked) data.setPoints(id, points.filter((_, i) => i !== index))
+    }} />)}
+  </>
+}
+const edgeTypes = { routed: RoutedEdge }
+
+function RoundedConnection({ fromX, fromY, toX, toY, connectionLineStyle }: ConnectionLineComponentProps) {
+  return <path className="react-flow__connection-path" d={roundedPath({ x: fromX, y: fromY }, { x: toX, y: toY })} fill="none" style={connectionLineStyle} />
+}
+
 const icons = {
   event: CirclePlay, register_control: Settings, register_menu: Settings, update_control: Settings, log: FileOutput,
   delay: Clock3, branch: GitBranch, read_parameter: Settings, constant: Square, make_boolean: Square, make_byte: Square, make_integer: Square, make_integer64: Square, make_float: Square, make_double: Square, make_name: Square, make_string: Square, make_text: Square, compare: GitBranch,
@@ -28,21 +67,27 @@ const icons = {
   audio: AudioLines, encode: Video, write: FileOutput,
 }
 
-function Port({ port, side }: { port: NodePortDefinition; side: 'in' | 'out' }) {
+function PinGlyph({ execution }: { execution: boolean }) {
+  return <svg className="pin-glyph" viewBox="0 0 12 12" aria-hidden="true">
+    {execution ? <path d="M3 1.5 L10 6 L3 10.5 Z" /> : <circle cx="6" cy="6" r="4" />}
+  </svg>
+}
+
+function Port({ port, side, connected }: { port: NodePortDefinition; side: 'in' | 'out'; connected: boolean }) {
   const execution = port.valueType === 'flow'
   const color = pinTypeColor(port.valueType)
   return <div className={`port-row ${side}${execution ? ' exec-port' : ''}`}>
-    {side === 'in' && <Handle className={execution ? 'flow-handle' : ''} id={`in:${port.id}`} type="target" position={Position.Left} style={{ background: color }} />}
+    {side === 'in' && <Handle className={`${execution ? 'flow-handle' : ''}${connected ? '' : ' unconnected'}`} id={`in:${port.id}`} type="target" position={Position.Left} style={{ color }}><PinGlyph execution={execution} /></Handle>}
     {side === 'in' && !execution && <span>{port.label}</span>}
     {side === 'out' && !execution && <span>{port.label}</span>}
-    {side === 'out' && <Handle className={execution ? 'flow-handle' : ''} id={`out:${port.id}`} type="source" position={Position.Right} style={{ background: color }} />}
+    {side === 'out' && <Handle className={`${execution ? 'flow-handle' : ''}${connected ? '' : ' unconnected'}`} id={`out:${port.id}`} type="source" position={Position.Right} style={{ color }}><PinGlyph execution={execution} /></Handle>}
   </div>
 }
 
 function configInputPorts(node: Blueprint['nodes'][number], definition: NodeTypeDefinition): NodePortDefinition[] {
   const config = node.data.config ?? {}
   const exposed = exposedInputIds(node.data.kind, config).filter((id) => definition.inputParameters.includes(id))
-  const inputs = definition.inputs.filter((port) => port.valueType === 'flow' || exposed.includes(port.id))
+  const inputs = definition.inputs.filter((port) => !definition.inputParameters.includes(port.id) || exposed.includes(port.id))
   return [...inputs, ...exposed.flatMap((id) => {
     if (definition.inputs.some((port) => port.id === id)) return []
     const currentValue = id.split('.').reduce<unknown>((current, key) => current && typeof current === 'object' ? (current as Record<string, unknown>)[key] : undefined, config)
@@ -80,14 +125,14 @@ function WorkflowNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const executionY = (index: number, count: number) => `${(index + 1) * 100 / (count + 1)}%`
   return <div className={`flow-node${data.kind === 'event' ? ' event-node' : ''}${selected ? ' selected' : ''}`}>
     <div className={`node-title${executionOutputs.length ? ' has-execution-output' : ''}`} title="Double-click to rename" onDoubleClick={(event) => { event.stopPropagation(); data.editTitle(id) }}>
-      {executionInputs.map((port, index) => <Handle key={`in:${port.id}`} className={`flow-handle node-title-flow-handle${data.connectedHandles.includes(`in:${port.id}`) ? '' : ' unconnected'}`} id={`in:${port.id}`} type="target" position={Position.Left} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionInputs.length), background: pinTypeColor('flow') }} />)}
+      {executionInputs.map((port, index) => <Handle key={`in:${port.id}`} className={`flow-handle node-title-flow-handle${data.connectedHandles.includes(`in:${port.id}`) ? '' : ' unconnected'}`} id={`in:${port.id}`} type="target" position={Position.Left} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionInputs.length), color: pinTypeColor('flow') }}><PinGlyph execution /></Handle>)}
       <Icon size={15} />{data.label}
-      {executionOutputs.map((port, index) => <Handle key={`out:${port.id}`} className={`flow-handle node-title-flow-handle${data.connectedHandles.includes(`out:${port.id}`) ? '' : ' unconnected'}`} id={`out:${port.id}`} type="source" position={Position.Right} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionOutputs.length), background: pinTypeColor('flow') }} />)}
+      {executionOutputs.map((port, index) => <Handle key={`out:${port.id}`} className={`flow-handle node-title-flow-handle${data.connectedHandles.includes(`out:${port.id}`) ? '' : ' unconnected'}`} id={`out:${port.id}`} type="source" position={Position.Right} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionOutputs.length), color: pinTypeColor('flow') }}><PinGlyph execution /></Handle>)}
     </div>
     <div className="node-body">
       {(inputs.length > 0 || outputs.length > 0) && <div className="node-ports">
-        <div className="port-column input-ports">{inputs.map((port) => <Port key={`in:${port.id}`} port={port} side="in" />)}</div>
-        <div className="port-column output-ports">{outputs.map((port) => <Port key={`out:${port.id}`} port={port} side="out" />)}</div>
+        <div className="port-column input-ports">{inputs.map((port) => <Port key={`in:${port.id}`} port={port} side="in" connected={data.connectedHandles.includes(`in:${port.id}`)} />)}</div>
+        <div className="port-column output-ports">{outputs.map((port) => <Port key={`out:${port.id}`} port={port} side="out" connected={data.connectedHandles.includes(`out:${port.id}`)} />)}</div>
       </div>}
       {caption && <div className="node-note">{caption}</div>}
     </div>
@@ -109,7 +154,9 @@ function withoutSelectedNodes(selection: BlueprintSelection, removed: Set<string
   return keys.length > 1 ? { kind: 'nodes', keys } : keys.length === 1 ? { kind: 'node', key: keys[0]! } : null
 }
 
-function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, catalog, locked }: {
+function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, catalog, locked, focusRequest, graphName }: {
+  focusRequest?: { id: string; sequence: number } | null
+  graphName?: string
   blueprint: Blueprint
   update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void
   selectNode: (id: string | null) => void
@@ -118,7 +165,12 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
   catalog: NodeTypeDefinition[]
   locked: boolean
 }) {
-  const { fitView, getViewport, screenToFlowPosition, setViewport } = useReactFlow<CanvasNode>()
+  const { fitView, getViewport, getInternalNode, screenToFlowPosition, setViewport } = useReactFlow<CanvasNode>()
+  const measuredNodes = useStore(state => JSON.stringify([...state.nodeLookup.values()].map(node => [node.id, node.internals.positionAbsolute, node.internals.handleBounds])))
+  const initialized = useNodesInitialized()
+  useEffect(() => {
+    if (initialized && focusRequest) void fitView({ nodes: [{ id: focusRequest.id }], minZoom: 1, maxZoom: 1, duration: 250 })
+  }, [fitView, initialized, focusRequest])
   const shellRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const shell = shellRef.current
@@ -164,9 +216,19 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     document.addEventListener('pointerdown', dismiss)
     return () => document.removeEventListener('pointerdown', dismiss)
   }, [contextMenu])
+  const reconnecting = useRef<{ id: string; completed: boolean } | null>(null)
+  const setRoutePoints = useCallback((id: string, points: RoutePoint[]) => {
+    if (!locked) update((current) => ({ ...current, edges: current.edges.map((edge) => edge.id === id ? { ...edge, data: { ...edge.data, routePoints: points } } : edge) }))
+  }, [locked, update])
+  const related = useMemo(() => {
+    const selected = blueprint.nodes.filter((node) => node.selected).map((node) => node.id)
+    if (blueprint.selectedNode && !selected.includes(blueprint.selectedNode)) selected.push(blueprint.selectedNode)
+    return selected.length ? connectedNodeIds(selected, blueprint.edges) : null
+  }, [blueprint.nodes, blueprint.edges, blueprint.selectedNode])
   const definitions = useMemo(() => new Map(catalog.map((definition) => [definition.kind, definition])), [catalog])
   const nodes = useMemo(() => blueprint.nodes.map((node) => ({
     ...node,
+    className: related && !related.has(node.id) ? 'unrelated-node' : undefined,
     data: {
       ...node.data,
       inputs: definitions.get(node.data.kind) ? configInputPorts(node, definitions.get(node.data.kind)!) : [],
@@ -178,7 +240,22 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
       recordState: blueprint.recordState,
       editTitle: editNodeTitle,
     },
-  })), [blueprint.edges, blueprint.nodes, blueprint.recordState, blueprint.values, definitions, editNodeTitle])
+  })), [blueprint.edges, blueprint.nodes, blueprint.recordState, blueprint.values, definitions, editNodeTitle, related])
+  const offsets = useMemo(() => {
+    if (measuredNodes === '[]') return new Map<string, number>()
+    return ribbonOffsets(blueprint.edges.flatMap(edge => {
+      if (routePoints(edge.data).length) return []
+      const source = getInternalNode(edge.source)
+      const target = getInternalNode(edge.target)
+      const from = source?.internals.handleBounds?.source?.find(handle => handle.id === edge.sourceHandle)
+      const to = target?.internals.handleBounds?.target?.find(handle => handle.id === edge.targetHandle)
+      if (!source || !target || !from || !to) return []
+      return [{ id: edge.id,
+        start: { x: source.internals.positionAbsolute.x + from.x + from.width / 2, y: source.internals.positionAbsolute.y + from.y + from.height / 2 },
+        end: { x: target.internals.positionAbsolute.x + to.x + to.width / 2, y: target.internals.positionAbsolute.y + to.y + to.height / 2 },
+      }]
+    }))
+  }, [blueprint.edges, measuredNodes, getInternalNode])
   const edges = useMemo(() => blueprint.edges.map((edge) => {
     const source = nodes.find((node) => node.id === edge.source)
     const target = nodes.find((node) => node.id === edge.target)
@@ -186,8 +263,8 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     const targetPort = target?.data.inputs.find((port) => `in:${port.id}` === edge.targetHandle)
     const valueType = sourcePort?.valueType === 'value' ? targetPort?.valueType : sourcePort?.valueType
     const type = valueType ?? 'value'
-    return { ...edge, style: { ...edge.style, stroke: pinTypeColor(type), strokeWidth: type === 'flow' ? 2 : 1.7 } }
-  }), [blueprint.edges, nodes])
+    return { ...edge, type: 'routed', data: { ...edge.data, ribbonOffset: offsets.get(edge.id) ?? 0, setPoints: setRoutePoints, locked }, className: related && !related.has(edge.source) ? 'unrelated-edge' : undefined, style: { ...edge.style, stroke: pinTypeColor(type), strokeWidth: type === 'flow' ? 2 : 1.7 } }
+  }), [blueprint.edges, nodes, setRoutePoints, locked, related, offsets])
   const nodeTypes = useMemo(() => Object.fromEntries(catalog.map((definition) => [
     definition.kind,
     WorkflowNode,
@@ -254,7 +331,7 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
       if (node.data.kind === 'start_pipeline' && typeof config.outputNodeId === 'string') config.outputNodeId = nodeIds.get(config.outputNodeId) ?? config.outputNodeId
       return { ...node, id: nodeIds.get(node.id)!, position: { x: node.position.x + offset, y: node.position.y + offset }, selected: true, data: { ...node.data, config } }
     })
-    const edges = structuredClone(clipboard.edges).map((edge) => ({ ...edge, id: `edge-${crypto.randomUUID()}`, source: nodeIds.get(edge.source)!, target: nodeIds.get(edge.target)! }))
+    const edges = structuredClone(clipboard.edges).map((edge) => ({ ...edge, id: `edge-${crypto.randomUUID()}`, source: nodeIds.get(edge.source)!, target: nodeIds.get(edge.target)!, data: { ...edge.data, routePoints: routePoints(edge.data).map((point) => ({ x: point.x + offset, y: point.y + offset })) } }))
     update((current) => ({ ...current, nodes: [...current.nodes.map((node) => ({ ...node, selected: false })), ...pasted], edges: [...current.edges, ...edges] }))
     selectNodes(pasted.map((node) => node.id))
     setContextMenu(null)
@@ -288,8 +365,9 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     const sourcePort = source?.data.outputs.find((port) => `out:${port.id}` === connection.sourceHandle)
     const targetPort = target?.data.inputs.find((port) => `in:${port.id}` === connection.targetHandle)
     if (!sourcePort || !targetPort || (sourcePort.valueType !== targetPort.valueType && (sourcePort.valueType === 'flow' || targetPort.valueType === 'flow' || (sourcePort.valueType !== 'value' && targetPort.valueType !== 'value')))) return false
-    return !blueprint.edges.some((edge) => edge.target === connection.target && edge.targetHandle === connection.targetHandle)
-      && (sourcePort.valueType !== 'flow' || !blueprint.edges.some((edge) => edge.source === connection.source && edge.sourceHandle === connection.sourceHandle))
+    const otherEdges = blueprint.edges.filter((edge) => edge.id !== reconnecting.current?.id)
+    return !otherEdges.some((edge) => edge.target === connection.target && edge.targetHandle === connection.targetHandle)
+      && (sourcePort.valueType !== 'flow' || !otherEdges.some((edge) => edge.source === connection.source && edge.sourceHandle === connection.sourceHandle))
   }, [blueprint.edges, nodes])
   const addNode = (definition: NodeTypeDefinition, position?: { x: number; y: number }) => {
     const id = `node-${crypto.randomUUID()}`
@@ -302,7 +380,31 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     selectNode(id)
   }
 
-  return <div className="graph-shell" ref={shellRef} tabIndex={0} onKeyDownCapture={onGraphKeyDown} onPointerDownCapture={(event) => {
+  return <div className="graph-shell" ref={shellRef} tabIndex={0} onKeyDownCapture={onGraphKeyDown} onMouseDownCapture={(event) => {
+    if (event.button === 2 && event.target instanceof Element && event.target.closest('.react-flow__edge')) {
+      const pane = shellRef.current?.querySelector('.react-flow__pane')
+      if (pane) {
+        // React Flow marks edges nopan; start right-button panning from the pane instead.
+        event.preventDefault(); event.stopPropagation()
+        pane.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, view: window, button: 2, buttons: 2, clientX: event.clientX, clientY: event.clientY }))
+      }
+      return
+    }
+    if (locked || !event.ctrlKey || event.button !== 0 || !(event.target instanceof Element)) return
+    const handle = event.target.closest<HTMLElement>('.react-flow__handle')
+    if (!handle) return
+    const nodeId = handle.dataset.nodeid
+    const handleId = handle.dataset.handleid
+    const side = handle.classList.contains('source') ? 'source' : 'target'
+    const edge = blueprint.edges.find((edge) => side === 'source' ? edge.source === nodeId && edge.sourceHandle === handleId : edge.target === nodeId && edge.targetHandle === handleId)
+    if (!edge) return
+    const wrapper = [...(shellRef.current?.querySelectorAll<SVGGElement>('.react-flow__edge') ?? [])].find((element) => element.dataset.id === edge.id)
+    const anchor = wrapper?.querySelector(`.react-flow__edgeupdater-${side}`)
+    if (!anchor) return
+    event.preventDefault(); event.stopPropagation()
+    // Reuse React Flow's reconnect gesture from a Ctrl-dragged node handle.
+    anchor.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, buttons: 1, clientX: event.clientX, clientY: event.clientY, ctrlKey: true }))
+  }} onPointerDownCapture={(event) => {
     if (event.button === 0 && event.target instanceof Element && event.target.closest('.react-flow')) shellRef.current?.focus({ preventScroll: true })
     if (event.button === 2) {
       rightDragStart.current = { x: event.clientX, y: event.clientY }
@@ -334,18 +436,29 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     openContextMenu(event, node?.dataset.id ?? null)
   }}>
         <div className="graph-canvas">
-      <div className="graph-breadcrumb" aria-label={`Current path: ${blueprint.name} / Events`}>
+      <div className="graph-breadcrumb" aria-label={`Current path: ${blueprint.name} / ${graphName ?? 'Events'}`}>
         <span className="graph-breadcrumb-item"><Workflow size={14} />{blueprint.name}</span>
         <span className="graph-breadcrumb-divider" aria-hidden="true">/</span>
-        <span className="graph-breadcrumb-item current"><FolderOpen size={14} />Events</span>
+        <span className="graph-breadcrumb-item current"><FolderOpen size={14} />{graphName ?? 'Events'}</span>
       </div>
       <ReactFlow
-        nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onNodesDelete={onNodesDelete}
+        nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} connectionLineComponent={RoundedConnection} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onNodesDelete={onNodesDelete}
         onConnect={onConnect} isValidConnection={isValidConnection}
+        edgesReconnectable={!locked}
+        onReconnectStart={(_, edge) => { reconnecting.current = { id: edge.id, completed: false } }}
+        onReconnect={(edge, connection) => {
+          if (locked) return
+          if (reconnecting.current) reconnecting.current.completed = true
+          update((current) => ({ ...current, edges: reconnectEdge(current.edges.find((item) => item.id === edge.id)!, connection, current.edges, { shouldReplaceId: false }) }))
+        }}
+        onReconnectEnd={(_, edge) => {
+          if (!locked && reconnecting.current?.id === edge.id && !reconnecting.current.completed) update((current) => ({ ...current, edges: current.edges.filter((item) => item.id !== edge.id) }))
+          reconnecting.current = null
+        }}
         onSelectionChange={onSelectionChange}
         onNodeClick={(_, node) => { selectNode(node.id); setContextMenu(null); shellRef.current?.focus({ preventScroll: true }) }}
         onPaneClick={() => { selectNode(null); setContextMenu(null); shellRef.current?.focus({ preventScroll: true }) }}
-        nodesDraggable={!locked} nodesConnectable={!locked} panOnDrag={[2]} panOnScroll={false} zoomOnPinch zoomOnScroll selectionOnDrag={!locked} selectionMode={SelectionMode.Partial} fitView fitViewOptions={{ padding: .2 }} deleteKeyCode={locked ? null : ['Backspace', 'Delete']} minZoom={.01} maxZoom={1.6}
+        nodesDraggable={!locked} nodesConnectable={!locked} panOnDrag={[1, 2]} zoomOnDoubleClick={false} panOnScroll={false} zoomOnPinch zoomOnScroll selectionOnDrag={!locked} selectionMode={SelectionMode.Partial} fitView fitViewOptions={{ padding: .2 }} deleteKeyCode={locked ? null : ['Backspace', 'Delete']} minZoom={.01} maxZoom={1.6}
         proOptions={{ hideAttribution: true }} defaultEdgeOptions={{ style: { stroke: '#8492a9', strokeWidth: 1.6 } }}
       >
         <Background variant={BackgroundVariant.Lines} gap={22} size={1} color="#2c2d32" />
@@ -368,6 +481,8 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
 }
 
 export default function GraphEditor(props: {
+  focusRequest?: { id: string; sequence: number } | null
+  graphName?: string
   blueprint: Blueprint
   update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void
   selectNode: (id: string | null) => void

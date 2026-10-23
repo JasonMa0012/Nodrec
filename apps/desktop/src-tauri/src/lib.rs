@@ -1,14 +1,17 @@
 mod storage;
 mod workflow;
+pub mod recording;
 
 use serde_json::Value;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Manager, State};
 
 struct AppState {
     store: storage::BlueprintStore,
     workflow: workflow::WorkflowRuntime,
     store_lock: Mutex<()>,
+    shutting_down: AtomicBool,
 }
 
 #[tauri::command]
@@ -50,6 +53,9 @@ fn list_node_types() -> Vec<workflow::NodeType> {
 }
 
 #[tauri::command]
+fn list_displays() -> Result<Vec<recording::DisplayInfo>, String> { recording::displays() }
+
+#[tauri::command]
 fn activate_blueprint(state: State<'_, AppState>, document: Value) -> Result<workflow::Activation, String> {
     state.workflow.activate(document)
 }
@@ -68,20 +74,25 @@ fn runtime_snapshot(state: State<'_, AppState>) -> workflow::RuntimeSnapshot {
 pub fn run() {
     let store = storage::BlueprintStore::beside_executable().expect("cannot locate the Nodrec application directory");
     tauri::Builder::default()
-        .manage(AppState { store, workflow: workflow::WorkflowRuntime::default(), store_lock: Mutex::new(()) })
+        .manage(AppState { store, workflow: workflow::WorkflowRuntime::default(), store_lock: Mutex::new(()), shutting_down: AtomicBool::new(false) })
         .invoke_handler(tauri::generate_handler![
             list_blueprints,
             save_blueprint,
             delete_blueprint,
             restore_blueprint,
             list_node_types,
+            list_displays,
             activate_blueprint,
             dispatch_blueprint_event,
             runtime_snapshot,
         ])
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                window.state::<AppState>().workflow.stop_for_shutdown();
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                if window.state::<AppState>().shutting_down.swap(true, Ordering::AcqRel) { return; }
+                let runtime = window.state::<AppState>().workflow.clone();
+                let window = window.clone();
+                std::thread::spawn(move || { runtime.stop_for_shutdown(); let _ = window.destroy(); });
             }
         })
         .run(tauri::generate_context!())

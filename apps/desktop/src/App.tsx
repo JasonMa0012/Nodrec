@@ -1,23 +1,23 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { Fragment, createContext, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragOverEvent, type DragStartEvent } from '@dnd-kit/core'
-import { Group, Panel, Separator } from 'react-resizable-panels'
+import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels'
 import { Responsive, useContainerWidth, verticalCompactor, type Layout } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 import {
   ArrowRightToLine, AudioLines, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, Crop, Ellipsis, FileVideo2, Folder,
   FolderPlus, GripVertical, LayoutGrid, Minus, Monitor, MousePointer2,
-  Pin, Plus, RotateCcw, Save, Settings, Square, X, Workflow, Keyboard, Play, Pause, StopCircle, Video,
+  Pin, Plus, Save, ScrollText, Settings, Square, Undo2, X, Workflow, Keyboard, Play, Pause, StopCircle, Video,
 } from 'lucide-react'
 import GraphEditor from './GraphEditor'
 import { overviewCollisionDetection, overviewDropPlacement } from './overview-dnd'
 import {
   allParameters, configPathId, createBlueprint as makeBlueprint, exposedInputIds, exposeParameter, hydrateBlueprint, isPinned, moveOverviewCardVertically, moveParameterLayout, overviewCardContentHeight, overviewGridHeight, parameterInputPortId, placeOverviewCardBeside, serializeBlueprint, setPinned, swapOverviewCardPositions, syncBlueprintEvents,
-  type Blueprint, type BlueprintDocument, type BlueprintScope, type BlueprintSelection, type ControlMenuItem, type EditorTab, type NodeTypeDefinition, type OverviewLayouts, type ParameterDefinition, type ParameterDropPlacement, type ParameterRow, type RegisteredControl, type TreeItem,
+  type Blueprint, type BlueprintDocument, type BlueprintScope, type BlueprintSelection, type ControlMenuItem, type EditorTab, type NodeTypeDefinition, type OverviewLayouts, type ParameterDefinition, type ParameterDropPlacement, type ParameterRow, type RegisteredControl, type TreeItem, type Value,
 } from './model'
 
 type Page = 'workspace' | 'runs' | 'settings'
@@ -26,7 +26,10 @@ type OverviewCardDropPlacement = 'left' | 'right' | 'above' | 'below'
 type OverviewDropInfo = { cardId: string | null; placement: OverviewCardDropPlacement | 'swap' | 'end' } | null
 type BlueprintIndex = { blueprints: { scope: BlueprintScope; id: string; name: string; revision: string; document: BlueprintDocument | null; error: string | null; runnable: boolean }[]; diagnostics: string[] }
 type RuntimeLog = { sequence: number; blueprintId: string; runId: string | null; message: string }
-type RuntimeSnapshot = { blueprintId: string | null; runId: string | null; status: Blueprint['recordState']; frameCount: number; controls: RegisteredControl[]; logs: RuntimeLog[]; error: string | null }
+type RecordingStats = { encoder: string; adapter: string; width: number; height: number; fps: number; durationMs: number; encodedFrames: number; droppedFrames: number; repeatedFrames: number; outputPath: string; stopMs: number | null; error: string | null; finished: boolean }
+type DisplayInfo = { id: string; name: string; width: number; height: number; x: number; y: number; hdr: boolean }
+const DisplayContext = createContext<DisplayInfo[]>([])
+type RuntimeSnapshot = { blueprintId: string | null; runId: string | null; status: Blueprint['recordState']; frameCount: number; controls: RegisteredControl[]; logs: RuntimeLog[]; error: string | null; recording: RecordingStats | null }
 type RemovedBlueprint = { blueprint: Blueprint; trashName: string | null; savedDocument: string | null }
 type Activation = { controls: RegisteredControl[]; diagnostics: string[] }
 const overviewWideBreakpoint = 740
@@ -57,6 +60,10 @@ function ControlIcon({ name, size = 14 }: { name: string; size?: number }) {
   return <Icon size={size} />
 }
 
+function closeNestedMenus(menu: HTMLDetailsElement) {
+  menu.querySelectorAll<HTMLDetailsElement>('details[open]').forEach((submenu) => { submenu.open = false })
+}
+
 function ControlMenuItems({ items, dispatch, closeRoot, disabled = false, depth = 0 }: { items: ControlMenuItem[]; dispatch: (eventId: string) => void; closeRoot: () => void; disabled?: boolean; depth?: number }) {
   return <>{items.map((item) => <div className="control-menu-row" key={item.id} onMouseEnter={(event) => {
     const submenu = event.currentTarget.querySelector<HTMLDetailsElement>(':scope > .control-submenu')
@@ -74,39 +81,45 @@ function ControlButton({ control, primary, dispatch, disabled }: { control: Regi
   const closeRoot = () => {
     if (!menuRef.current) return
     menuRef.current.open = false
-    menuRef.current.querySelectorAll<HTMLDetailsElement>('.control-submenu[open]').forEach((submenu) => { submenu.open = false })
+    closeNestedMenus(menuRef.current)
   }
   return <div className="split-control">
     <button className={`button ${primary ? 'primary' : 'secondary'}${primary ? ' recording-primary' : ''}`} disabled={locked} onClick={() => dispatch(control.eventId)}><ControlIcon name={control.icon} /><span>{control.label}</span></button>
-    {control.menu.length > 0 && <details className="control-menu" name="toolbar-control-menu" ref={menuRef}>
+    {control.menu.length > 0 && <details className="control-menu" name="global-dropdown-menu" ref={menuRef} onToggle={(event) => { if (!event.currentTarget.open) closeNestedMenus(event.currentTarget) }}>
       <summary className={`button ${primary ? 'primary' : 'secondary'} control-menu-toggle`} aria-label={`Open ${control.label} menu`} title={`Open ${control.label} menu`}><ChevronDown size={13} /></summary>
       <div className="control-menu-popover"><ControlMenuItems items={control.menu} dispatch={dispatch} disabled={locked} closeRoot={closeRoot} /></div>
     </details>}
   </div>
 }
 
-function TitleBar({ controls, status, hasBlueprint, controlsDisabled, onControlEvent, sidebarOpen, toggleSidebar, navigate }: {
+function TitleBar({ controls, status, hasBlueprint, controlsDisabled, onControlEvent, sidebarOpen, toggleSidebar, navigate, showLogs }: {
   controls: RegisteredControl[]; status: Blueprint['recordState']; hasBlueprint: boolean; controlsDisabled: boolean; onControlEvent: (eventId: string) => void
-  sidebarOpen: boolean; toggleSidebar: () => void; navigate: (page: Page) => void
+  sidebarOpen: boolean; toggleSidebar: () => void; navigate: (page: Page) => void; showLogs: () => void
 }) {
   const dragWindow = () => { if (isTauriWindow()) void getCurrentWindow().startDragging().catch((error) => console.error('Tauri window dragging failed', error)) }
   const active = status === 'recording'
   useEffect(() => {
     const closeMenus = (event: PointerEvent) => {
-      if (event.target instanceof Element && event.target.closest('.control-menu')) return
-      document.querySelectorAll<HTMLDetailsElement>('.control-menu[open], .control-submenu[open]').forEach((menu) => { menu.open = false })
+      const targetMenu = event.target instanceof Element ? event.target.closest<HTMLDetailsElement>('.brand-menu, .control-menu, .plus-menu') : null
+      document.querySelectorAll<HTMLDetailsElement>('.brand-menu[open], .control-menu[open], .plus-menu[open]').forEach((menu) => {
+        if (menu !== targetMenu) { closeNestedMenus(menu); menu.open = false }
+      })
     }
     document.addEventListener('pointerdown', closeMenus)
     return () => document.removeEventListener('pointerdown', closeMenus)
   }, [])
   return <header className="titlebar" data-tauri-drag-region onMouseDown={(event) => { if (event.button === 0 && !(event.target as HTMLElement).closest('button, summary, a, input, select')) dragWindow() }} onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest('button, summary, a, input, select')) withWindow('toggleMaximize') }}>
     <div className="titlebar-start">
-      <details className="brand-menu">
+      <details className="brand-menu" name="global-dropdown-menu" onToggle={(event) => { if (!event.currentTarget.open) closeNestedMenus(event.currentTarget) }}>
         <summary className="brand-menu-trigger" aria-label="Open Nodrec menu"><span className="brand-mark"><span>N</span></span><span className="brand-name">NODREC</span><ChevronDown size={13} /></summary>
         <div className="brand-menu-popover">
           <button onClick={(event) => { navigate('workspace'); event.currentTarget.closest('details')?.removeAttribute('open') }}><Workflow size={14} />Workspace</button>
           <button onClick={(event) => { navigate('runs'); event.currentTarget.closest('details')?.removeAttribute('open') }}><Clock3 size={14} />Runs</button>
           <button onClick={(event) => { navigate('settings'); event.currentTarget.closest('details')?.removeAttribute('open') }}><Settings size={14} />Settings</button>
+          <details className="brand-menu-submenu" onPointerEnter={(event) => { event.currentTarget.open = true }} onPointerLeave={(event) => { event.currentTarget.open = false }}>
+            <summary><LayoutGrid size={14} /><span>Windows</span><ChevronRight size={13} /></summary>
+            <div className="brand-menu-submenu-popover"><button onClick={(event) => { showLogs(); event.currentTarget.closest('.brand-menu-submenu')?.removeAttribute('open'); event.currentTarget.closest('.brand-menu')?.removeAttribute('open') }}><ScrollText size={14} />Logs</button></div>
+          </details>
         </div>
       </details>
       <button className="icon-button sidebar-toggle" title={sidebarOpen ? 'Collapse blueprint list' : 'Expand blueprint list'} aria-label="Toggle blueprint list" onClick={toggleSidebar}><PanelGlyph collapsed={!sidebarOpen} /></button>
@@ -131,14 +144,69 @@ function PanelGlyph({ collapsed }: { collapsed: boolean }) {
 function PanelOpenIcon() { return <span className="panel-glyph"><span /></span> }
 function PanelCloseIcon() { return <span className="panel-glyph open"><span /></span> }
 
-function ParameterControl({ definition, value, onChange, compact = false }: { definition: ParameterDefinition; value: string | boolean; onChange: (value: string | boolean) => void; compact?: boolean }) {
+function LogsWindow({ logs, onClose }: { logs: RuntimeLog[]; onClose: () => void }) {
+  const listRef = useRef<HTMLDivElement>(null)
+  const latestSequence = logs[logs.length - 1]?.sequence
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (list) list.scrollTop = list.scrollHeight
+  }, [latestSequence])
+  return <section className="logs-window" aria-label="Logs window">
+    <header className="logs-window-header"><div><ScrollText size={14} /><strong>Logs</strong><span>{logs.length} {logs.length === 1 ? 'entry' : 'entries'}</span></div><button type="button" aria-label="Close Logs window" onClick={onClose}><X size={14} /></button></header>
+    <div className="logs-window-list" ref={listRef} role="log" aria-live="polite">
+      {logs.length ? logs.map((log) => <div className="logs-window-entry" key={log.sequence}>{log.message}</div>) : <div className="logs-window-empty">No logs yet.</div>}
+    </div>
+  </section>
+}
+
+function useParameterSizing(value: unknown) {
+  const ref = useRef<HTMLSpanElement>(null)
+  useLayoutEffect(() => {
+    const control = ref.current
+    const row = control?.parentElement
+    const label = row?.querySelector<HTMLElement>(':scope > .parameter-label')
+    if (!control || !row || !label) return
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')!
+    const measure = () => {
+      const field = control.querySelector<HTMLElement>('.field-control, .readonly-value')
+      if (!field) return
+      const labelStyle = getComputedStyle(label)
+      context.font = `${labelStyle.fontWeight} ${labelStyle.fontSize} ${labelStyle.fontFamily}`
+      const labelWidth = context.measureText(label.textContent ?? '').width
+      const fieldStyle = getComputedStyle(field)
+      context.font = `${fieldStyle.fontWeight} ${fieldStyle.fontSize} ${fieldStyle.fontFamily}`
+      const text = field instanceof HTMLSelectElement ? field.selectedOptions[0]?.textContent ?? '' : field instanceof HTMLInputElement ? field.value : field.textContent ?? ''
+      const fieldWidth = field.classList.contains('checkbox-control') ? 31 : Math.ceil(context.measureText(text).width) + (field instanceof HTMLSelectElement ? 38 : field instanceof HTMLInputElement && field.type === 'number' ? 38 : 20)
+      const extras = row.classList.contains('layout-field-heading') ? 88 : row.classList.contains('config-field') ? 38 : 10
+      const width = row.clientWidth
+      const stacked = labelWidth + fieldWidth + 22 + extras > width
+      const compact = labelWidth + width / 2 + 22 + extras > width
+      row.classList.toggle('stacked-parameter', stacked)
+      row.style.setProperty('--content-field-width', `${Math.min(width - (row.classList.contains('layout-field-heading') ? 72 : 0), Math.max(stacked || compact ? 0 : width / 2 + 22, fieldWidth + 22))}px`)
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(row)
+    measure()
+    return () => observer.disconnect()
+  }, [value])
+  return ref
+}
+
+function ParameterControl({ definition, value, onChange, compact = false }: { definition: ParameterDefinition; value: Value; onChange: (value: Value) => void; compact?: boolean }) {
+  const displays = useContext(DisplayContext)
   const changed = definition.kind !== 'readonly' && value !== definition.initial
-  return <span className="parameter-control-wrap">
+  const sizingRef = useParameterSizing(JSON.stringify([value, displays]))
+  return <span className="parameter-control-wrap" ref={sizingRef}>
     {definition.kind === 'boolean' ? <span className={`field-control checkbox-control${compact ? ' compact' : ''}`}><input aria-label={definition.label} type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} /><span className="toggle-track"><i /></span></span>
-      : definition.kind === 'choice' ? <select className="field-control" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(event.target.value)}>{definition.options?.map((option) => <option key={option}>{option}</option>)}</select>
+      : definition.id === 'display' ? <select className="field-control" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(event.target.value)}>
+        {!displays.some((display) => display.id === value) && <option value={String(value)}>{String(value)} (select a display)</option>}
+        {displays.map((display) => <option key={display.id} value={display.id}>{display.name} · {display.width} × {display.height}{display.hdr ? ' (HDR unsupported)' : ''}</option>)}
+      </select>
+      : definition.kind === 'choice' ? <select className="field-control" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(typeof definition.initial === 'number' ? Number(event.target.value) : event.target.value)}>{definition.options?.map((option) => <option key={option} value={option}>{option === 'Software' ? 'Software (CPU; higher CPU usage)' : option}</option>)}</select>
         : definition.kind === 'readonly' ? <span className="readonly-value" title={String(value)}>{String(value)}</span>
-          : <input className="field-control" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(event.target.value)} />}
-    {changed && <button type="button" className="parameter-reset" aria-label={`Reset ${definition.label}`} title="Reset to default" onClick={(event) => { event.stopPropagation(); onChange(definition.initial) }}><RotateCcw size={13} /></button>}
+          : <input className="field-control" type={definition.kind === 'number' ? 'number' : 'text'} min={definition.kind === 'number' ? 0 : undefined} step="1" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(definition.kind === 'number' ? Number(event.target.value) : event.target.value)} />}
+    {changed ? <button type="button" className="parameter-reset" aria-label={`Reset ${definition.label}`} title="Reset to default" onClick={(event) => { event.stopPropagation(); onChange(definition.initial) }}><Undo2 size={13} /></button> : <span className="parameter-reset-space" aria-hidden="true" />}
   </span>
 }
 
@@ -148,7 +216,7 @@ function parameterRowTemplate(row: ParameterRow) {
   return row.columns.map((column) => `${Math.max(1, column.weight * 100)}fr`).join(' ')
 }
 
-function ParameterCard({ definition, value, pinned, onChange, selected = false, onSelect, onPin, dragProps, preview = false }: { definition: ParameterDefinition; value: string | boolean; pinned: boolean; onChange: (value: string | boolean) => void; selected?: boolean; onSelect?: () => void; onPin?: () => void; dragProps?: Record<string, unknown>; preview?: boolean }) {
+function ParameterCard({ definition, value, pinned, onChange, selected = false, onSelect, onPin, dragProps, preview = false }: { definition: ParameterDefinition; value: Value; pinned: boolean; onChange: (value: Value) => void; selected?: boolean; onSelect?: () => void; onPin?: () => void; dragProps?: Record<string, unknown>; preview?: boolean }) {
   return <div className={`layout-parameter${selected ? ' selected' : ''}${preview ? ' drag-preview' : ''}`} data-parameter-id={definition.id} onClick={onSelect}>
     <div className="layout-field-heading">
       {dragProps ? <button type="button" className="parameter-drag-handle" aria-label={`Drag ${definition.label}`} {...dragProps}><GripVertical size={13} /></button> : <GripVertical size={13} />}
@@ -481,7 +549,7 @@ function SectionTitle({ title, addMenu, open, onToggle }: { title: string; addMe
 }
 
 function PlusMenu({ label, children }: { label: string; children: ReactNode }) {
-  return <details className="plus-menu"><summary title={`Add to ${label}`} aria-label={`Add to ${label}`}><Plus size={14} /></summary><div className="plus-popover" onClick={(event) => { if ((event.target as HTMLElement).closest('button')) event.currentTarget.closest('details')?.removeAttribute('open') }}>{children}</div></details>
+  return <details className="plus-menu" name="global-dropdown-menu" onToggle={(event) => { if (!event.currentTarget.open) closeNestedMenus(event.currentTarget) }}><summary title={`Add to ${label}`} aria-label={`Add to ${label}`}><Plus size={14} /></summary><div className="plus-popover" onClick={(event) => { if ((event.target as HTMLElement).closest('button')) event.currentTarget.closest('details')?.removeAttribute('open') }}>{children}</div></details>
 }
 
 function FolderLine({ name, open, selected, onToggle, onSelect, onDoubleClick, children, onDrop }: { name: string; open: boolean; selected: boolean; onToggle: () => void; onSelect: () => void; onDoubleClick?: () => void; children?: ReactNode; onDrop?: (event: DragEvent<HTMLDivElement>) => void }) {
@@ -494,7 +562,7 @@ function FolderLine({ name, open, selected, onToggle, onSelect, onDoubleClick, c
   </div>
 }
 
-function LibraryEditor({ blueprint, update, openCard }: { blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; openCard: (id: string) => void }) {
+function LibraryEditor({ blueprint, update, openCard, openEvent, openFunction }: { blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; openCard: (id: string) => void; openEvent: (id: string) => void; openFunction: (id: string) => void }) {
   const definitions = allParameters(blueprint)
   const exposedParameters = new Set(blueprint.cards.flatMap((card) => card.parameters))
   const setSelection = (selection: BlueprintSelection) => update((current) => ({ ...current, selection, selectedParameter: selection?.kind === 'parameter' ? selection.key : null, selectedNode: null }))
@@ -532,19 +600,19 @@ function LibraryEditor({ blueprint, update, openCard }: { blueprint: Blueprint; 
     {kind === 'functions' && <button onClick={() => createTreeItem('functions')}>Function</button>}
     {kind === 'variables' && <button onClick={createVariable}>Variable</button>}
     {kind === 'parameters' && <div className="menu-nested-label">Add variable to card</div>}
-    {kind === 'parameters' && blueprint.cards.map((card) => <details className="menu-submenu" key={card.id}><summary>{card.name}<ChevronRight size={13} /></summary><div>{definitions.filter((definition) => !card.parameters.includes(definition.id)).map((definition) => <button key={definition.id} onClick={() => update((current) => exposeParameter(current, card.id, definition.id))}>{definition.label}</button>)}</div></details>)}
+    {kind === 'parameters' && blueprint.cards.map((card) => <details className="menu-submenu" name="plus-menu-submenu" key={card.id}><summary>{card.name}<ChevronRight size={13} /></summary><div>{definitions.filter((definition) => !card.parameters.includes(definition.id)).map((definition) => <button key={definition.id} onClick={() => update((current) => exposeParameter(current, card.id, definition.id))}>{definition.label}</button>)}</div></details>)}
   </PlusMenu>
 
   return <aside className="blueprint-library">
     <div className="library-scroll">
       <section className="library-section"><SectionTitle title="Events" open={sectionsOpen.events} onToggle={() => toggleFolder('section-events')} addMenu={sectionPlus('Events', 'events')} />
         {sectionsOpen.events && blueprint.eventFolders.map((folder) => <FolderLine key={folder.id} name={folder.name} open={blueprint.openFolders[folder.id] ?? true} selected={blueprint.selection?.kind === 'folder' && blueprint.selection.key === folder.id} onToggle={() => toggleFolder(folder.id)} onSelect={() => setSelection({ kind: 'folder', key: folder.id })}>
-          {blueprint.events.filter((event) => event.folderId === folder.id).map((event) => <button className={`tree-item${blueprint.selection?.kind === 'event' && blueprint.selection.key === event.id ? ' selected' : ''}`} key={event.id} onClick={() => setSelection({ kind: 'event', key: event.id })}><CircleHelp size={13} />{event.name}</button>)}
+          {blueprint.events.filter((event) => event.folderId === folder.id).map((event) => <button className={`tree-item${blueprint.selection?.kind === 'event' && blueprint.selection.key === event.id ? ' selected' : ''}`} key={event.id} onClick={() => setSelection({ kind: 'event', key: event.id })} onDoubleClick={() => openEvent(event.id)}><CircleHelp size={13} />{event.name}</button>)}
         </FolderLine>)}
       </section>
       <section className="library-section"><SectionTitle title="Functions" open={sectionsOpen.functions} onToggle={() => toggleFolder('section-functions')} addMenu={sectionPlus('Functions', 'functions')} />
         {sectionsOpen.functions && blueprint.functionFolders.map((folder) => <FolderLine key={folder.id} name={folder.name} open={blueprint.openFolders[folder.id] ?? true} selected={blueprint.selection?.kind === 'folder' && blueprint.selection.key === folder.id} onToggle={() => toggleFolder(folder.id)} onSelect={() => setSelection({ kind: 'folder', key: folder.id })}>
-          {blueprint.functions.filter((item) => item.folderId === folder.id).map((item) => <button className={`tree-item${blueprint.selection?.kind === 'function' && blueprint.selection.key === item.id ? ' selected' : ''}`} key={item.id} onClick={() => setSelection({ kind: 'function', key: item.id })}><Workflow size={13} />{item.name}</button>)}
+          {blueprint.functions.filter((item) => item.folderId === folder.id).map((item) => <button className={`tree-item${blueprint.selection?.kind === 'function' && blueprint.selection.key === item.id ? ' selected' : ''}`} key={item.id} onClick={() => setSelection({ kind: 'function', key: item.id })} onDoubleClick={() => openFunction(item.id)}><Workflow size={13} />{item.name}</button>)}
         </FolderLine>)}
       </section>
       <section className="library-section"><SectionTitle title="Parameters" open={sectionsOpen.parameters} onToggle={() => toggleFolder('section-parameters')} addMenu={sectionPlus('Parameters', 'parameters')} />
@@ -630,7 +698,7 @@ function canRenderConfig(name: string, values: unknown[]): boolean {
   return value !== undefined
 }
 
-function configOptions(name: string, blueprint: Blueprint): ConfigOption[] {
+function configOptions(name: string, blueprint: Blueprint, displays: DisplayInfo[]): ConfigOption[] {
   if (name === 'eventId') return blueprint.nodes.flatMap((node) => {
     const id = node.data.kind === 'event' ? node.data.config?.eventId : null
     return typeof id === 'string' ? [{ value: id, label: node.data.label }] : []
@@ -643,13 +711,19 @@ function configOptions(name: string, blueprint: Blueprint): ConfigOption[] {
   if (name === 'outputNodeId') return blueprint.nodes.filter((node) => node.data.kind === 'write').map((node) => ({ value: node.id, label: node.data.label }))
   if (name === 'icon') return ['circle-help', 'crop', 'monitor', 'play', 'pause', 'square', 'stop-circle', 'settings', 'video', 'folder', 'mouse-pointer-2', 'audio-lines', 'clock-3'].map((value) => ({ value, label: configFieldLabel(value) }))
   if (name === 'operator') return ['equal', 'not_equal', 'contains'].map((value) => ({ value, label: configFieldLabel(value) }))
-  if (name === 'encoder') return ['H.264', 'HEVC', 'AV1'].map((value) => ({ value, label: value }))
+  if (name === 'display') return displays.map((display) => ({ value: display.id, label: `${display.name} · ${display.width} × ${display.height}${display.hdr ? ' (HDR unsupported)' : ''}` }))
+  if (name === 'mode') return ['Full Display', 'Rectangle'].map((value) => ({ value, label: value }))
+  if (name === 'encodingMode') return [{ value: 'Hardware Auto', label: 'Hardware Auto' }, { value: 'Software', label: 'Software (CPU; higher CPU usage)' }]
+  if (name === 'resolution') return ['Source Size', '1920 × 1080', '2560 × 1440'].map((value) => ({ value, label: value }))
+  if (name === 'encoder') return [{ value: 'H.264', label: 'H.264' }]
   return []
 }
 
 function ConfigField({ name, values, path, blueprint, defaultConfigs, eventNodeSelected, inputParameters, exposedInputsByNode, toggleInput, updateValue, resetValue }: {
   name: string; values: unknown[]; path: ConfigPath; blueprint: Blueprint; defaultConfigs: Record<string, unknown>[]; eventNodeSelected: boolean; inputParameters: string[]; exposedInputsByNode: Set<string>[]; toggleInput: (path: ConfigPath, enabled: boolean) => void; updateValue: (path: ConfigPath, value: unknown) => void; resetValue: (path: ConfigPath) => void
 }) {
+  const displays = useContext(DisplayContext)
+  const sizingRef = useParameterSizing(JSON.stringify([values, displays]))
   const label = configFieldLabel(name)
   if (name === 'menu' || name === 'children' || name === 'exposedInputs') return null
   const value = values[0]
@@ -673,7 +747,7 @@ function ConfigField({ name, values, path, blueprint, defaultConfigs, eventNodeS
     </details>
   }
 
-  const options = configOptions(name, blueprint)
+  const options = configOptions(name, blueprint, displays)
   const readOnlyEventId = eventNodeSelected && name === 'eventId' && path.length === 1
   const inputId = configPathId(path)
   const canExposeInput = inputParameters.includes(inputId)
@@ -684,7 +758,7 @@ function ConfigField({ name, values, path, blueprint, defaultConfigs, eventNodeS
   const showReset = !readOnlyEventId && !inputLocked && values.some((item, index) => defaultValues[index]?.found ? !sameConfigValue(item, defaultValues[index].value) : item !== undefined)
   return <div className={`parameter-field config-field${inputLocked ? ' input-bound' : ''}${inputMixed ? ' input-mixed' : ''}`}><span className="parameter-label">{label}</span>
     {canExposeInput ? <button type="button" className={`parameter-input-button${inputEnabled ? ' active' : ''}${inputMixed ? ' mixed' : ''}`} aria-pressed={inputMixed ? 'mixed' : inputEnabled} aria-label={`${inputEnabled ? 'Disable' : 'Enable'} ${label} node input`} title={inputEnabled ? 'Node input enabled' : 'Enable node input'} onClick={() => toggleInput(path, !inputEnabled || inputMixed)}><ArrowRightToLine size={15} /></button> : <span className="parameter-input-button-space" aria-hidden="true" />}
-    <span className={`parameter-control-wrap${inputLocked ? ' input-bound' : ''}${typeof value === 'boolean' && !multiple ? ' boolean-control' : ''}`}>
+    <span ref={sizingRef} className={`parameter-control-wrap${inputLocked ? ' input-bound' : ''}${typeof value === 'boolean' && !multiple ? ' boolean-control' : ''}`}>
       {typeof value === 'boolean' && multiple ? <select className="field-control" aria-label={label} value="" disabled={inputLocked} onChange={(event) => updateValue(path, event.target.value === 'true')}>
         <option value="">Multiple values</option><option value="true">On</option><option value="false">Off</option>
       </select> : typeof value === 'boolean' ? <span className="field-control checkbox-control compact"><input aria-label={label} type="checkbox" checked={value} disabled={inputLocked} onChange={(event) => updateValue(path, event.target.checked)} /><span className="toggle-track"><i /></span></span>
@@ -695,7 +769,7 @@ function ConfigField({ name, values, path, blueprint, defaultConfigs, eventNodeS
             {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
             : <input className="field-control" aria-label={label} value={multiple ? '' : String(value ?? '')} placeholder={multiple ? 'Multiple values' : undefined} readOnly={readOnlyEventId || inputLocked} onChange={(event) => updateValue(path, event.target.value)} />}
-      {showReset ? <button type="button" className="parameter-reset" aria-label={`Reset ${label}`} title="Reset to default" onClick={(event) => { event.stopPropagation(); resetValue(path) }}><RotateCcw size={13} /></button> : <span className="parameter-reset-space" aria-hidden="true" />}
+      {showReset ? <button type="button" className="parameter-reset" aria-label={`Reset ${label}`} title="Reset to default" onClick={(event) => { event.stopPropagation(); resetValue(path) }}><Undo2 size={13} /></button> : <span className="parameter-reset-space" aria-hidden="true" />}
     </span>
   </div>
 }
@@ -703,7 +777,7 @@ function ConfigField({ name, values, path, blueprint, defaultConfigs, eventNodeS
 function NodeConfigEditor({ nodes, blueprint, catalog, update }: { nodes: Blueprint['nodes'][number][]; blueprint: Blueprint; catalog: NodeTypeDefinition[]; update: BlueprintUpdate }) {
   const nodeIds = new Set(nodes.map((node) => node.id))
   const defaultConfigs = nodes.map((node) => catalog.find((definition) => definition.kind === node.data.kind)?.defaultConfig ?? {})
-  const nodeConfigs = nodes.map((node) => node.data.config ?? {})
+  const nodeConfigs: Record<string, unknown>[] = nodes.map((node, index) => ({ ...defaultConfigs[index], ...(node.data.kind === 'region' && !node.data.config?.mode ? { mode: 'Rectangle' } : {}), ...node.data.config }))
   const inputParameters = nodes.length > 0 ? (catalog.find((definition) => definition.kind === nodes[0]!.data.kind)?.inputParameters ?? []).filter((id) => nodes.every((node) => catalog.find((definition) => definition.kind === node.data.kind)?.inputParameters.includes(id))) : []
   const exposedInputsByNode = nodes.map((node) => new Set(exposedInputIds(node.data.kind, node.data.config ?? {})))
   const updateValue = (path: ConfigPath, value: unknown) => update((current) => ({ ...current, nodes: current.nodes.map((node) => nodeIds.has(node.id) ? { ...node, data: { ...node.data, config: writeConfigPath(node.data.config ?? {}, path, value) as Record<string, unknown> } } : node) }))
@@ -712,7 +786,7 @@ function NodeConfigEditor({ nodes, blueprint, catalog, update }: { nodes: Bluepr
     update((current) => {
       const nextNodes = current.nodes.map((node) => {
         if (!nodeIds.has(node.id)) return node
-        const config = node.data.config ?? {}
+        const config = { ...catalog.find((definition) => definition.kind === node.data.kind)?.defaultConfig, ...node.data.config }
         const exposed = new Set(exposedInputIds(node.data.kind, config))
         if (enabled) exposed.add(id); else exposed.delete(id)
         const nextConfig = { ...config }
@@ -728,7 +802,7 @@ function NodeConfigEditor({ nodes, blueprint, catalog, update }: { nodes: Bluepr
     const index = nodes.findIndex((selected) => selected.id === node.id)
     if (index < 0) return node
     const defaultValue = readConfigPath(defaultConfigs[index], path)
-    const config = defaultValue.found ? writeConfigPath(node.data.config ?? {}, path, defaultValue.value) : removeConfigPath(node.data.config ?? {}, path)
+    const config = defaultValue.found ? writeConfigPath(nodeConfigs[index] ?? {}, path, defaultValue.value) : removeConfigPath(nodeConfigs[index] ?? {}, path)
     return { ...node, data: { ...node.data, config: config as Record<string, unknown> } }
   }) }))
   const keys = Object.keys(nodeConfigs[0] ?? {}).filter((key) => canRenderConfig(key, nodeConfigs.map((config) => config[key])))
@@ -800,31 +874,56 @@ function CardDetailsPreview({ blueprint, update }: { blueprint: Blueprint; updat
   }} /> : null
 }
 
+const emptyGraph: Pick<Blueprint, 'nodes' | 'edges'> = { nodes: [], edges: [] }
+
 function BlueprintContent({ blueprint, update, openCard, catalog, locked }: { blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; openCard: (id: string) => void; catalog: NodeTypeDefinition[]; locked: boolean }) {
+  const [focusRequest, setFocusRequest] = useState<{ id: string; sequence: number } | null>(null)
+  const editorTab = blueprint.tabs.find((tab) => tab.id === blueprint.activeTab) ?? blueprint.tabs[0]!
+  const functionId = editorTab.kind === 'function' ? editorTab.functionId : undefined
+  const activeFunction = functionId ? blueprint.functions.find((item) => item.id === functionId) : undefined
+  const graphBlueprint = activeFunction ? { ...blueprint, nodes: activeFunction.graph?.nodes ?? emptyGraph.nodes, edges: activeFunction.graph?.edges ?? emptyGraph.edges } : blueprint
+  const updateGraph: typeof update = useCallback((value) => update((current) => {
+    if (!functionId) return typeof value === 'function' ? value(current) : value
+    const item = current.functions.find((item) => item.id === functionId)
+    if (!item) return current
+    const scoped = { ...current, nodes: item.graph?.nodes ?? emptyGraph.nodes, edges: item.graph?.edges ?? emptyGraph.edges }
+    const next = typeof value === 'function' ? value(scoped) : value
+    if (next === scoped) return current
+    return { ...next, nodes: current.nodes, edges: current.edges, functions: next.functions.map((item) => item.id === functionId ? { ...item, graph: { nodes: next.nodes, edges: next.edges } } : item) }
+  }), [functionId, update])
+  const openEvent = (id: string) => {
+    const node = blueprint.nodes.find((node) => node.data.kind === 'event' && node.data.config?.eventId === id)
+    if (!node) return
+    update((current) => ({ ...current, activeTab: 'blueprint', tabs: current.tabs.some((tab) => tab.id === 'blueprint') ? current.tabs : [...current.tabs, { id: 'blueprint', kind: 'blueprint' }], selection: { kind: 'event', key: id }, selectedNode: node.id, nodes: current.nodes.map((item) => ({ ...item, selected: item.id === node.id })) }))
+    setFocusRequest((previous) => ({ id: node.id, sequence: (previous?.sequence ?? 0) + 1 }))
+  }
+  const openFunction = (id: string) => update((current) => {
+    const tabId = `function:${id}`
+    return { ...current, tabs: current.tabs.some((tab) => tab.id === tabId) ? current.tabs : [...current.tabs, { id: tabId, kind: 'function', functionId: id }], activeTab: tabId, selectedNode: null, selection: { kind: 'function', key: id } }
+  })
   const [detailsWidth, setDetailsWidth] = useState(380)
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
   const selectGraphNodes = useCallback((ids: string[]) => {
     setEditingNodeId(null)
-    update((current) => {
+    updateGraph((current) => {
       const keys = [...new Set(ids)].filter((id) => current.nodes.some((node) => node.id === id))
       const previousKeys = current.selection?.kind === 'nodes' ? current.selection.keys : current.selection?.kind === 'node' ? [current.selection.key] : []
       if (keys.length === previousKeys.length && keys.every((id) => previousKeys.includes(id)) && current.selectedNode === (keys.length === 1 ? keys[0] : null)) return current
       const selection: BlueprintSelection = keys.length > 1 ? { kind: 'nodes', keys } : keys.length === 1 ? { kind: 'node', key: keys[0]! } : null
       return { ...current, selectedNode: keys.length === 1 ? keys[0]! : null, selection }
     })
-  }, [update])
+  }, [updateGraph])
   const selectGraphNode = useCallback((id: string | null) => selectGraphNodes(id ? [id] : []), [selectGraphNodes])
   const editGraphNodeTitle = useCallback((id: string) => {
     if (locked) return
     selectGraphNode(id)
     setEditingNodeId(id)
   }, [locked, selectGraphNode])
-  const editorTab = blueprint.tabs.find((tab) => tab.id === blueprint.activeTab) ?? blueprint.tabs[0]
   if (editorTab.kind === 'card' && editorTab.cardId) return <CardLayoutEditor key={`${blueprint.id}:${editorTab.cardId}`} blueprint={blueprint} cardId={editorTab.cardId} update={update} />
-  if (editorTab.kind === 'blueprint') return <div className="blueprint-workbench">
-    <LibraryEditor blueprint={blueprint} update={update} openCard={openCard} />
-    <GraphEditor blueprint={blueprint} update={update} selectNode={selectGraphNode} selectNodes={selectGraphNodes} editNodeTitle={editGraphNodeTitle} catalog={catalog} locked={locked} />
-    <DetailsPanel blueprint={blueprint} update={update} catalog={catalog} width={detailsWidth} onWidthChange={setDetailsWidth} editingNodeId={editingNodeId} onEditingNodeTitleChange={setEditingNodeId} />
+  if (editorTab.kind === 'blueprint' || activeFunction) return <div className="blueprint-workbench">
+    <LibraryEditor blueprint={blueprint} update={update} openCard={openCard} openEvent={openEvent} openFunction={openFunction} />
+    <GraphEditor key={`${blueprint.id}:${editorTab.id}`} graphName={activeFunction?.name} focusRequest={activeFunction ? null : focusRequest} blueprint={graphBlueprint} update={updateGraph} selectNode={selectGraphNode} selectNodes={selectGraphNodes} editNodeTitle={editGraphNodeTitle} catalog={catalog} locked={locked} />
+    <DetailsPanel blueprint={graphBlueprint} update={updateGraph} catalog={catalog} width={detailsWidth} onWidthChange={setDetailsWidth} editingNodeId={editingNodeId} onEditingNodeTitleChange={setEditingNodeId} />
   </div>
   return <main className="overview-page"><OverviewCards blueprint={blueprint} update={update} /></main>
 }
@@ -864,7 +963,18 @@ export default function App() {
   const [controls, setControls] = useState<RegisteredControl[]>([])
   const [status, setStatus] = useState<Blueprint['recordState']>('ready')
   const [frameCount, setFrameCount] = useState(0)
+  const [recording, setRecording] = useState<RecordingStats | null>(null)
+  const [displays, setDisplays] = useState<DisplayInfo[]>([])
+  useEffect(() => {
+    if (!isTauriWindow()) return
+    const refresh = () => { void invoke<DisplayInfo[]>('list_displays').then(setDisplays).catch((error) => setNotice(`Cannot enumerate displays: ${String(error)}`)) }
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [])
   const [logs, setLogs] = useState<RuntimeLog[]>([])
+  const [logsOpen, setLogsOpen] = useState(false)
+  const logsPanelRef = usePanelRef()
   const activeBlueprint = blueprints.find((blueprint) => blueprint.id === activeBlueprintId)
   const activeBlueprintIdRef = useRef(activeBlueprintId)
   const sidebarResizeRef = useRef<{ x: number; width: number } | null>(null)
@@ -882,6 +992,10 @@ export default function App() {
   }, [activeBlueprintId])
 
   useEffect(() => { activeBlueprintIdRef.current = activeBlueprintId }, [activeBlueprintId])
+  useLayoutEffect(() => {
+    if (logsOpen) logsPanelRef.current?.expand()
+    else logsPanelRef.current?.collapse()
+  }, [logsOpen, logsPanelRef])
   useEffect(() => { localStorage.setItem('nodrec.blueprint-sidebar-width', String(sidebarWidth)) }, [sidebarWidth])
   useEffect(() => {
     const clampSidebarWidth = () => setSidebarWidth((width) => Math.min(width, getSidebarMaxWidth()))
@@ -945,8 +1059,8 @@ export default function App() {
           activatedDocumentRef.current = `${initial.id}:${JSON.stringify(document)}`
           setControls(activation.controls)
           setStatus(snapshot.status)
-          setFrameCount(snapshot.frameCount)
-          setLogs(snapshot.logs.filter((log) => log.blueprintId === initial.id))
+          setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
+          setLogs(snapshot.logs)
           if (activation.diagnostics.length) setNotice(activation.diagnostics.join(' · '))
           else if (initial.supported && activation.controls.length === 0) setNotice('This blueprint has no controls registered by On Initialize.')
         } catch (error) { if (live) setNotice(`Cannot initialize blueprint controls: ${String(error)}`) }
@@ -964,15 +1078,14 @@ export default function App() {
       if (snapshot.blueprintId !== activeBlueprintIdRef.current) return
       setStatus(snapshot.status)
       setControls(snapshot.controls)
-      setFrameCount(snapshot.frameCount)
-      setLogs(snapshot.logs.filter((log) => log.blueprintId === snapshot.blueprintId))
+      setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
+      setLogs(snapshot.logs)
       setBlueprints((current) => current.map((blueprint) => blueprint.id === snapshot.blueprintId ? { ...blueprint, recordState: snapshot.status } : blueprint))
       if (snapshot.error) setNotice(snapshot.error)
     }
     void Promise.all([
       listen<RuntimeSnapshot>('workflow-status', (event) => apply(event.payload)),
       listen<RuntimeLog>('workflow-log', (event) => {
-        if (event.payload.blueprintId !== activeBlueprintIdRef.current) return
         setLogs((current) => current.some((log) => log.sequence === event.payload.sequence) ? current : [...current, event.payload].slice(-300))
       }),
     ]).then((listeners) => { if (disposed) listeners.forEach((stop) => stop()); else unlisten = listeners })
@@ -983,8 +1096,8 @@ export default function App() {
     if (!runtimeLocked || !activeBlueprintId || !isTauriWindow()) return
     const poll = () => void invoke<RuntimeSnapshot>('runtime_snapshot').then((snapshot) => {
       if (snapshot.blueprintId !== activeBlueprintIdRef.current) return
-      setStatus(snapshot.status); setControls(snapshot.controls); setFrameCount(snapshot.frameCount)
-      setLogs(snapshot.logs.filter((log) => log.blueprintId === snapshot.blueprintId))
+      setStatus(snapshot.status); setControls(snapshot.controls); setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
+      setLogs(snapshot.logs)
     }).catch((error) => setNotice(String(error)))
     poll()
     const timer = window.setInterval(poll, 500)
@@ -1004,7 +1117,7 @@ export default function App() {
         if (activation.diagnostics.length) setNotice(activation.diagnostics.join(' · '))
         else if (supported && activation.controls.length === 0) setNotice('This blueprint has no controls registered by On Initialize.')
         return invoke<RuntimeSnapshot>('runtime_snapshot').then((snapshot) => { if (live) {
-          setFrameCount(snapshot.frameCount); setLogs(snapshot.logs.filter((log) => log.blueprintId === snapshot.blueprintId)); setStatus(snapshot.status); setControls(snapshot.controls)
+          setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setLogs(snapshot.logs); setStatus(snapshot.status); setControls(snapshot.controls)
         } })
       }).catch((error) => { if (live) setNotice(`Cannot initialize blueprint controls: ${String(error)}`) })
     }, 120)
@@ -1017,8 +1130,8 @@ export default function App() {
       .then(() => invoke<RuntimeSnapshot>('runtime_snapshot'))
       .then((snapshot) => {
         if (snapshot.blueprintId !== activeBlueprintIdRef.current) return
-        setStatus(snapshot.status); setControls(snapshot.controls); setFrameCount(snapshot.frameCount)
-        setLogs(snapshot.logs.filter((log) => log.blueprintId === snapshot.blueprintId))
+        setStatus(snapshot.status); setControls(snapshot.controls); setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
+        setLogs(snapshot.logs)
       })
       .catch((error) => setNotice(String(error)))
   }
@@ -1056,7 +1169,7 @@ export default function App() {
   const createBlueprint = (name: string) => {
     const id = `blueprint-${crypto.randomUUID().slice(0, 8)}`
     const blueprint = makeBlueprint(id, name)
-    setControls([]); setLogs([]); setFrameCount(0); setStatus('ready')
+    setControls([]); setFrameCount(0); setStatus('ready')
     setBlueprints((current) => [...current, blueprint]); setActiveBlueprintId(id); setPage('workspace'); setDialog(null); setUndoBlueprint(null)
   }
   const saveName = (name: string) => {
@@ -1074,7 +1187,7 @@ export default function App() {
       setBlueprints((current) => current.filter((item) => item.id !== id))
       setSavedDocuments((current) => { const next = { ...current }; delete next[id]; return next })
       if (activeBlueprintId === id) {
-        setControls([]); setLogs([]); setFrameCount(0)
+        setControls([]); setFrameCount(0)
         setActiveBlueprintId(blueprints.find((item) => item.id !== id)?.id ?? null)
       }
     } catch (error) { setNotice(`Delete failed: ${String(error)}`) }
@@ -1085,14 +1198,14 @@ export default function App() {
     if (!original || runtimeLocked) return
     const copy: Blueprint = structuredClone(original)
     copy.id = `blueprint-${crypto.randomUUID().slice(0, 8)}`; copy.name += ' copy'; copy.detailCard = null; copy.scope = 'user'; copy.revision = null; copy.recordState = 'ready'
-    setControls([]); setLogs([]); setFrameCount(0)
+    setControls([]); setFrameCount(0)
     setBlueprints((current) => [...current, copy]); setActiveBlueprintId(copy.id); setMenuBlueprint(null)
   }
   const undoDelete = async () => {
     if (!undoBlueprint) return
     try {
       if (undoBlueprint.trashName) await invoke('restore_blueprint', { scope: undoBlueprint.blueprint.scope, id: undoBlueprint.blueprint.id, trashName: undoBlueprint.trashName })
-      setControls([]); setLogs([]); setFrameCount(0); setStatus('ready')
+      setControls([]); setFrameCount(0); setStatus('ready')
       setBlueprints((current) => [...current, undoBlueprint.blueprint]); setActiveBlueprintId(undoBlueprint.blueprint.id); setUndoBlueprint(null)
       if (undoBlueprint.savedDocument) setSavedDocuments((current) => ({ ...current, [undoBlueprint.blueprint.id]: undoBlueprint.savedDocument! }))
     } catch (error) { setNotice(`Undo failed: ${String(error)}`) }
@@ -1101,12 +1214,15 @@ export default function App() {
   const switchBlueprint = (id: string) => {
     if (runtimeLocked) return
     if (id === activeBlueprintId) { setPage('workspace'); setMenuBlueprint(null); return }
-    setControls([]); setLogs([]); setFrameCount(0); setStatus('ready'); setNotice(null)
+    setControls([]); setFrameCount(0); setStatus('ready'); setNotice(null)
     setActiveBlueprintId(id); setPage('workspace'); setMenuBlueprint(null)
   }
+  const showLogs = () => { setLogsOpen(true); logsPanelRef.current?.expand() }
   const contextBlueprint = menuBlueprint ? blueprints.find((blueprint) => blueprint.id === menuBlueprint.id) : null
-  return <div className="desktop-window">
-    <TitleBar controls={controls} status={status} hasBlueprint={Boolean(activeBlueprint)} controlsDisabled={!activeBlueprint?.supported} onControlEvent={dispatchEvent} sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((current) => !current)} navigate={selectPage} />
+  return <DisplayContext.Provider value={displays}><div className="desktop-window">
+    <TitleBar controls={controls} status={status} hasBlueprint={Boolean(activeBlueprint)} controlsDisabled={!activeBlueprint?.supported} onControlEvent={dispatchEvent} sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((current) => !current)} navigate={selectPage} showLogs={showLogs} />
+    <Group className="desktop-panels" orientation="vertical" defaultLayout={{ workspace: 78, logs: 22 }} resizeTargetMinimumSize={{ fine: 8, coarse: 12 }}>
+    <Panel id="workspace" minSize="35%" className="desktop-main-panel">
     <div className={`app-layout${sidebarOpen ? '' : ' sidebar-collapsed'}`} style={{ gridTemplateColumns: sidebarOpen ? `${sidebarWidth}px 6px minmax(0, 1fr)` : '0px 0px minmax(0, 1fr)' }}>
       <aside className="blueprint-sidebar">
         <div className="blueprint-list">{blueprints.map((blueprint) => {
@@ -1131,10 +1247,10 @@ export default function App() {
         {notice && <div className="app-notice" role="status">{notice}<button aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={13} /></button></div>}
         {diagnostics.length > 0 && <div className="app-diagnostics">{diagnostics.map((item, index) => <div key={`${index}:${item}`}>{item}</div>)}</div>}
         {page !== 'workspace' ? <EmptyPage page={page} /> : !activeBlueprint ? <main className="empty-blueprints"><div className="empty-icon"><Workflow size={24} /></div><span className="eyebrow">BLUEPRINTS</span><h1>{loading ? 'Loading blueprints' : 'No blueprints found'}</h1><p>{loading ? 'Reading files beside the application.' : 'Create a blueprint to start building a workflow.'}</p><button className="button primary" disabled={loading} onClick={() => setDialog({ kind: 'new' })}><Plus size={14} />New blueprint</button></main>
-          : runtimeLocked ? <main className="runtime-locked"><div className="empty-icon"><Video size={24} /></div><span className="eyebrow">{activeBlueprint.name}</span><h1>{status === 'paused' ? 'Recording paused' : status === 'starting' ? 'Starting workflow' : status === 'stopping' ? 'Stopping workflow' : 'Recording'}</h1><p>{frameCount} simulated frames processed. Use the blueprint controls above to continue or stop.</p></main>
+          : runtimeLocked ? <main className="runtime-locked"><div className="empty-icon"><Video size={24} /></div><span className="eyebrow">{activeBlueprint.name}</span><h1>{status === 'paused' ? 'Recording paused' : status === 'starting' ? 'Starting workflow' : status === 'stopping' ? 'Finalizing MP4' : 'Recording'}</h1><p>{frameCount} encoded frames. Use the blueprint controls above to continue or stop.</p>{recording && <><p>{recording.encoder} · {recording.adapter}<br />{recording.width} × {recording.height} · {recording.fps} fps · {(recording.durationMs / 1000).toFixed(1)} s<br />{recording.droppedFrames} dropped · {recording.repeatedFrames} repeated</p><p>{recording.outputPath}</p></>}</main>
             : <>
               <div className="workspace-tabs"><div className="tabs-list">{activeBlueprint.tabs.map((tab) => <div className={`workspace-tab${tab.id === activeBlueprint.activeTab ? ' active' : ''}`} key={tab.id}>
-                <button onClick={() => selectTab(tab.id)}>{tab.kind === 'overview' ? 'Overview' : tab.kind === 'blueprint' ? 'Blueprint' : activeBlueprint.cards.find((card) => card.id === tab.cardId)?.name ?? 'Card'}</button>
+                <button onClick={() => selectTab(tab.id)}>{tab.kind === 'overview' ? 'Overview' : tab.kind === 'blueprint' ? 'Blueprint' : tab.kind === 'function' ? activeBlueprint.functions.find((item) => item.id === tab.functionId)?.name ?? 'Function' : activeBlueprint.cards.find((card) => card.id === tab.cardId)?.name ?? 'Card'}</button>
                 {tab.kind !== 'overview' && <button className="tab-close" aria-label={`Close ${tab.kind} tab`} onClick={() => closeTab(tab.id)}><X size={12} /></button>}
               </div>)}</div></div>
               <div className="workspace-content">
@@ -1142,15 +1258,20 @@ export default function App() {
                 <CardDetailsPreview blueprint={activeBlueprint} update={updateBlueprint} />
               </div>
             </>}
-        {logs.length > 0 && <details className="runtime-log"><summary>Run log · {logs.length} entries · {frameCount} simulated frames</summary><div>{logs.slice(-30).reverse().map((log) => <p key={log.sequence}><span>{log.sequence}</span>{log.message}</p>)}</div></details>}
       </section>
     </div>
+    </Panel>
+    <Separator className={`logs-resize-separator${logsOpen ? '' : ' closed'}`} disabled={!logsOpen} aria-label="Resize Logs window" />
+    <Panel id="logs" className="desktop-logs-panel" panelRef={logsPanelRef} collapsible collapsedSize="0%" minSize="12%" maxSize="60%">
+      {logsOpen && <LogsWindow logs={logs} onClose={() => setLogsOpen(false)} />}
+    </Panel>
+    </Group>
     {menuBlueprint && contextBlueprint && createPortal(<div className="context-menu" role="menu" style={{ position: 'fixed', top: menuBlueprint.top, left: menuBlueprint.left }} onContextMenu={(event) => event.preventDefault()}>
       <button role="menuitem" disabled={runtimeLocked} onClick={() => { switchBlueprint(contextBlueprint.id); setDialog({ kind: 'rename', blueprintId: contextBlueprint.id }); setMenuBlueprint(null) }}>Rename</button>
       <button role="menuitem" disabled={runtimeLocked} onClick={() => duplicateBlueprint(contextBlueprint.id)}><Copy size={13} />Duplicate</button>
       <button role="menuitem" className="danger-action" disabled={runtimeLocked && contextBlueprint.id === activeBlueprintId} onClick={() => { void removeBlueprint(contextBlueprint.id) }}>Delete</button>
     </div>, document.body)}
     <BlueprintDialog key={`${dialog?.kind ?? 'none'}-${dialog?.blueprintId ?? ''}`} dialog={dialog} initialName={dialog?.kind === 'rename' ? blueprints.find((blueprint) => blueprint.id === dialog.blueprintId)?.name ?? '' : ''} onClose={() => setDialog(null)} onSave={saveName} />
-  </div>
+  </div></DisplayContext.Provider>
 }
 
