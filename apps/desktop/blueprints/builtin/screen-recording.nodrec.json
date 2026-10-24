@@ -4,7 +4,7 @@
   "replay": false,
   "values": {
     "display": "Display 1",
-    "regionMode": "Full Display",
+    "regionMode": "Selected Region",
     "x": 0,
     "y": 0,
     "width": 897,
@@ -467,15 +467,18 @@
       },
       "data": {
         "kind": "register_control",
-        "label": "Register Region Picker (later)",
+        "label": "Register Region Picker",
         "config": {
           "control": {
             "id": "select-region",
-            "label": "Region picker (later)",
+            "label": "Select region",
             "icon": "crop",
             "eventId": "event-select-region",
             "order": 0,
-            "enabled": false
+            "enabled": true,
+            "targets": [
+              "main"
+            ]
           }
         }
       }
@@ -497,7 +500,11 @@
             "icon": "play",
             "eventId": "event-start",
             "order": 1,
-            "enabled": true
+            "enabled": true,
+            "targets": [
+              "main",
+              "region:capture-region"
+            ]
           }
         }
       }
@@ -519,7 +526,11 @@
             "icon": "pause",
             "eventId": "event-pause",
             "order": 2,
-            "enabled": false
+            "enabled": false,
+            "targets": [
+              "main",
+              "region:capture-region"
+            ]
           }
         }
       }
@@ -541,7 +552,11 @@
             "icon": "stop-circle",
             "eventId": "event-stop",
             "order": 3,
-            "enabled": false
+            "enabled": false,
+            "targets": [
+              "main",
+              "region:capture-region"
+            ]
           }
         }
       }
@@ -637,6 +652,54 @@
       }
     },
     {
+      "id": "register-status",
+      "type": "register_display",
+      "position": {
+        "x": 910,
+        "y": -230
+      },
+      "data": {
+        "kind": "register_display",
+        "label": "Register Status Display",
+        "config": {
+          "display": {
+            "id": "recording-status",
+            "targets": [
+              "main",
+              "region:capture-region"
+            ],
+            "order": 4,
+            "source": "status",
+            "format": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "register-time",
+      "type": "register_display",
+      "position": {
+        "x": 1200,
+        "y": -230
+      },
+      "data": {
+        "kind": "register_display",
+        "label": "Register Time Display",
+        "config": {
+          "display": {
+            "id": "recording-time",
+            "targets": [
+              "main",
+              "region:capture-region"
+            ],
+            "order": 5,
+            "source": "elapsed",
+            "format": "HH:mm:ss"
+          }
+        }
+      }
+    },
+    {
       "id": "event-select-region",
       "type": "event",
       "position": {
@@ -653,16 +716,36 @@
     },
     {
       "id": "log-select-region",
-      "type": "log",
+      "type": "select_region",
       "position": {
         "x": 330,
         "y": 230
       },
       "data": {
-        "kind": "log",
-        "label": "Log Region Selection",
+        "kind": "select_region",
+        "label": "Select Region",
         "config": {
-          "message": "Region picker is not implemented; enter physical pixel coordinates in Overview"
+          "toolId": "capture-region",
+          "display": "Display 1",
+          "initialRegion": null,
+          "exposedInputs": [
+            "display"
+          ]
+        }
+      }
+    },
+    {
+      "id": "picker-display",
+      "type": "read_parameter",
+      "position": {
+        "x": 0,
+        "y": 320
+      },
+      "data": {
+        "kind": "read_parameter",
+        "label": "Read Display",
+        "config": {
+          "parameterId": "display"
         }
       }
     },
@@ -1252,14 +1335,13 @@
         "label": "Screen Region",
         "config": {
           "display": "Display 1",
-          "mode": "Full Display",
+          "mode": "Rectangle",
           "x": 0,
           "y": 0,
           "width": 897,
           "height": 360,
           "exposedInputs": [
             "display",
-            "mode",
             "x",
             "y",
             "width",
@@ -1345,11 +1427,30 @@
       }
     },
     {
+      "id": "selected-region",
+      "type": "get_selected_region",
+      "position": {
+        "x": 1610,
+        "y": 230
+      },
+      "data": {
+        "kind": "get_selected_region",
+        "label": "Get Selected Region",
+        "config": {
+          "toolId": "capture-region",
+          "mode": "Selected Region",
+          "exposedInputs": [
+            "mode"
+          ]
+        }
+      }
+    },
+    {
       "id": "parameter-display",
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 2000
+        "y": 2100
       },
       "data": {
         "kind": "read_parameter",
@@ -1364,7 +1465,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 2100
+        "y": 2200
       },
       "data": {
         "kind": "read_parameter",
@@ -1379,7 +1480,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 2200
+        "y": 2300
       },
       "data": {
         "kind": "read_parameter",
@@ -1394,7 +1495,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 2300
+        "y": 2400
       },
       "data": {
         "kind": "read_parameter",
@@ -1409,7 +1510,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 2400
+        "y": 2500
       },
       "data": {
         "kind": "read_parameter",
@@ -1424,7 +1525,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 2500
+        "y": 2600
       },
       "data": {
         "kind": "read_parameter",
@@ -1439,7 +1540,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 2600
+        "y": 2700
       },
       "data": {
         "kind": "read_parameter",
@@ -1454,7 +1555,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 2700
+        "y": 2800
       },
       "data": {
         "kind": "read_parameter",
@@ -1469,7 +1570,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 2800
+        "y": 2900
       },
       "data": {
         "kind": "read_parameter",
@@ -1484,7 +1585,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 2900
+        "y": 3000
       },
       "data": {
         "kind": "read_parameter",
@@ -1499,7 +1600,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 3000
+        "y": 3100
       },
       "data": {
         "kind": "read_parameter",
@@ -1514,7 +1615,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 3100
+        "y": 3200
       },
       "data": {
         "kind": "read_parameter",
@@ -1529,7 +1630,7 @@
       "type": "read_parameter",
       "position": {
         "x": 1550,
-        "y": 3200
+        "y": 3300
       },
       "data": {
         "kind": "read_parameter",
@@ -1566,8 +1667,24 @@
       "type": "smoothstep"
     },
     {
-      "id": "e-register-pause-register-stop",
+      "id": "e-register-pause-register-status",
       "source": "register-pause",
+      "sourceHandle": "out:flow",
+      "target": "register-status",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-register-status-register-time",
+      "source": "register-status",
+      "sourceHandle": "out:flow",
+      "target": "register-time",
+      "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-register-time-register-stop",
+      "source": "register-time",
       "sourceHandle": "out:flow",
       "target": "register-stop",
       "targetHandle": "in:flow",
@@ -1611,6 +1728,14 @@
       "sourceHandle": "out:flow",
       "target": "menu-delayed-start",
       "targetHandle": "in:flow",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-picker-display-log-select-region-param:display",
+      "source": "picker-display",
+      "sourceHandle": "out:value",
+      "target": "log-select-region",
+      "targetHandle": "in:param:display",
       "type": "smoothstep"
     },
     {
@@ -1830,8 +1955,16 @@
       "type": "smoothstep"
     },
     {
-      "id": "e-region-screen-region",
+      "id": "e-region-selected-region-fallback",
       "source": "region",
+      "sourceHandle": "out:region",
+      "target": "selected-region",
+      "targetHandle": "in:fallback",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e-selected-region-screen-region",
+      "source": "selected-region",
       "sourceHandle": "out:region",
       "target": "screen",
       "targetHandle": "in:region",
@@ -1870,10 +2003,10 @@
       "type": "smoothstep"
     },
     {
-      "id": "e-parameter-regionMode-region-param:mode",
+      "id": "e-parameter-regionMode-selected-region-param:mode",
       "source": "parameter-regionMode",
       "sourceHandle": "out:value",
-      "target": "region",
+      "target": "selected-region",
       "targetHandle": "in:param:mode",
       "type": "smoothstep"
     },

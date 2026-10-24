@@ -1,6 +1,7 @@
 import { Fragment, createContext, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
+import { startupLog } from './startup'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragOverEvent, type DragStartEvent } from '@dnd-kit/core'
@@ -9,15 +10,16 @@ import { Responsive, useContainerWidth, verticalCompactor, type Layout } from 'r
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 import {
-  ArrowRightToLine, AudioLines, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, Crop, Ellipsis, FileVideo2, Folder,
-  FolderPlus, GripVertical, LayoutGrid, Minus, Monitor, MousePointer2,
-  Pin, Plus, Save, ScrollText, Settings, Square, Undo2, X, Workflow, Keyboard, Play, Pause, StopCircle, Video,
+  ArrowRightToLine, AudioLines, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, Ellipsis, FileVideo2, Folder,
+  FolderPlus, GripVertical, LayoutGrid, Minus, Monitor,
+  Pin, Plus, Save, ScrollText, Settings, Square, Undo2, X, Workflow, Keyboard, Video,
 } from 'lucide-react'
 import GraphEditor from './GraphEditor'
+import { ControlButton, RuntimeDisplay } from './WorkflowControls'
 import { overviewCollisionDetection, overviewDropPlacement } from './overview-dnd'
 import {
   allParameters, configPathId, createBlueprint as makeBlueprint, exposedInputIds, exposeParameter, hydrateBlueprint, isPinned, moveOverviewCardVertically, moveParameterLayout, overviewCardContentHeight, overviewGridHeight, parameterInputPortId, placeOverviewCardBeside, serializeBlueprint, setPinned, swapOverviewCardPositions, syncBlueprintEvents,
-  type Blueprint, type BlueprintDocument, type BlueprintScope, type BlueprintSelection, type ControlMenuItem, type EditorTab, type NodeTypeDefinition, type OverviewLayouts, type ParameterDefinition, type ParameterDropPlacement, type ParameterRow, type RegisteredControl, type TreeItem, type Value,
+  type Blueprint, type BlueprintDocument, type BlueprintScope, type BlueprintSelection, type EditorTab, type NodeTypeDefinition, type OverviewLayouts, type ParameterDefinition, type ParameterDropPlacement, type ParameterRow, type RegisteredControl, type RegisteredDisplay, type TreeItem, type Value,
 } from './model'
 
 type Page = 'workspace' | 'runs' | 'settings'
@@ -29,7 +31,7 @@ type RuntimeLog = { sequence: number; blueprintId: string; runId: string | null;
 type RecordingStats = { encoder: string; adapter: string; width: number; height: number; fps: number; durationMs: number; encodedFrames: number; droppedFrames: number; repeatedFrames: number; outputPath: string; stopMs: number | null; error: string | null; finished: boolean }
 type DisplayInfo = { id: string; name: string; width: number; height: number; x: number; y: number; hdr: boolean }
 const DisplayContext = createContext<DisplayInfo[]>([])
-type RuntimeSnapshot = { blueprintId: string | null; runId: string | null; status: Blueprint['recordState']; frameCount: number; controls: RegisteredControl[]; logs: RuntimeLog[]; error: string | null; recording: RecordingStats | null }
+type RuntimeSnapshot = { blueprintId: string | null; runId: string | null; status: Blueprint['recordState']; frameCount: number; controls: RegisteredControl[]; displays: RegisteredDisplay[]; logs: RuntimeLog[]; error: string | null; recording: RecordingStats | null }
 type RemovedBlueprint = { blueprint: Blueprint; trashName: string | null; savedDocument: string | null }
 type Activation = { controls: RegisteredControl[]; diagnostics: string[] }
 const overviewWideBreakpoint = 740
@@ -54,50 +56,16 @@ function withWindow(action: 'minimize' | 'toggleMaximize' | 'close') {
   void appWindow[action]().catch((error) => console.error(`Tauri window ${action} failed`, error))
 }
 
-const controlIcons = { crop: Crop, monitor: Monitor, 'mouse-pointer-2': MousePointer2, play: Play, pause: Pause, square: Square, 'stop-circle': StopCircle, settings: Settings, video: Video, folder: Folder, 'audio-lines': AudioLines, 'clock-3': Clock3, 'circle-help': CircleHelp }
-function ControlIcon({ name, size = 14 }: { name: string; size?: number }) {
-  const Icon = controlIcons[name as keyof typeof controlIcons] ?? CircleHelp
-  return <Icon size={size} />
-}
 
 function closeNestedMenus(menu: HTMLDetailsElement) {
-  menu.querySelectorAll<HTMLDetailsElement>('details[open]').forEach((submenu) => { submenu.open = false })
+  menu.querySelectorAll<HTMLDetailsElement>('details[open]').forEach(submenu => { submenu.open = false })
 }
 
-function ControlMenuItems({ items, dispatch, closeRoot, disabled = false, depth = 0 }: { items: ControlMenuItem[]; dispatch: (eventId: string) => void; closeRoot: () => void; disabled?: boolean; depth?: number }) {
-  return <>{items.map((item) => <div className="control-menu-row" key={item.id} onMouseEnter={(event) => {
-    const submenu = event.currentTarget.querySelector<HTMLDetailsElement>(':scope > .control-submenu')
-    event.currentTarget.parentElement?.querySelectorAll<HTMLDetailsElement>(':scope > .control-menu-row > .control-submenu[open]').forEach((other) => { if (other !== submenu) other.open = false })
-    if (submenu) submenu.open = true
-  }}>
-    <button disabled={disabled} onClick={() => { closeRoot(); dispatch(item.eventId) }}><ControlIcon name={item.icon} size={13} /><span>{item.label}</span></button>
-    {item.children?.length ? <details className="control-submenu" name={`control-submenu-${depth}`}><summary aria-label={`Open ${item.label} submenu`} title={`Open ${item.label} submenu`} onClick={(event) => { event.preventDefault(); event.currentTarget.parentElement?.setAttribute('open', '') }}><ChevronRight size={13} /></summary><div className="control-submenu-popover"><ControlMenuItems items={item.children} dispatch={dispatch} closeRoot={closeRoot} disabled={disabled} depth={depth + 1} /></div></details> : null}
-  </div>)}</>
-}
-
-function ControlButton({ control, primary, dispatch, disabled }: { control: RegisteredControl; primary?: boolean; dispatch: (eventId: string) => void; disabled: boolean }) {
-  const menuRef = useRef<HTMLDetailsElement>(null)
-  const locked = disabled || !control.enabled
-  const closeRoot = () => {
-    if (!menuRef.current) return
-    menuRef.current.open = false
-    closeNestedMenus(menuRef.current)
-  }
-  return <div className="split-control">
-    <button className={`button ${primary ? 'primary' : 'secondary'}${primary ? ' recording-primary' : ''}`} disabled={locked} onClick={() => dispatch(control.eventId)}><ControlIcon name={control.icon} /><span>{control.label}</span></button>
-    {control.menu.length > 0 && <details className="control-menu" name="global-dropdown-menu" ref={menuRef} onToggle={(event) => { if (!event.currentTarget.open) closeNestedMenus(event.currentTarget) }}>
-      <summary className={`button ${primary ? 'primary' : 'secondary'} control-menu-toggle`} aria-label={`Open ${control.label} menu`} title={`Open ${control.label} menu`}><ChevronDown size={13} /></summary>
-      <div className="control-menu-popover"><ControlMenuItems items={control.menu} dispatch={dispatch} disabled={locked} closeRoot={closeRoot} /></div>
-    </details>}
-  </div>
-}
-
-function TitleBar({ controls, status, hasBlueprint, controlsDisabled, onControlEvent, sidebarOpen, toggleSidebar, navigate, showLogs }: {
-  controls: RegisteredControl[]; status: Blueprint['recordState']; hasBlueprint: boolean; controlsDisabled: boolean; onControlEvent: (eventId: string) => void
+function TitleBar({ controls, displays, durationMs, status, controlsDisabled, onControlEvent, sidebarOpen, toggleSidebar, navigate, showLogs }: {
+  controls: RegisteredControl[]; displays: RegisteredDisplay[]; durationMs: number; status: Blueprint['recordState']; hasBlueprint: boolean; controlsDisabled: boolean; onControlEvent: (eventId: string) => void
   sidebarOpen: boolean; toggleSidebar: () => void; navigate: (page: Page) => void; showLogs: () => void
 }) {
   const dragWindow = () => { if (isTauriWindow()) void getCurrentWindow().startDragging().catch((error) => console.error('Tauri window dragging failed', error)) }
-  const active = status === 'recording'
   useEffect(() => {
     const closeMenus = (event: PointerEvent) => {
       const targetMenu = event.target instanceof Element ? event.target.closest<HTMLDetailsElement>('.brand-menu, .control-menu, .plus-menu') : null
@@ -108,7 +76,7 @@ function TitleBar({ controls, status, hasBlueprint, controlsDisabled, onControlE
     document.addEventListener('pointerdown', closeMenus)
     return () => document.removeEventListener('pointerdown', closeMenus)
   }, [])
-  return <header className="titlebar" data-tauri-drag-region onMouseDown={(event) => { if (event.button === 0 && !(event.target as HTMLElement).closest('button, summary, a, input, select')) dragWindow() }} onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest('button, summary, a, input, select')) withWindow('toggleMaximize') }}>
+  return <header className="titlebar" onMouseDown={(event) => { if (event.button === 0 && !(event.target as HTMLElement).closest('button, summary, a, input, select')) { if (event.detail === 2) withWindow('toggleMaximize'); else dragWindow() } }}>
     <div className="titlebar-start">
       <details className="brand-menu" name="global-dropdown-menu" onToggle={(event) => { if (!event.currentTarget.open) closeNestedMenus(event.currentTarget) }}>
         <summary className="brand-menu-trigger" aria-label="Open Nodrec menu"><span className="brand-mark"><span>N</span></span><span className="brand-name">NODREC</span><ChevronDown size={13} /></summary>
@@ -125,11 +93,10 @@ function TitleBar({ controls, status, hasBlueprint, controlsDisabled, onControlE
       <button className="icon-button sidebar-toggle" title={sidebarOpen ? 'Collapse blueprint list' : 'Expand blueprint list'} aria-label="Toggle blueprint list" onClick={toggleSidebar}><PanelGlyph collapsed={!sidebarOpen} /></button>
       <span className="titlebar-divider" />
       <div className="titlebar-recording-actions">
-        {controls.map((control) => <ControlButton key={control.id} control={control} primary={control.id === 'start-recording'} dispatch={onControlEvent} disabled={controlsDisabled} />)}
-        {hasBlueprint && <span className={`runtime-state${active ? ' active' : ''}`} aria-live="polite">{active ? 'Recording' : status}</span>}
+        {[...controls, ...displays].filter(item => !item.targets || item.targets.includes('main')).sort((a,b) => a.order-b.order).map(item => 'source' in item ? <RuntimeDisplay key={item.id} display={item} status={status} durationMs={durationMs} /> : <ControlButton key={item.id} control={item} primary={item.id === 'start-recording'} dispatch={onControlEvent} disabled={controlsDisabled} />)}
       </div>
     </div>
-    <div className="titlebar-drag-space" data-tauri-drag-region />
+    <div className="titlebar-drag-space" />
     <div className="window-controls">
       <button aria-label="Minimize" onClick={() => withWindow('minimize')}><Minus size={14} /></button>
       <button aria-label="Maximize" onClick={() => withWindow('toggleMaximize')}><Square size={12} /></button>
@@ -692,6 +659,7 @@ function sameConfigValue(left: unknown, right: unknown) {
 function canRenderConfig(name: string, values: unknown[]): boolean {
   if (name === 'menu' || name === 'children' || values.length === 0) return false
   const value = values[0]
+
   const type = Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value
   if (values.some((item) => (Array.isArray(item) ? 'array' : item === null ? 'null' : typeof item) !== type)) return false
   if (isConfigObject(value)) return Object.keys(value).some((key) => canRenderConfig(key, values.map((item) => isConfigObject(item) ? item[key] : undefined)))
@@ -712,7 +680,9 @@ function configOptions(name: string, blueprint: Blueprint, displays: DisplayInfo
   if (name === 'icon') return ['circle-help', 'crop', 'monitor', 'play', 'pause', 'square', 'stop-circle', 'settings', 'video', 'folder', 'mouse-pointer-2', 'audio-lines', 'clock-3'].map((value) => ({ value, label: configFieldLabel(value) }))
   if (name === 'operator') return ['equal', 'not_equal', 'contains'].map((value) => ({ value, label: configFieldLabel(value) }))
   if (name === 'display') return displays.map((display) => ({ value: display.id, label: `${display.name} · ${display.width} × ${display.height}${display.hdr ? ' (HDR unsupported)' : ''}` }))
-  if (name === 'mode') return ['Full Display', 'Rectangle'].map((value) => ({ value, label: value }))
+  if (name === 'source') return ['status', 'elapsed'].map(value => ({ value, label: value }))
+  if (name === 'format') return ['text', 'HH:mm:ss'].map(value => ({ value, label: value }))
+  if (name === 'mode') return ['Selected Region', 'Full Display', 'Rectangle'].map((value) => ({ value, label: value }))
   if (name === 'encodingMode') return [{ value: 'Hardware Auto', label: 'Hardware Auto' }, { value: 'Software', label: 'Software (CPU; higher CPU usage)' }]
   if (name === 'resolution') return ['Source Size', '1920 × 1080', '2560 × 1440'].map((value) => ({ value, label: value }))
   if (name === 'encoder') return [{ value: 'H.264', label: 'H.264' }]
@@ -727,6 +697,12 @@ function ConfigField({ name, values, path, blueprint, defaultConfigs, eventNodeS
   const label = configFieldLabel(name)
   if (name === 'menu' || name === 'children' || name === 'exposedInputs') return null
   const value = values[0]
+  if (name === 'targets') {
+    const selected = Array.isArray(value) ? value as string[] : ['main']
+    const targets = ['main', ...blueprint.nodes.filter(node => node.data.kind === 'select_region').map(node => `region:${node.data.config?.toolId ?? ''}`)]
+    const changed = values.some((item, index) => !sameConfigValue(item, readConfigPath(defaultConfigs[index] ?? {}, path).value ?? ['main']))
+    return <div className="parameter-field config-field"><span className="parameter-label">Targets</span><span className="parameter-input-button-space" aria-hidden="true" /><span ref={sizingRef} className="parameter-control-wrap"><span className="field-control target-checkboxes">{[...new Set(targets)].map(target => <label key={target}><input type="checkbox" checked={selected.includes(target)} onChange={event => updateValue(path, event.target.checked ? [...selected, target] : selected.filter(item => item !== target))} />{target === 'main' ? 'Main window' : blueprint.nodes.find(node => node.data.kind === 'select_region' && `region:${node.data.config?.toolId ?? ''}` === target)?.data.label ?? target}</label>)}</span>{changed ? <button className="parameter-reset" aria-label="Reset Targets" title="Reset to default" onClick={() => resetValue(path)}><Undo2 size={13} /></button> : <span className="parameter-reset-space" aria-hidden="true" />}</span></div>
+  }
   if (value === undefined || !canRenderConfig(name, values)) return null
   const multiple = values.some((item) => !sameConfigValue(item, value))
   if (Array.isArray(value) && multiple) return <div className="parameter-field config-field"><span className="parameter-label">{label}</span><span className="readonly-value">Multiple values</span></div>
@@ -777,7 +753,7 @@ function ConfigField({ name, values, path, blueprint, defaultConfigs, eventNodeS
 function NodeConfigEditor({ nodes, blueprint, catalog, update }: { nodes: Blueprint['nodes'][number][]; blueprint: Blueprint; catalog: NodeTypeDefinition[]; update: BlueprintUpdate }) {
   const nodeIds = new Set(nodes.map((node) => node.id))
   const defaultConfigs = nodes.map((node) => catalog.find((definition) => definition.kind === node.data.kind)?.defaultConfig ?? {})
-  const nodeConfigs: Record<string, unknown>[] = nodes.map((node, index) => ({ ...defaultConfigs[index], ...(node.data.kind === 'region' && !node.data.config?.mode ? { mode: 'Rectangle' } : {}), ...node.data.config }))
+  const nodeConfigs: Record<string, unknown>[] = nodes.map((node, index) => ({ ...defaultConfigs[index], ...(node.data.kind === 'region' && !node.data.config?.mode ? { mode: 'Rectangle' } : {}), ...node.data.config, ...(node.data.kind === 'register_control' ? { control: { targets: ['main'], ...(node.data.config?.control as Record<string, unknown> ?? {}) } } : {}) }))
   const inputParameters = nodes.length > 0 ? (catalog.find((definition) => definition.kind === nodes[0]!.data.kind)?.inputParameters ?? []).filter((id) => nodes.every((node) => catalog.find((definition) => definition.kind === node.data.kind)?.inputParameters.includes(id))) : []
   const exposedInputsByNode = nodes.map((node) => new Set(exposedInputIds(node.data.kind, node.data.config ?? {})))
   const updateValue = (path: ConfigPath, value: unknown) => update((current) => ({ ...current, nodes: current.nodes.map((node) => nodeIds.has(node.id) ? { ...node, data: { ...node.data, config: writeConfigPath(node.data.config ?? {}, path, value) as Record<string, unknown> } } : node) }))
@@ -961,6 +937,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(() => isTauriWindow() ? null : 'Blueprint files are loaded by the Nodrec desktop app.')
   const [loading, setLoading] = useState(isTauriWindow)
   const [controls, setControls] = useState<RegisteredControl[]>([])
+  const [registeredDisplays, setRegisteredDisplays] = useState<RegisteredDisplay[]>([])
   const [status, setStatus] = useState<Blueprint['recordState']>('ready')
   const [frameCount, setFrameCount] = useState(0)
   const [recording, setRecording] = useState<RecordingStats | null>(null)
@@ -981,6 +958,7 @@ export default function App() {
   const activatedDocumentRef = useRef('')
   const activeDocument = useMemo(() => activeBlueprint ? serializeBlueprint(activeBlueprint) : null, [activeBlueprint])
   const activeDocumentJson = activeDocument ? JSON.stringify(activeDocument) : ''
+  const activeBlueprintDirty = !!activeBlueprint && savedDocuments[activeBlueprint.id] !== activeDocumentJson
   const activationKey = activeBlueprintId && activeDocumentJson ? `${activeBlueprintId}:${activeDocumentJson}` : ''
   const runtimeLocked = ['starting', 'recording', 'paused', 'stopping'].includes(status)
   const updateBlueprint = useCallback((value: Blueprint | ((current: Blueprint) => Blueprint)) => {
@@ -1032,9 +1010,10 @@ export default function App() {
   useEffect(() => {
     if (!isTauriWindow()) return
     let live = true
+    startupLog('App mounted; requesting blueprint index and node catalog')
     void Promise.all([
-      invoke<BlueprintIndex>('list_blueprints'),
-      invoke<NodeTypeDefinition[]>('list_node_types'),
+      invoke<BlueprintIndex>('list_blueprints').then((index) => { startupLog(`blueprint index received: ${index.blueprints.length} files`); return index }),
+      invoke<NodeTypeDefinition[]>('list_node_types').then((types) => { startupLog(`node catalog received: ${types.length} types`); return types }),
     ]).then(async ([index, nodeTypes]) => {
       if (!live) return
       const seen = new Set<string>()
@@ -1050,11 +1029,14 @@ export default function App() {
       setDiagnostics([...index.diagnostics, ...index.blueprints.filter((item) => item.error).map((item) => `${item.name}: ${item.error}`)])
       setSavedDocuments(Object.fromEntries(valid.map((blueprint) => [blueprint.id, JSON.stringify(serializeBlueprint(blueprint))])))
       const initial = valid.find((blueprint) => blueprint.id === 'screen-recording') ?? valid[0]
+      startupLog(`blueprints hydrated: ${valid.length}; initializing controls`)
       if (initial) {
         try {
           const document = serializeBlueprint(initial)
           const activation = await invoke<Activation>('activate_blueprint', { document })
+          startupLog('initial blueprint activation returned; requesting runtime snapshot')
           const snapshot = await invoke<RuntimeSnapshot>('runtime_snapshot')
+          startupLog('initial runtime snapshot received')
           if (!live) return
           activatedDocumentRef.current = `${initial.id}:${JSON.stringify(document)}`
           setControls(activation.controls)
@@ -1063,12 +1045,16 @@ export default function App() {
           setLogs(snapshot.logs)
           if (activation.diagnostics.length) setNotice(activation.diagnostics.join(' · '))
           else if (initial.supported && activation.controls.length === 0) setNotice('This blueprint has no controls registered by On Initialize.')
-        } catch (error) { if (live) setNotice(`Cannot initialize blueprint controls: ${String(error)}`) }
+        } catch (error) { startupLog(`initialization failed: ${String(error)}`); if (live) setNotice(`Cannot initialize blueprint controls: ${String(error)}`) }
       }
       setActiveBlueprintId(initial?.id ?? null)
-    }).catch((error) => { if (live) setNotice(`Cannot load Nodrec blueprints: ${String(error)}`) }).finally(() => { if (live) setLoading(false) })
+    }).catch((error) => { startupLog(`blueprint loading failed: ${String(error)}`); if (live) setNotice(`Cannot load Nodrec blueprints: ${String(error)}`) }).finally(() => { if (live) { startupLog('initialization finished; updating React state'); setLoading(false) } })
     return () => { live = false }
   }, [])
+
+  useEffect(() => {
+    if (!loading) requestAnimationFrame(() => startupLog('React committed initialized UI; animation frame reached'))
+  }, [loading])
 
   useEffect(() => {
     if (!isTauriWindow()) return
@@ -1077,7 +1063,7 @@ export default function App() {
     const apply = (snapshot: RuntimeSnapshot) => {
       if (snapshot.blueprintId !== activeBlueprintIdRef.current) return
       setStatus(snapshot.status)
-      setControls(snapshot.controls)
+      setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? [])
       setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
       setLogs(snapshot.logs)
       setBlueprints((current) => current.map((blueprint) => blueprint.id === snapshot.blueprintId ? { ...blueprint, recordState: snapshot.status } : blueprint))
@@ -1096,7 +1082,7 @@ export default function App() {
     if (!runtimeLocked || !activeBlueprintId || !isTauriWindow()) return
     const poll = () => void invoke<RuntimeSnapshot>('runtime_snapshot').then((snapshot) => {
       if (snapshot.blueprintId !== activeBlueprintIdRef.current) return
-      setStatus(snapshot.status); setControls(snapshot.controls); setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
+      setStatus(snapshot.status); setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? []); setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
       setLogs(snapshot.logs)
     }).catch((error) => setNotice(String(error)))
     poll()
@@ -1117,7 +1103,7 @@ export default function App() {
         if (activation.diagnostics.length) setNotice(activation.diagnostics.join(' · '))
         else if (supported && activation.controls.length === 0) setNotice('This blueprint has no controls registered by On Initialize.')
         return invoke<RuntimeSnapshot>('runtime_snapshot').then((snapshot) => { if (live) {
-          setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setLogs(snapshot.logs); setStatus(snapshot.status); setControls(snapshot.controls)
+          setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setLogs(snapshot.logs); setStatus(snapshot.status); setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? [])
         } })
       }).catch((error) => { if (live) setNotice(`Cannot initialize blueprint controls: ${String(error)}`) })
     }, 120)
@@ -1130,13 +1116,13 @@ export default function App() {
       .then(() => invoke<RuntimeSnapshot>('runtime_snapshot'))
       .then((snapshot) => {
         if (snapshot.blueprintId !== activeBlueprintIdRef.current) return
-        setStatus(snapshot.status); setControls(snapshot.controls); setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
+        setStatus(snapshot.status); setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? []); setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
         setLogs(snapshot.logs)
       })
       .catch((error) => setNotice(String(error)))
   }
 
-  const saveBlueprint = async (id: string) => {
+  const saveBlueprint = useCallback(async (id: string) => {
     const blueprint = blueprints.find((item) => item.id === id)
     if (!blueprint || !isTauriWindow() || runtimeLocked && id === activeBlueprintId || savingBlueprints.has(id)) return
     const document = serializeBlueprint(blueprint)
@@ -1150,7 +1136,18 @@ export default function App() {
     } catch (error) { setNotice(`Save failed: ${String(error)}`) } finally {
       setSavingBlueprints((current) => { const next = new Set(current); next.delete(id); return next })
     }
-  }
+  }, [blueprints, runtimeLocked, activeBlueprintId, savingBlueprints, savedDocuments])
+
+  useEffect(() => {
+    const save = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 's') return
+      event.preventDefault()
+      event.stopPropagation()
+      if (!event.repeat && page === 'workspace' && !dialog && activeBlueprintId) void saveBlueprint(activeBlueprintId)
+    }
+    window.addEventListener('keydown', save, true)
+    return () => window.removeEventListener('keydown', save, true)
+  }, [page, dialog, activeBlueprintId, saveBlueprint])
 
   const openTab = (kind: EditorTab['kind'], cardId?: string) => {
     updateBlueprint((current) => {
@@ -1220,7 +1217,7 @@ export default function App() {
   const showLogs = () => { setLogsOpen(true); logsPanelRef.current?.expand() }
   const contextBlueprint = menuBlueprint ? blueprints.find((blueprint) => blueprint.id === menuBlueprint.id) : null
   return <DisplayContext.Provider value={displays}><div className="desktop-window">
-    <TitleBar controls={controls} status={status} hasBlueprint={Boolean(activeBlueprint)} controlsDisabled={!activeBlueprint?.supported} onControlEvent={dispatchEvent} sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((current) => !current)} navigate={selectPage} showLogs={showLogs} />
+    <TitleBar displays={registeredDisplays} durationMs={recording?.durationMs ?? 0} controls={controls} status={status} hasBlueprint={Boolean(activeBlueprint)} controlsDisabled={!activeBlueprint?.supported} onControlEvent={dispatchEvent} sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((current) => !current)} navigate={selectPage} showLogs={showLogs} />
     <Group className="desktop-panels" orientation="vertical" defaultLayout={{ workspace: 78, logs: 22 }} resizeTargetMinimumSize={{ fine: 8, coarse: 12 }}>
     <Panel id="workspace" minSize="35%" className="desktop-main-panel">
     <div className={`app-layout${sidebarOpen ? '' : ' sidebar-collapsed'}`} style={{ gridTemplateColumns: sidebarOpen ? `${sidebarWidth}px 6px minmax(0, 1fr)` : '0px 0px minmax(0, 1fr)' }}>
@@ -1228,7 +1225,7 @@ export default function App() {
         <div className="blueprint-list">{blueprints.map((blueprint) => {
           const dirty = savedDocuments[blueprint.id] !== JSON.stringify(serializeBlueprint(blueprint))
           return <div className={`blueprint-nav-item${blueprint.id === activeBlueprintId ? ' active' : ''}`} key={blueprint.id}>
-            <button className="blueprint-select" disabled={runtimeLocked && blueprint.id !== activeBlueprintId} onClick={() => switchBlueprint(blueprint.id)}><span className="blueprint-icon"><Workflow size={15} /></span><span className="blueprint-name">{dirty ? '* ' : ''}{blueprint.name}</span></button>
+            <button className="blueprint-select" disabled={runtimeLocked && blueprint.id !== activeBlueprintId} onClick={() => switchBlueprint(blueprint.id)}><span className="blueprint-icon"><Workflow size={15} /></span><span className="blueprint-name">{blueprint.name}</span>{dirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}</button>
             {dirty && <button className="blueprint-save" title={`Save ${blueprint.name}`} aria-label={`Save ${blueprint.name}`} disabled={savingBlueprints.has(blueprint.id) || runtimeLocked && blueprint.id === activeBlueprintId} onClick={() => { void saveBlueprint(blueprint.id) }}><Save size={14} /></button>}
             <button className="blueprint-more" title="More actions" aria-label={`More actions for ${blueprint.name}`} disabled={runtimeLocked} onClick={(event) => toggleBlueprintMenu(blueprint.id, event.currentTarget)}><Ellipsis size={16} /></button>
           </div>
@@ -1249,8 +1246,9 @@ export default function App() {
         {page !== 'workspace' ? <EmptyPage page={page} /> : !activeBlueprint ? <main className="empty-blueprints"><div className="empty-icon"><Workflow size={24} /></div><span className="eyebrow">BLUEPRINTS</span><h1>{loading ? 'Loading blueprints' : 'No blueprints found'}</h1><p>{loading ? 'Reading files beside the application.' : 'Create a blueprint to start building a workflow.'}</p><button className="button primary" disabled={loading} onClick={() => setDialog({ kind: 'new' })}><Plus size={14} />New blueprint</button></main>
           : runtimeLocked ? <main className="runtime-locked"><div className="empty-icon"><Video size={24} /></div><span className="eyebrow">{activeBlueprint.name}</span><h1>{status === 'paused' ? 'Recording paused' : status === 'starting' ? 'Starting workflow' : status === 'stopping' ? 'Finalizing MP4' : 'Recording'}</h1><p>{frameCount} encoded frames. Use the blueprint controls above to continue or stop.</p>{recording && <><p>{recording.encoder} · {recording.adapter}<br />{recording.width} × {recording.height} · {recording.fps} fps · {(recording.durationMs / 1000).toFixed(1)} s<br />{recording.droppedFrames} dropped · {recording.repeatedFrames} repeated</p><p>{recording.outputPath}</p></>}</main>
             : <>
-              <div className="workspace-tabs"><div className="tabs-list">{activeBlueprint.tabs.map((tab) => <div className={`workspace-tab${tab.id === activeBlueprint.activeTab ? ' active' : ''}`} key={tab.id}>
+              <div className="workspace-tabs"><div className="tabs-list">{activeBlueprint.tabs.map((tab) => <div className={`workspace-tab${tab.id === activeBlueprint.activeTab ? ' active' : ''}`} key={tab.id} title={activeBlueprintDirty ? `Unsaved changes in ${activeBlueprint.name} (Ctrl+S to save)` : undefined}>
                 <button onClick={() => selectTab(tab.id)}>{tab.kind === 'overview' ? 'Overview' : tab.kind === 'blueprint' ? 'Blueprint' : tab.kind === 'function' ? activeBlueprint.functions.find((item) => item.id === tab.functionId)?.name ?? 'Function' : activeBlueprint.cards.find((card) => card.id === tab.cardId)?.name ?? 'Card'}</button>
+                {activeBlueprintDirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" />}
                 {tab.kind !== 'overview' && <button className="tab-close" aria-label={`Close ${tab.kind} tab`} onClick={() => closeTab(tab.id)}><X size={12} /></button>}
               </div>)}</div></div>
               <div className="workspace-content">

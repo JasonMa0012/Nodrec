@@ -2,6 +2,8 @@
 
 ## 当前实现
 
+- 新增 Select Region、Get Selected Region、Register Display；按钮／菜单／Update Control 沿用原有节点，显示目标支持主窗口与指定选区工具。默认录屏蓝图注册开始、暂停／继续、停止、状态与时间；选取工具自身不提供录制语义。详细端口及兼容规则见 [Contracts](../contracts.md)。
+
 桌面版现有单文件 JSON 工作流、Rust 节点执行器和真实无声录屏管线：
 
 - [graph.h](../../prototypes/imgui/graph.h)定义稳定的节点、端口和连线 ID，端口类型、方向和节点目录；[ui.cpp](../../prototypes/imgui/ui.cpp)负责节点目录、节点内容及与画布的交互，两者分离。

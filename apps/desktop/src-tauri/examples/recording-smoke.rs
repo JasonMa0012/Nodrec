@@ -49,7 +49,7 @@ fn verify(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         media.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
         reader.SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32, None, &media)?;
         let mut frames = 0; let mut last = -1i64; let mut first = 0i64;
-        let mut last_hash = None; let mut changes = 0;
+        let mut last_hash = None; let mut changes = 0; let mut sample_written = false;
         loop {
             let mut flags = 0; let mut time = 0; let mut sample = None;
             reader.ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32, 0, None, Some(&mut flags), Some(&mut time), Some(&mut sample))?;
@@ -65,7 +65,7 @@ fn verify(path: &str) -> Result<(), Box<dyn std::error::Error>> {
                 if last_hash.is_some_and(|previous| previous != hash) { changes += 1; }
                 last_hash = Some(hash);
                 buffer.Unlock()?;
-                if frames == 0 {
+                if frames == 0 || (!sample_written && time-first >= 5_000_000) {
                     let buffer = sample.ConvertToContiguousBuffer()?;
                     let mut data = std::ptr::null_mut(); let mut length = 0;
                     buffer.Lock(&mut data, None, Some(&mut length))?;
@@ -82,7 +82,8 @@ fn verify(path: &str) -> Result<(), Box<dyn std::error::Error>> {
                         let start = row as usize * stride.unsigned_abs() as usize;
                         bmp.extend(&bytes[start..start+width as usize*4]);
                     }
-                    std::fs::write(format!("{path}.first.bmp"), bmp)?;
+                    let suffix = if frames == 0 { "first" } else { sample_written = true; "sample" };
+                    std::fs::write(format!("{path}.{suffix}.bmp"), bmp)?;
                 }
                 if frames == 0 { first = time; }
                 last = time; frames += 1;

@@ -40,7 +40,10 @@ fn node_type(kind: &'static str, label: &'static str, category: &'static str, in
 pub fn node_catalog() -> Vec<NodeType> {
     vec![
         node_type("event", "Event", "Events", vec![], vec![port("flow", "Then", "flow")], vec![], json!({"eventId":"new-event"})),
-        node_type("register_control", "Register Control", "Controls", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec!["control.enabled", "control.label", "control.order"], json!({"control":{"id":"new-control","label":"New Control","icon":"circle-help","eventId":"new-event","order":0,"enabled":true}})),
+        node_type("register_control", "Register Control", "Controls", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec!["control.enabled", "control.label", "control.order"], json!({"control":{"id":"new-control","label":"New Control","icon":"circle-help","eventId":"new-event","order":0,"enabled":true,"targets":["main"]}})),
+        node_type("select_region", "Select Region", "Capture", vec![port("flow", "Execute", "flow"), port("initialRegion", "Initial Region", "region")], vec![port("selected", "Selected", "flow"), port("cancelled", "Cancelled", "flow"), port("region", "Region", "region")], vec!["display"], json!({"toolId":"capture-region","display":"Display 1","initialRegion":null})),
+        node_type("get_selected_region", "Get Selected Region", "Values", vec![port("fallback", "Manual / Full Display", "region")], vec![port("region", "Region", "region")], vec!["mode"], json!({"toolId":"capture-region","mode":"Selected Region"})),
+        node_type("register_display", "Register Display", "Controls", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec![], json!({"display":{"id":"recording-time","targets":["region:capture-region"],"order":0,"source":"elapsed","format":"HH:mm:ss"}})),
         node_type("register_menu", "Register Control Menu", "Controls", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec![], json!({"controlId":"new-control","path":"Start","icon":"circle-help","eventId":"new-event"})),
         node_type("update_control", "Update Control", "Controls", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec!["patch.label"], json!({"controlId":"new-control","patch":{"label":"New Control"}})),
         node_type("log", "Log", "Flow", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec!["message"], json!({"message":"Workflow action"})),
@@ -88,6 +91,7 @@ pub struct RuntimeSnapshot {
     pub status: String,
     pub frame_count: u64,
     pub controls: Vec<Value>,
+    pub displays: Vec<Value>,
     pub logs: Vec<RuntimeLog>,
     pub error: Option<String>,
     pub recording: Option<RecordingStats>,
@@ -119,10 +123,18 @@ struct RuntimeState {
 
 #[derive(Clone, Default)]
 pub struct WorkflowRuntime {
+    pub tools: crate::region_tool::RegionTools,
     state: Arc<Mutex<RuntimeState>>,
 }
 
 impl WorkflowRuntime {
+    pub fn tool_definitions(&self) -> HashMap<String, Value> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.document.as_ref().map(|document| nodes(document).iter().filter(|n| node_kind(n) == "select_region").filter_map(|node| {
+            let config = resolved_node_config(document, node).ok()?;
+            Some((config["toolId"].as_str()?.to_string(), config.clone()))
+        }).collect()).unwrap_or_default()
+    }
     pub fn activate(&self, document: Value) -> Result<Activation, String> {
         let diagnostics = validate_document(&document, false);
         let blueprint_id = document.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
@@ -132,7 +144,7 @@ impl WorkflowRuntime {
                 return Err("Stop the active workflow before switching blueprints".into());
             }
             if state.document.as_ref() == Some(&document) {
-                return Ok(Activation { controls: state.controls.clone(), diagnostics });
+                return Ok(Activation { controls: state.controls.iter().filter(|c| c["kind"] != "display").cloned().collect(), diagnostics });
             }
             return Err("Stop the active workflow before changing its blueprint".into());
         }
@@ -149,7 +161,14 @@ impl WorkflowRuntime {
         if diagnostics.is_empty() {
             state.controls = execute_initialization(&document)?;
         }
-        Ok(Activation { controls: state.controls.clone(), diagnostics })
+        Ok(Activation { controls: state.controls.iter().filter(|c| c["kind"] != "display").cloned().collect(), diagnostics })
+    }
+
+    fn evaluation_document(&self, document: &Value) -> Value {
+        let mut document = document.clone();
+        document.as_object_mut().unwrap().remove("_validateRegionStructure");
+        document["_selectedRegions"] = json!(self.tools.selected());
+        document
     }
 
     pub fn snapshot(&self) -> RuntimeSnapshot {
@@ -169,7 +188,8 @@ impl WorkflowRuntime {
             run_id: state.run_id.clone(),
             status: state.status.to_string(),
             frame_count: state.frame_count,
-            controls: state.controls.clone(),
+            displays: state.controls.iter().filter(|c| c["kind"] == "display").cloned().collect(),
+            controls: state.controls.iter().filter(|c| c["kind"] != "display").cloned().collect(),
             logs: state.logs.iter().cloned().collect(),
             error: state.error.clone(),
             recording: state.recording.clone(),
@@ -180,16 +200,29 @@ impl WorkflowRuntime {
         let generation = {
             let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
             let document = state.document.clone().ok_or_else(|| "No blueprint is active".to_string())?;
-            let diagnostics = validate_document(&document, true);
+            if document["supported"] == false { return Err("This blueprint is a preview and cannot run yet".into()); }
+            let diagnostics = validate_document(&document, false);
             if let Some(error) = diagnostics.first() { return Err(error.clone()); }
             if state.busy_generation.is_some() {
-                if state.status == "starting" && event_pipeline_kind(&document, &event_id).as_deref() == Some("stop_pipeline") {
+                if state.status == "starting" && event_pipeline_kind(&self.evaluation_document(&document), &event_id).as_deref() == Some("stop_pipeline") {
                     state.generation = state.generation.wrapping_add(1);
                 } else {
                     return Err("Another workflow event is still running".into());
                 }
             }
-            let action = event_pipeline_kind(&document, &event_id);
+            let action = event_pipeline_kind(&self.evaluation_document(&document), &event_id);
+            if matches!(state.status, "starting" | "recording" | "paused" | "stopping") {
+                for node in execution_path(&document, &event_id)?.iter().filter(|n| node_kind(n) == "select_region") {
+                    if !self.tools.snapshot().is_some_and(|t| t.tool_id == node_config(node)["toolId"].as_str().unwrap_or_default() && t.rect.is_some() && !t.picking) {
+                        return Err("Stop recording before selecting a new region".into());
+                    }
+                }
+            }
+            if action.as_deref() == Some("start_pipeline") && matches!(state.status, "ready" | "failed") {
+                for node in execution_path(&document, &event_id)?.into_iter().filter(|n| node_kind(n) == "start_pipeline") {
+                    recording_plan(&self.evaluation_document(&document), node_config(node)["outputNodeId"].as_str())?;
+                }
+            }
             match (action.as_deref(), state.status) {
                 (Some("start_pipeline"), "ready" | "failed") => {
                     state.status = "starting";
@@ -244,18 +277,31 @@ impl WorkflowRuntime {
                 self.fail(&app, generation, format!("Execution path references missing node '{current}'")); return;
             };
             let kind = node.get("data").and_then(|data| data.get("kind")).and_then(Value::as_str).unwrap_or_default();
-            let config = match resolved_node_config(&document, node) {
+            let config = match resolved_node_config(&self.evaluation_document(&document), node) {
                 Ok(config) => config,
                 Err(error) => { self.fail(&app, generation, error); return; }
             };
-            let output_handle = if kind == "branch" {
-                match branch_output(&document, node) {
+            let output_handle = if kind == "select_region" {
+                let blueprint_id = document["id"].as_str().unwrap_or_default();
+                if let Err(error) = self.tools.open(&app, blueprint_id, &config) { self.fail(&app, generation, error); return; }
+                loop {
+                    if !self.is_current(generation) { return; }
+                    match self.tools.snapshot() {
+                        Some(tool) if tool.blueprint_id == blueprint_id => {
+                            if let Some(selected) = tool.outcome { break if selected { "out:selected" } else { "out:cancelled" }; }
+                        }
+                        _ => { self.fail(&app, generation, "Region tool closed before selection".into()); return; }
+                    }
+                    thread::sleep(Duration::from_millis(25));
+                }
+            } else if kind == "branch" {
+                match branch_output(&self.evaluation_document(&document), node) {
                     Ok(handle) => handle,
                     Err(error) => { self.fail(&app, generation, error); return; }
                 }
             } else {
                 let result = match kind {
-                    "event" | "register_control" | "register_menu" => Ok(()),
+                    "event" | "register_control" | "register_menu" | "register_display" => Ok(()),
                     "log" => self.log(&app, config.get("message").and_then(Value::as_str).unwrap_or("Workflow action")),
                     "delay" => {
                         let millis = config.get("milliseconds").and_then(Value::as_u64).unwrap_or(0).min(60_000);
@@ -293,10 +339,19 @@ impl WorkflowRuntime {
     }
 
     fn start_pipeline(&self, app: &AppHandle, document: &Value, config: &Value, generation: u64) -> Result<(), String> {
-        let plan = recording_plan(document, config.get("outputNodeId").and_then(Value::as_str))?;
+        let plan = recording_plan(&self.evaluation_document(document), config.get("outputNodeId").and_then(Value::as_str))?;
+        self.tools.enforce_capture_exclusion(app, true);
         let ready = {
             let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
-            if state.generation != generation || state.status != "starting" { return Ok(()); }
+            if state.generation != generation { return Ok(()); }
+            if matches!(state.status, "ready" | "failed") {
+                state.status = "starting";
+                state.run_id = Some(format!("run-{}", now_nanos()));
+                state.recording = None;
+                state.frame_count = 0;
+                state.error = None;
+            }
+            if state.status != "starting" { return Err("Workflow is already active".into()); }
             let session = RecordingSession::launch(plan);
             let ready = session.ready.clone();
             state.session = Some(session);
@@ -317,8 +372,8 @@ impl WorkflowRuntime {
         thread::spawn(move || loop {
             thread::sleep(Duration::from_millis(500));
             let snapshot = runtime.snapshot();
+            runtime.emit_status(&app);
             if snapshot.run_id != run_id || !matches!(snapshot.status.as_str(), "recording" | "paused" | "starting") {
-                runtime.emit_status(&app);
                 return;
             }
         });
@@ -365,7 +420,7 @@ impl WorkflowRuntime {
         {
             let control = state.controls.iter_mut().find(|control| control.get("id").and_then(Value::as_str) == Some(id)).ok_or_else(|| format!("Control '{id}' is not registered"))?;
             let control = control.as_object_mut().ok_or_else(|| "Registered control is invalid".to_string())?;
-            for (key, value) in patch { control.insert(key.clone(), value.clone()); }
+            for (key, value) in patch { if matches!(key.as_str(), "label" | "icon" | "enabled" | "eventId" | "order") { control.insert(key.clone(), value.clone()); } }
         }
         state.controls.sort_by_key(|item| item.get("order").and_then(Value::as_i64).unwrap_or(0));
         drop(state);
@@ -417,7 +472,9 @@ impl WorkflowRuntime {
     }
 
     fn emit_status(&self, app: &AppHandle) {
-        let _ = app.emit("workflow-status", &self.snapshot());
+        let snapshot = self.snapshot();
+        self.tools.enforce_capture_exclusion(app, matches!(snapshot.status.as_str(), "starting" | "recording" | "paused" | "stopping"));
+        let _ = app.emit("workflow-status", &snapshot);
     }
 }
 
@@ -545,6 +602,9 @@ fn resolved_node_config(document: &Value, node: &Value) -> Result<Value, String>
         if kind == "region" && !supplied.contains_key("mode") { config["mode"] = json!("Rectangle"); }
         config.as_object_mut().unwrap().extend(supplied);
     }
+    if kind == "select_region" {
+        if let Some(region) = input_value(document, node_id(node), "initialRegion", &mut HashSet::new(), 0)? { config["initialRegion"] = region; }
+    }
     let exposed = exposed_parameter_ids(node, node_type);
     for path in exposed {
         let input = config_input_port_id(kind, &path);
@@ -634,6 +694,7 @@ pub fn validate_document(document: &Value, for_run: bool) -> Vec<String> {
         adjacency.entry(source).or_default().push(target);
     }
     if has_cycle(&by_id, &adjacency) { errors.push("Workflow graph contains a cycle".into()); }
+    validate_tools(document, &mut errors);
     let mut registered = HashSet::new();
     for node in node_values.iter().filter(|node| node_kind(node) == "register_control") {
         let config = node.get("data").and_then(|data| data.get("config"));
@@ -686,7 +747,7 @@ pub fn validate_document(document: &Value, for_run: bool) -> Vec<String> {
         let millis = node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("milliseconds")).and_then(Value::as_u64).unwrap_or(0);
         if millis > 60_000 { errors.push(format!("Delay '{}' exceeds the 60 second limit", node_id(node))); }
     }
-    if node_values.iter().any(|node| matches!(node_kind(node), "register_control" | "register_menu")) && !event_ids.contains("event-initialize") {
+    if node_values.iter().any(|node| matches!(node_kind(node), "register_control" | "register_menu" | "register_display")) && !event_ids.contains("event-initialize") {
         errors.push("Control registration nodes require an Event with ID 'event-initialize'".into());
     }
     for node in node_values.iter().filter(|node| node_kind(node) == "read_parameter") {
@@ -724,7 +785,9 @@ pub fn validate_document(document: &Value, for_run: bool) -> Vec<String> {
                     if pipelines.is_empty() { errors.push("Event 'event-start' has no Start Pipeline action".into()); }
                     for start_node in pipelines {
                         let output = start_node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("outputNodeId")).and_then(Value::as_str);
-                        if let Err(error) = recording_plan(document, output) { errors.push(error); }
+                        let mut validation_document = document.clone();
+                        validation_document["_validateRegionStructure"] = json!(true);
+                        if let Err(error) = recording_plan(&validation_document, output) { errors.push(error); }
                     }
                 }
                 Err(error) => errors.push(error),
@@ -732,6 +795,60 @@ pub fn validate_document(document: &Value, for_run: bool) -> Vec<String> {
         }
     }
     errors
+}
+
+fn selected_region(document: &Value, node: &Value) -> Result<Value, String> {
+    let config = resolved_node_config(document, node)?;
+    if node_kind(node) == "get_selected_region" && config["mode"] != "Selected Region" {
+        let fallback = pipeline_source(document, node_id(node), "fallback", "region", "region")?;
+        let mut region = evaluate_value(document, node_id(fallback), &mut HashSet::new(), 0)?;
+        region["mode"] = config["mode"].clone();
+        return Ok(region);
+    }
+    let tool = config["toolId"].as_str().unwrap_or_default();
+    if let Some(region) = document.get("_selectedRegions").and_then(|r| r.get(tool)) { return Ok(region.clone()); }
+    if document["_validateRegionStructure"] == true {
+        return Ok(json!({"display":"Display 1","mode":"Rectangle","x":0,"y":0,"width":16,"height":16}));
+    }
+    Err(format!("Select a region with tool '{tool}' before starting"))
+}
+
+fn validate_tools(document: &Value, errors: &mut Vec<String>) {
+    let mut tools = HashSet::new();
+    for node in nodes(document).iter().filter(|n| node_kind(n) == "select_region") {
+        let id = node_config(node)["toolId"].as_str().unwrap_or_default();
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') || !tools.insert(id) {
+            errors.push(format!("Tool ID '{id}' is invalid or duplicated"));
+        }
+    }
+    let mut ids = HashSet::new();
+    for node in nodes(document) {
+        let config = node_config(node);
+        if node_kind(node) == "get_selected_region" && !tools.contains(config["toolId"].as_str().unwrap_or_default()) { errors.push("Get Selected Region references a missing tool".into()); }
+        let item = match node_kind(node) { "register_control" => &config["control"], "register_display" => &config["display"], _ => continue };
+        let id = item["id"].as_str().unwrap_or_default();
+        if id.is_empty() || !ids.insert(id) { errors.push(format!("UI item ID '{id}' is empty or duplicated")); }
+        if node_kind(node) == "register_display" {
+            if !matches!(item["source"].as_str(), Some("status" | "elapsed")) { errors.push(format!("Display '{id}' has an invalid data source")); }
+            let expected = if item["source"] == "elapsed" { "HH:mm:ss" } else { "text" };
+            if item["format"].as_str() != Some(expected) { errors.push(format!("Display '{id}' requires format '{expected}'")); }
+            if item["order"].as_i64().is_none() { errors.push(format!("Display '{id}' needs integer Order")); }
+        }
+        if let Some(targets) = item.get("targets") {
+            match targets.as_array() {
+                Some(targets) if !targets.is_empty() => {
+                    let mut seen = HashSet::new();
+                    for target in targets {
+                        let target = target.as_str().unwrap_or_default();
+                        if !seen.insert(target) || !(target == "main" || target.strip_prefix("region:").is_some_and(|id| tools.contains(id))) {
+                            errors.push(format!("UI item '{id}' references invalid or duplicate target '{target}'"));
+                        }
+                    }
+                }
+                _ => errors.push(format!("UI item '{id}' needs at least one target")),
+            }
+        }
+    }
 }
 
 fn valid_icon(icon: &str) -> bool {
@@ -771,7 +888,7 @@ fn execution_path<'a>(document: &'a Value, event_id: &str) -> Result<Vec<&'a Val
         let Some(edge) = next else { return Ok(path); };
         let target = edge.get("target").and_then(Value::as_str).unwrap_or_default();
         let node = nodes(document).iter().find(|node| node_id(node) == target).ok_or_else(|| format!("Execution path references missing node '{target}'"))?;
-        if !matches!(node_kind(node), "register_control" | "register_menu" | "update_control" | "log" | "delay" | "branch" | "start_pipeline" | "pause_pipeline" | "resume_pipeline" | "stop_pipeline") {
+        if !matches!(node_kind(node), "register_control" | "register_menu" | "register_display" | "select_region" | "update_control" | "log" | "delay" | "branch" | "start_pipeline" | "pause_pipeline" | "resume_pipeline" | "stop_pipeline") {
             return Err(format!("Node '{}' cannot appear in an execution chain", node_id(node)));
         }
         path.push(node);
@@ -828,6 +945,8 @@ fn evaluate_value(document: &Value, id: &str, visiting: &mut HashSet<String>, de
         let node = nodes(document).iter().find(|node| node_id(node) == id).ok_or_else(|| format!("Value node '{id}' was not found"))?;
         let config = resolved_node_config(document, node)?;
         match node_kind(node) {
+            "region" => Ok(config.clone()),
+            "select_region" | "get_selected_region" => selected_region(document, node),
             "constant" => config.get("value").cloned().filter(|value| value.is_string() || value.is_boolean() || value.is_number()).ok_or_else(|| format!("Constant '{id}' must contain a string, boolean, or number")),
             "make_boolean" => config.get("value").cloned().filter(Value::is_boolean).ok_or_else(|| format!("Make Boolean '{id}' needs a boolean value")),
             "make_byte" => config.get("value").cloned().filter(|value| value.as_i64().is_some_and(|value| (0..=255).contains(&value))).ok_or_else(|| format!("Make Byte '{id}' needs a value from 0 to 255")),
@@ -872,13 +991,16 @@ fn execute_initialization(document: &Value) -> Result<Vec<Value>, String> {
     let mut controls = Vec::new();
     let mut menus = Vec::new();
     for node in execution_path(document, "event-initialize")? {
-        if node_kind(node) == "register_control" {
+        if matches!(node_kind(node), "register_control" | "register_display") {
             let config = resolved_node_config(document, node)?;
-            let control = config.get("control")
+            let is_display = node_kind(node) == "register_display";
+            let control = config.get(if is_display { "display" } else { "control" })
                 .ok_or_else(|| format!("Register Control '{}' has no definition", node_id(node)))?;
             let mut control = control.clone();
             let object = control.as_object_mut().ok_or_else(|| format!("Register Control '{}' definition must be an object", node_id(node)))?;
             let order = object.get("order").and_then(Value::as_i64).unwrap_or(controls.len() as i64);
+            if is_display { object.insert("kind".into(), json!("display")); }
+            object.entry("targets").or_insert(json!(["main"]));
             object.insert("menu".into(), json!([]));
             object.insert("order".into(), json!(order));
             controls.push((order, controls.len(), control));
@@ -924,7 +1046,7 @@ fn pipeline_source<'a>(document: &'a Value, target: &str, input: &str, kind: &st
     let edge = incoming[0];
     let source = nodes(document).iter().find(|node| node["id"] == edge["source"])
         .ok_or_else(|| format!("Missing source for {target}.{input}"))?;
-    if node_kind(source) != kind || edge["sourceHandle"] != format!("out:{output}") { return Err(format!("{target}.{input} requires {kind}.{output}")); }
+    if (node_kind(source) != kind && !(kind == "region" && matches!(node_kind(source), "select_region" | "get_selected_region"))) || edge["sourceHandle"] != format!("out:{output}") { return Err(format!("{target}.{input} requires {kind}.{output}")); }
     if matches!(kind, "screen" | "encode") && edges(document).iter().filter(|edge| edge["source"] == node_id(source) && edge["sourceHandle"] == format!("out:{output}")).count() != 1 {
         return Err("Recording supports one source, one encoder and one output per run".into());
     }
@@ -942,7 +1064,7 @@ fn recording_plan(document: &Value, output_id: Option<&str>) -> Result<Recording
     let region = pipeline_source(document, node_id(screen), "region", "region", "region")?;
     let path = pipeline_source(document, node_id(output), "path", "path", "path")?;
     let e = resolved_node_config(document, encoder)?;
-    let r = resolved_node_config(document, region)?;
+    let r = if node_kind(region) == "region" { resolved_node_config(document, region)? } else { selected_region(document, region)? };
     let s = resolved_node_config(document, screen)?;
     let p = resolved_node_config(document, path)?;
     let string = |value: &Value, key: &str| -> Result<String, String> { value.get(key).and_then(Value::as_str).map(str::to_string).ok_or_else(|| format!("{key} must be a string")) };
@@ -983,6 +1105,39 @@ fn now_nanos() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn region_ui_registry_and_live_values() {
+        let mut doc: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        assert!(validate_document(&doc, true).is_empty(), "{:?}", validate_document(&doc, true));
+        let ui = execute_initialization(&doc).unwrap();
+        assert_eq!(ui.iter().filter(|c| c["kind"] == "display").count(), 2);
+        assert_eq!(ui.iter().find(|c| c["id"] == "start-recording").unwrap()["targets"], json!(["main", "region:capture-region"]));
+        assert!(recording_plan(&doc, Some("write")).unwrap_err().contains("Select a region"));
+        doc["_selectedRegions"] = json!({"capture-region":{"display":"test-display","mode":"Rectangle","x":23,"y":41,"width":897,"height":360}});
+        let first = recording_plan(&doc, Some("write")).unwrap();
+        assert_eq!((first.x,first.y,first.width),(23,41,897));
+        doc["_selectedRegions"]["capture-region"]["x"] = json!(105);
+        assert_eq!(recording_plan(&doc, Some("write")).unwrap().x,105);
+        doc["values"]["regionMode"] = json!("Full Display");
+        assert!(recording_plan(&doc, Some("write")).unwrap().full_display);
+        doc["values"]["regionMode"] = json!("Rectangle");
+        assert_eq!(recording_plan(&doc, Some("write")).unwrap().x, 0);
+    }
+
+    #[test]
+    fn ui_targets_and_display_sources_are_validated() {
+        let doc: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        for (id, field, bad) in [("register-start", "control", json!({"targets":["region:missing"]})), ("register-status", "display", json!({"source":"unsupported"})), ("register-time", "display", json!({"id":"start-recording"}))] {
+            let mut bad_doc = doc.clone();
+            let node = bad_doc["nodes"].as_array_mut().unwrap().iter_mut().find(|n| n["id"] == id).unwrap();
+            node["data"]["config"][field].as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+            assert!(!validate_document(&bad_doc, false).is_empty());
+        }
+        let mut legacy = document();
+        legacy["nodes"][1]["data"]["config"]["control"].as_object_mut().unwrap().remove("targets");
+        assert_eq!(execute_initialization(&legacy).unwrap()[0]["targets"], json!(["main"]));
+    }
 
     fn document() -> Value {
         let mut nodes = Vec::new();
@@ -1254,7 +1409,7 @@ mod tests {
             assert!(validate_document(&document, false).is_empty(), "{name}: {:?}", validate_document(&document, false));
             if name == "screen-recording" {
                 assert!(validate_document(&document, true).is_empty());
-                assert_eq!(execute_initialization(&document).unwrap().len(), 4);
+                assert_eq!(execute_initialization(&document).unwrap().len(), 6);
             } else {
                 assert!(validate_document(&document, true).iter().any(|error| error.contains("preview")));
                 assert_eq!(execute_initialization(&document).unwrap().len(), 1);

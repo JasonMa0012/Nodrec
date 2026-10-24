@@ -65,7 +65,7 @@ try {
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text)
     return result.result.value
   }
-  const status = () => evaluate(`document.querySelector('.runtime-state')?.textContent.trim().toLowerCase()`)
+  const status = () => evaluate(`document.querySelector('[aria-label="Workflow status"]')?.textContent.trim().toLowerCase()`)
   const frameCount = () => evaluate(`window.__TAURI_INTERNALS__.invoke('runtime_snapshot').then(snapshot=>snapshot.frameCount)`)
   const hasLog = message => evaluate(`window.__TAURI_INTERNALS__.invoke('runtime_snapshot').then(snapshot=>snapshot.logs.some(log=>log.message.includes(${JSON.stringify(message)})))`)
   const clickMain = async (label) => {
@@ -121,6 +121,7 @@ try {
   assert.equal(await evaluate(`document.querySelectorAll('.workspace-tab button').length >= 2 && [...document.querySelectorAll('.workspace-tab button')].some(button => button.textContent.trim() === 'Overview') && [...document.querySelectorAll('.workspace-tab button')].some(button => button.textContent.trim() === 'Blueprint')`), true, 'Overview and Blueprint should both be open by default')
   assert.equal(await evaluate(`![...document.querySelectorAll('.titlebar button')].some(button => button.textContent.trim() === 'Save')`), true, 'the global title-bar Save button should be removed')
   assert.equal(await evaluate(`document.querySelector('.blueprint-save') === null`), true, 'clean blueprints should not show a Save button')
+  assert.equal(await evaluate(`document.querySelector('.workspace-tab .unsaved-dot') === null`), true, 'clean tabs should not show unsaved dots')
 
   assert.equal(await evaluate(`!document.querySelector('.app-layout')?.classList.contains('sidebar-collapsed')`), true, 'the independent blueprint list should start expanded')
   const toggleBlueprintList = async () => clickAt(await evaluate(`(() => { const rect = document.querySelector('.sidebar-toggle').getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } })()`))
@@ -194,15 +195,15 @@ try {
   assert.equal(await evaluate(`(() => { const rect = document.querySelector('.context-menu').getBoundingClientRect(); return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight })()`), true, 'the blueprint menu should stay within the viewport')
   await evaluate(`document.body.click()`)
 
-  assert.equal(await evaluate(`document.querySelector('.titlebar-recording-actions').textContent.includes('Region picker (later)')`), true, 'controls should be registered by the initialization graph')
+  assert.equal(await evaluate(`document.querySelector('.titlebar-recording-actions').textContent.includes('Select region')`), true, 'controls should be registered by the initialization graph')
   const primarySplitStyle = await evaluate(`(() => { const root = [...document.querySelectorAll('.split-control')].find(item => item.querySelector(':scope > button')?.textContent.trim() === 'Start recording'); const main = root?.querySelector(':scope > button'); const arrow = root?.querySelector(':scope > .control-menu > summary'); return { gap: getComputedStyle(root).gap, main: getComputedStyle(main).backgroundColor, arrow: getComputedStyle(arrow).backgroundColor } })()`)
   assert.equal(primarySplitStyle.gap, '0px', 'the toolbar arrow should touch the primary button')
   assert.equal(primarySplitStyle.arrow, primarySplitStyle.main, 'the toolbar arrow should share the primary button style')
-  assert.equal(await evaluate(`!![...document.querySelectorAll('.split-control > button')].find(button => button.textContent.trim() === 'Region picker (later)' && button.disabled)`), true, 'region picker remains disabled until implemented')
+  assert.equal(await evaluate(`!![...document.querySelectorAll('.split-control > button')].find(button => button.textContent.trim() === 'Select region' && !button.disabled)`), true, 'region picker is enabled by its blueprint registration')
   assert.equal(await clickMain('Start recording'), true)
   await until(async () => (await status()) === 'recording')
   try { await until(async () => (await frameCount()) > 0) }
-  catch (error) { console.log('Frame probe', await evaluate(`({ status: document.querySelector('.runtime-state')?.textContent, panel: document.querySelector('.runtime-locked')?.innerText, log: document.querySelector('.runtime-log')?.innerText })`)); throw error }
+  catch (error) { console.log('Frame probe', await evaluate(`({ status: document.querySelector('[aria-label="Workflow status"]')?.textContent, panel: document.querySelector('.runtime-locked')?.innerText, log: document.querySelector('.runtime-log')?.innerText })`)); throw error }
   const startedAt = await frameCount()
   assert.equal(await hasLog('H.264 encoding'), true, 'start should log the real capture and encoding pipeline')
 
@@ -339,12 +340,18 @@ try {
   await evaluate(`document.querySelector('.details-panel [aria-label="Reset Order"]')?.click()`)
   await until(async () => evaluate(`document.querySelector('.details-panel input[type="number"]')?.value === '0' && document.querySelector('.details-panel [aria-label="Reset Order"]') === null`))
   await setNumberField('.details-panel input[type="number"]', 4)
-  await until(async () => evaluate(`document.querySelector('.blueprint-nav-item.active .blueprint-name')?.textContent.trim() === '* Screen recording' && !!document.querySelector('.blueprint-save')`))
+  await until(async () => evaluate(`document.querySelector('.blueprint-nav-item.active .blueprint-name')?.textContent.trim() === 'Screen recording' && !!document.querySelector('.blueprint-nav-item.active .unsaved-dot') && !!document.querySelector('.blueprint-save')`))
   await until(async () => evaluate(`(() => { const labels = [...document.querySelectorAll('.titlebar-recording-actions .split-control > button')].map(button => button.textContent.trim()); return labels.at(-1) === 'Start recording' })()`))
   const saveBlueprint = await evaluate(`document.querySelector('.blueprint-save')?.getAttribute('aria-label')`)
   assert.equal(saveBlueprint, 'Save Screen recording', 'an edited blueprint should show its own Save button')
-  await evaluate(`document.querySelector('.blueprint-save')?.click()`)
+  assert.equal(await evaluate(`document.querySelectorAll('.workspace-tab .unsaved-dot').length === document.querySelectorAll('.workspace-tab').length`), true, 'all views of the dirty blueprint share its save state')
+  const dirtyScreenshot = await command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, fromSurface: true })
+  await writeFile(path.join(acceptanceScreenshots, 'acceptance-unsaved-tabs.png'), Buffer.from(dirtyScreenshot.data, 'base64'))
+  await evaluate(`document.querySelector('.details-panel input')?.focus()`)
+  await command('Input.dispatchKeyEvent', { type: 'keyDown', key: 's', code: 'KeyS', modifiers: 2, windowsVirtualKeyCode: 83 })
+  await command('Input.dispatchKeyEvent', { type: 'keyUp', key: 's', code: 'KeyS', modifiers: 2, windowsVirtualKeyCode: 83 })
   await until(async () => evaluate(`document.querySelector('.blueprint-save') === null && document.querySelector('.blueprint-nav-item.active .blueprint-name')?.textContent.trim() === 'Screen recording'`))
+  assert.equal(await evaluate(`document.querySelector('.workspace-tab .unsaved-dot') === null`), true, 'Ctrl+S clears unsaved indicators after persistence')
   const savedOrder = JSON.parse(await readFile(storedScreenBlueprint, 'utf8')).nodes.find((node) => node.id === 'register-start').data.config.control.order
   assert.equal(savedOrder, 4, 'the visual Order value should persist and reorder the registered toolbar controls')
 
@@ -420,7 +427,7 @@ try {
   assert.equal(await evaluate(`([...document.querySelectorAll('.split-control > button')].find(button => button.textContent.trim() === 'Record operations')?.disabled)`), true, 'the operation-recording preview should remain non-runnable')
 
   await evaluate(`(() => [...document.querySelectorAll('.blueprint-select')].find(button => button.textContent.includes('Screen recording'))?.click())()`)
-  await until(async () => evaluate(`document.querySelector('.blueprint-nav-item.active .blueprint-name')?.textContent.trim() === '* Screen recording'`))
+  await until(async () => evaluate(`document.querySelector('.blueprint-nav-item.active .blueprint-name')?.textContent.trim() === 'Screen recording' && !!document.querySelector('.blueprint-nav-item.active .unsaved-dot')`))
   await evaluate(`([...document.querySelectorAll('.workspace-tab button')].find(button => button.textContent.trim() === 'Blueprint'))?.click()`)
   await until(async () => evaluate(`!!document.querySelector('.react-flow__pane')`))
   const graphPoint = await evaluate(`(() => { const rect = document.querySelector('.react-flow__pane').getBoundingClientRect(); for (let y = rect.top + 70; y < rect.bottom - 80; y += 24) for (let x = rect.left + 30; x < rect.right - 30; x += 24) { const target = document.elementFromPoint(x, y); if (!target?.closest('.react-flow__node, .react-flow__edge, .react-flow__background, .react-flow__controls, .react-flow__minimap, .details-panel')) return { x, y } } return null })()`)

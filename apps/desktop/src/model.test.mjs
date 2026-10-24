@@ -4,6 +4,59 @@ import { verticalCompactor } from 'react-grid-layout'
 import { allParameters, createBlueprint, hydrateBlueprint, moveOverviewCardVertically, moveParameterLayout, overviewCardContentHeight, overviewGridHeight, pinTypeColor, pinTypeForValue, placeOverviewCardBeside, serializeBlueprint, swapOverviewCardPositions, syncBlueprintEvents } from './model.ts'
 import { connectedNodeIds, ribbonOffsets, routePoints, roundedPath } from './graph-interactions.ts'
 import { overviewCollisionDetection, overviewDropPlacement } from './overview-dnd.ts'
+import { hitRegion, handlePoint, handles, selectionRect, transformRegion, dockRegion, expandToolbar, editRegionField, elapsedText } from './region-geometry.ts'
+
+test('only square handles resize; the rest of the border moves and the interior passes through', () => {
+  const r = { x: 100, y: 100, width: 400, height: 300 }
+  for (const h of handles) {
+    const p = handlePoint(r, h)
+    assert.equal(hitRegion(r, p.x + 5, p.y + 5, 1), h)
+  }
+  assert.equal(hitRegion(r, 150, 100, 1), 'move')
+  assert.equal(hitRegion(r, 500, 150, 1), 'move')
+  assert.equal(hitRegion(r, 300, 250, 1), null)
+  assert.equal(hitRegion(r, 150, 95, 1), null)
+  assert.equal(hitRegion(r, 105, 105, 2.25), 'nw')
+})
+
+test('region operations stay within display bounds and retain aspect ratio', () => {
+  const r = { x: 100, y: 100, width: 400, height: 300 }
+  const bounds = { x: 0, y: 0, width: 1920, height: 1080 }
+  assert.deepEqual(selectionRect({x:100,y:100},{x:9999,y:9999},bounds),{x:100,y:100,width:1820,height:980})
+  assert.deepEqual(selectionRect({x:100,y:100},{x:-99,y:-99},bounds),{x:0,y:0,width:100,height:100})
+  for (const h of [...handles, 'move']) for (const delta of [-5000, -50, 50, 5000]) {
+    const next = transformRegion(r, h, delta, delta, bounds)
+    assert.ok(next.x >= 0 && next.y >= 0 && next.x + next.width <= 1920 && next.y + next.height <= 1080)
+    assert.ok(next.width >= 16 && next.height >= 16)
+  }
+  const next = transformRegion(r, 'se', 100, 0, bounds, 4/3)
+  assert.ok(Math.abs(next.width/next.height - 4/3) < 0.01)
+  assert.deepEqual(transformRegion(r, 'move', -500, -500, bounds), { ...r, x: 0, y: 0 })
+})
+
+test('toolbar docks inside the work area, avoids the top edge and uses hysteresis', () => {
+  const work = { x: 0, y: 0, width: 1920, height: 1040 }
+  const r = { x: 100, y: 0, width: 1280, height: 720 }
+  assert.equal(dockRegion(r, work, 700, 56, 8).side, 1)
+  const full = dockRegion({ x: 0, y: 0, width:1920,height:1080 }, work, 700, 56, 8)
+  assert.equal(full.side, 2)
+  for (const x of [0, 1800]) for (const y of [0,1000]) {
+    const dock = dockRegion({ ...r, x, y }, work, 700, 400, 8)
+    assert.ok(dock.x >= 0 && dock.y >= 0 && dock.x+700 <= 1920 && dock.y+400 <= 1040)
+  }
+  assert.equal(dockRegion({ ...r, y: 200 }, work, 700, 56, 8, 1).side, 1)
+  assert.equal(elapsedText(3_661_900), '01:01:01')
+})
+
+test('default recording UI is registered by blueprint and reads a live selected region', () => {
+  const doc = serializeBlueprint(createBlueprint('test', 'Test'))
+  assert.ok(doc.nodes.some(n => n.data.kind === 'select_region'))
+  assert.ok(doc.nodes.some(n => n.data.kind === 'get_selected_region'))
+  assert.deepEqual(doc.nodes.filter(n => n.data.kind === 'register_display').map(n => n.data.config.display.source), ['status', 'elapsed'])
+  assert.deepEqual(doc.nodes.find(n => n.id === 'register-start').data.config.control.targets, ['main', 'region:capture-region'])
+  assert.equal(doc.values.regionMode, 'Selected Region')
+  assert.equal('_selectedRegions' in doc, false)
+})
 
 test('blueprint documents persist workflow graphs and controls, but reset editor and runtime state', () => {
   const blueprint = createBlueprint('capture-test', 'Capture test')
@@ -409,4 +462,27 @@ test('Ribbon separates overlapping corridors deterministically and reuses clear 
   const aligned = { start: { x: 0, y: 0 }, end: { x: 400, y: 0 } }
   const alignedOffsets = ribbonOffsets([{ id: 'a', ...aligned }, { id: 'b', ...aligned }])
   assert.notEqual(roundedPath(aligned.start, aligned.end, alignedOffsets.get('a')), roundedPath(aligned.start, aligned.end, alignedOffsets.get('b')))
+})
+
+test('expanding a toolbar preserves its anchor and stays within the work area', () => {
+  const work = {x:0,y:0,width:1920,height:1080}
+  for (const y of [8,200,600,1016]) {
+    const dock = {x:100,y,side:0}
+    const expanded = expandToolbar(dock, work, 56, 410, 4)
+    assert.equal(expanded.y + expanded.offset, y)
+    assert.ok(expanded.y >= work.y)
+    assert.ok(expanded.y + expanded.height <= work.height)
+    assert.ok(expanded.height >= 56)
+  }
+})
+
+test('region fields use display percentages and preserve opposite edges', () => {
+  const bounds = {x:0,y:0,width:1920,height:1080}, r = {x:100,y:100,width:600,height:300}
+  assert.deepEqual(editRegionField(r,bounds,'centerX',50,'%'), {...r,x:660})
+  assert.deepEqual(editRegionField(r,bounds,'height',50,'%'), {...r,height:540})
+  assert.deepEqual(editRegionField(r,bounds,'minX',200,'px'), {...r,x:200,width:500})
+  assert.deepEqual(editRegionField(r,bounds,'maxY',500,'px'), {...r,height:400})
+  assert.deepEqual(editRegionField(r,bounds,'height',200,'px',2), {...r,width:400,height:200})
+  const dock = dockRegion({x:200,y:650,width:800,height:200}, bounds,760,56,8)
+  assert.ok(expandToolbar(dock,bounds,56,410,4).offset > 0)
 })

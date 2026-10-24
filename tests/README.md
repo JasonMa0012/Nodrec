@@ -6,6 +6,7 @@
 - `verify-unit.bat`：lint、模型及 Rust 单测。
 - `test-*.bat`：对应同名 npm 单项测试；UI 测试先运行 `tauri-build.bat`。
 - `test-touchpad-nodrec.bat`：Nodrec Release 的合成画布交互回归；不代表真实触摸板硬件验收。
+- `test-region-tool.bat`：区域框、蓝图自定义控件、计时、原生命中穿透和实录排除检查；先确认真实桌面正在刷新，黑帧不能作为通过证据。
 - `test-recording.bat`：真实 Windows 显示器区域录制、MP4 解码及文件保护；需要可用的 H.264 硬件编码器，产物保存在独立 target 测试目录。
 - `lint.bat`、`build.bat`、`tauri-build.bat`：静态检查、前端构建、Release 构建。
 

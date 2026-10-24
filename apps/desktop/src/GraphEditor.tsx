@@ -60,7 +60,7 @@ function RoundedConnection({ fromX, fromY, toX, toY, connectionLineStyle }: Conn
 }
 
 const icons = {
-  event: CirclePlay, register_control: Settings, register_menu: Settings, update_control: Settings, log: FileOutput,
+  select_region: MousePointer2, get_selected_region: MousePointer2, register_display: Clock3, event: CirclePlay, register_control: Settings, register_menu: Settings, update_control: Settings, log: FileOutput,
   delay: Clock3, branch: GitBranch, read_parameter: Settings, constant: Square, make_boolean: Square, make_byte: Square, make_integer: Square, make_integer64: Square, make_float: Square, make_double: Square, make_name: Square, make_string: Square, make_text: Square, compare: GitBranch,
   start_pipeline: Play, pause_pipeline: Pause, resume_pipeline: Play,
   stop_pipeline: StopCircle, region: MousePointer2, path: FileOutput, screen: Monitor,

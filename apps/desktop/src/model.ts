@@ -18,7 +18,7 @@ export type ParameterCard = { id: string; name: string; parameters: string[] }
 export type TreeFolder = { id: string; name: string }
 export type TreeItem = { id: string; name: string; folderId: string; graph?: { nodes: BlueprintNode[]; edges: Edge[] } }
 export type BlueprintSelection = { kind: 'nodes'; keys: string[] } | { kind: 'node' | 'parameter' | 'card' | 'event' | 'function' | 'folder'; key: string } | null
-export type NodeKind = 'event' | 'register_control' | 'register_menu' | 'update_control' | 'log' | 'delay' | 'branch' | 'read_parameter' | 'constant' | 'make_boolean' | 'make_byte' | 'make_integer' | 'make_integer64' | 'make_float' | 'make_double' | 'make_name' | 'make_string' | 'make_text' | 'compare' | 'start_pipeline' | 'pause_pipeline' | 'resume_pipeline' | 'stop_pipeline' | 'region' | 'path' | 'screen' | 'audio' | 'encode' | 'write'
+export type NodeKind = 'select_region' | 'get_selected_region' | 'register_display' | 'event' | 'register_control' | 'register_menu' | 'update_control' | 'log' | 'delay' | 'branch' | 'read_parameter' | 'constant' | 'make_boolean' | 'make_byte' | 'make_integer' | 'make_integer64' | 'make_float' | 'make_double' | 'make_name' | 'make_string' | 'make_text' | 'compare' | 'start_pipeline' | 'pause_pipeline' | 'resume_pipeline' | 'stop_pipeline' | 'region' | 'path' | 'screen' | 'audio' | 'encode' | 'write'
 export type BlueprintNodeData = { label: string; kind: NodeKind; note?: string; config?: Record<string, unknown> }
 export type BlueprintNode = Node<BlueprintNodeData>
 export type BlueprintScope = 'builtin' | 'user'
@@ -26,7 +26,8 @@ export type PinValueType = 'flow' | 'value' | 'boolean' | 'byte' | 'integer' | '
 export type NodePortDefinition = { id: string; label: string; valueType: PinValueType }
 export type NodeTypeDefinition = { kind: NodeKind; label: string; category: string; inputs: NodePortDefinition[]; outputs: NodePortDefinition[]; inputParameters: string[]; defaultConfig: Record<string, unknown> }
 export type ControlMenuItem = { id: string; label: string; icon: string; eventId: string; children?: ControlMenuItem[] }
-export type RegisteredControl = { id: string; label: string; icon: string; eventId: string; order: number; enabled: boolean; menu: ControlMenuItem[] }
+export type RegisteredDisplay = { id: string; targets: string[]; order: number; source: 'status' | 'elapsed'; format: 'text' | 'HH:mm:ss' }
+export type RegisteredControl = { id: string; label: string; icon: string; eventId: string; order: number; enabled: boolean; menu: ControlMenuItem[]; targets?: string[] }
 export type EditorTab = { id: string; kind: 'overview' | 'blueprint' | 'card' | 'function'; cardId?: string; functionId?: string }
 export type Blueprint = {
   id: string
@@ -109,7 +110,7 @@ export function syncBlueprintEvents(blueprint: Blueprint): Blueprint {
 
 export const parameters: ParameterDefinition[] = [
   { id: 'display', label: 'Display', kind: 'choice', initial: 'Display 1' },
-  { id: 'regionMode', label: 'Capture mode', kind: 'choice', initial: 'Full Display', options: ['Full Display', 'Rectangle'] },
+  { id: 'regionMode', label: 'Capture mode', kind: 'choice', initial: 'Selected Region', options: ['Selected Region', 'Full Display', 'Rectangle'] },
   { id: 'x', label: 'X (physical px)', kind: 'number', initial: 0 },
   { id: 'y', label: 'Y (physical px)', kind: 'number', initial: 0 },
   { id: 'width', label: 'Width (physical px)', kind: 'number', initial: 897 },
@@ -278,10 +279,10 @@ function graph(): { nodes: BlueprintNode[]; edges: Edge[] } {
   })
   const flow = (source: string, target: string) => edges.push({ id: `e-${source}-${target}`, source, sourceHandle: 'out:flow', target, targetHandle: 'in:flow', type: 'smoothstep' })
   const value = (source: string, output: string, target: string, input: string) => edges.push({ id: `e-${source}-${target}-${input}`, source, sourceHandle: `out:${output}`, target, targetHandle: `in:${input}`, type: 'smoothstep' })
-  const control = (id: string, label: string, icon: string, eventId: string, enabled: boolean, order: number) => ({ id, label, icon, eventId, order, enabled })
+  const control = (id: string, label: string, icon: string, eventId: string, enabled: boolean, order: number) => ({ id, label, icon, eventId, order, enabled, targets: id === 'select-region' ? ['main'] : ['main', 'region:capture-region'] })
 
   add('initialize', 'event', 'On Initialize', 0, 40, { eventId: 'event-initialize' })
-  add('register-select', 'register_control', 'Register Region Picker (later)', 330, 0, { control: control('select-region', 'Region picker (later)', 'crop', 'event-select-region', false, 0) })
+  add('register-select', 'register_control', 'Register Region Picker', 330, 0, { control: control('select-region', 'Select region', 'crop', 'event-select-region', true, 0) })
   add('register-start', 'register_control', 'Register Start', 620, 0, { control: control('start-recording', 'Start recording', 'play', 'event-start', true, 1) })
   add('register-pause', 'register_control', 'Register Pause', 910, 0, { control: control('pause-recording', 'Pause', 'pause', 'event-pause', false, 2) })
   add('register-stop', 'register_control', 'Register Stop', 1200, 0, { control: control('stop-recording', 'Stop', 'stop-circle', 'event-stop', false, 3) })
@@ -290,11 +291,15 @@ function graph(): { nodes: BlueprintNode[]; edges: Edge[] } {
   add('menu-active-window', 'register_menu', 'Register Active Window Menu', 2070, 1800, { controlId: 'select-region', path: 'Capture Target/Active Window', icon: 'mouse-pointer-2', eventId: 'event-select-window' })
   add('menu-start', 'register_menu', 'Register Start Menu', 2360, 1800, { controlId: 'start-recording', path: 'Start', icon: 'play', eventId: 'event-start' })
   add('menu-delayed-start', 'register_menu', 'Register Delayed Start Menu', 2650, 1800, { controlId: 'start-recording', path: 'Start/Start after 3 seconds', icon: 'clock-3', eventId: 'event-start-delayed' })
-  flow('initialize', 'register-select'); flow('register-select', 'register-start'); flow('register-start', 'register-pause'); flow('register-pause', 'register-stop')
+  flow('initialize', 'register-select'); flow('register-select', 'register-start'); flow('register-start', 'register-pause'); flow('register-pause', 'register-status'); flow('register-status', 'register-time'); flow('register-time', 'register-stop')
+  add('register-status', 'register_display', 'Register Status Display', 910, -230, { display: { id: 'recording-status', targets: ['main', 'region:capture-region'], order: 4, source: 'status', format: 'text' } })
+  add('register-time', 'register_display', 'Register Time Display', 1200, -230, { display: { id: 'recording-time', targets: ['main', 'region:capture-region'], order: 5, source: 'elapsed', format: 'HH:mm:ss' } })
   flow('register-stop', 'menu-capture-target'); flow('menu-capture-target', 'menu-display-1'); flow('menu-display-1', 'menu-active-window'); flow('menu-active-window', 'menu-start'); flow('menu-start', 'menu-delayed-start')
 
   add('event-select-region', 'event', 'On Select Region', 0, 230, { eventId: 'event-select-region' })
-  add('log-select-region', 'log', 'Log Region Selection', 330, 230, { message: 'Region picker is not implemented; enter physical pixel coordinates in Overview' })
+  add('log-select-region', 'select_region', 'Select Region', 330, 230, { toolId: 'capture-region', display: 'Display 1', initialRegion: null, exposedInputs: ['display'] })
+  add('picker-display', 'read_parameter', 'Read Display', 0, 320, { parameterId: 'display' })
+  value('picker-display', 'value', 'log-select-region', 'param:display')
   flow('event-select-region', 'log-select-region')
   for (const [id, label, message, y] of [
     ['event-select-display', 'On Select Display', 'Select a display in Overview', 370],
@@ -344,17 +349,19 @@ function graph(): { nodes: BlueprintNode[]; edges: Edge[] } {
   add('control-reset-stop', 'update_control', 'Disable Stop Control', 1200, 1600, { controlId: 'stop-recording', patch: { enabled: false } })
   flow('event-stop', 'pipeline-stop'); flow('pipeline-stop', 'control-reset-start'); flow('control-reset-start', 'control-reset-pause'); flow('control-reset-pause', 'control-reset-stop')
 
-  add('region', 'region', 'Screen Region', 1940, 30, { display: 'Display 1', mode: 'Full Display', x: 0, y: 0, width: 897, height: 360 })
+  add('region', 'region', 'Screen Region', 1940, 30, { display: 'Display 1', mode: 'Rectangle', x: 0, y: 0, width: 897, height: 360 })
   add('screen', 'screen', 'Capture Screen', 1940, 230, { cursor: true })
   add('encode', 'encode', 'Encode H.264', 2250, 280, { encoder: 'H.264', fps: 60, resolution: 'Source Size', bitrate: '20', encodingMode: 'Hardware Auto' })
   add('path', 'path', 'Output Path', 2250, 500, { directory: 'C:/Recordings', filename: '{blueprint}_{timestamp}.mp4' })
   add('write', 'write', 'Write MP4', 2560, 370)
-  value('region', 'region', 'screen', 'region')
+  add('selected-region', 'get_selected_region', 'Get Selected Region', 1610, 230, { toolId: 'capture-region', mode: 'Selected Region' })
+  value('region', 'region', 'selected-region', 'fallback')
+  value('selected-region', 'region', 'screen', 'region')
   value('screen', 'frames', 'encode', 'frames')
   value('encode', 'video', 'write', 'video')
   value('path', 'path', 'write', 'path')
   for (const [target, input, parameterId] of [
-    ['region', 'display', 'display'], ['region', 'mode', 'regionMode'],
+    ['region', 'display', 'display'], ['selected-region', 'mode', 'regionMode'],
     ['region', 'x', 'x'], ['region', 'y', 'y'], ['region', 'width', 'width'], ['region', 'height', 'height'],
     ['screen', 'cursor', 'cursor'], ['encode', 'fps', 'fps'], ['encode', 'resolution', 'resolution'],
     ['encode', 'bitrate', 'bitrate'], ['encode', 'encodingMode', 'encodingMode'],
