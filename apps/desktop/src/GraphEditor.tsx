@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, 
 import { createPortal } from 'react-dom'
 import {
   addEdge, applyEdgeChanges, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Handle, Position, reconnectEdge,
-  ReactFlow, ReactFlowProvider, SelectionMode, useReactFlow, useNodesInitialized, useStore,
+  ReactFlow, ReactFlowProvider, SelectionMode, useReactFlow, useNodesInitialized, useStore, useUpdateNodeInternals,
   type Connection, type ConnectionLineComponentProps, type Edge, type EdgeProps, type EdgeChange, type Node, type NodeChange, type NodeProps,
 } from '@xyflow/react'
 import {
@@ -10,6 +10,7 @@ import {
   Pause, Play, Settings, Square, StopCircle, Video, Workflow,
 } from 'lucide-react'
 import { connectedNodeIds, ribbonOffsets, routePoints, roundedPath, type RoutePoint } from './graph-interactions'
+import { formatGraph, type NodeGeometry } from './graph-layout'
 import { exposedInputIds, parameterInputPortId, pinTypeColor, pinTypeForValue, type Blueprint, type BlueprintNodeData, type BlueprintSelection, type NodePortDefinition, type NodeTypeDefinition } from './model'
 
 type CanvasNodeData = BlueprintNodeData & {
@@ -77,10 +78,9 @@ function Port({ port, side, connected }: { port: NodePortDefinition; side: 'in' 
   const execution = port.valueType === 'flow'
   const color = pinTypeColor(port.valueType)
   return <div className={`port-row ${side}${execution ? ' exec-port' : ''}`}>
-    {side === 'in' && <Handle className={`${execution ? 'flow-handle' : ''}${connected ? '' : ' unconnected'}`} id={`in:${port.id}`} type="target" position={Position.Left} style={{ color }}><PinGlyph execution={execution} /></Handle>}
-    {side === 'in' && !execution && <span>{port.label}</span>}
-    {side === 'out' && !execution && <span>{port.label}</span>}
-    {side === 'out' && <Handle className={`${execution ? 'flow-handle' : ''}${connected ? '' : ' unconnected'}`} id={`out:${port.id}`} type="source" position={Position.Right} style={{ color }}><PinGlyph execution={execution} /></Handle>}
+    {side === 'in' && <Handle className={`${execution ? 'flow-handle' : ''}${connected ? '' : ' unconnected'}`} id={`in:${port.id}`} type="target" position={Position.Left} title={port.label} aria-label={port.label} style={{ color }}><PinGlyph execution={execution} /></Handle>}
+    <span>{port.label}</span>
+    {side === 'out' && <Handle className={`${execution ? 'flow-handle' : ''}${connected ? '' : ' unconnected'}`} id={`out:${port.id}`} type="source" position={Position.Right} title={port.label} aria-label={port.label} style={{ color }}><PinGlyph execution={execution} /></Handle>}
   </div>
 }
 
@@ -111,6 +111,14 @@ function configOutputPorts(node: Blueprint['nodes'][number], definition: NodeTyp
 }
 
 function WorkflowNode({ id, data, selected }: NodeProps<CanvasNode>) {
+  const updateNodeInternals = useUpdateNodeInternals()
+  const portIds = [...data.inputs.map(port => `in:${port.id}`), ...data.outputs.map(port => `out:${port.id}`)].join('|')
+  const previousPortIds = useRef(portIds)
+  useEffect(() => {
+    if (previousPortIds.current === portIds) return
+    previousPortIds.current = portIds
+    updateNodeInternals(id)
+  }, [id, portIds, updateNodeInternals])
   const Icon = icons[data.kind] ?? Square
   const config = data.config ?? {}
   const caption = typeof config.message === 'string' ? config.message
@@ -121,13 +129,13 @@ function WorkflowNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const executionInputs = data.inputs.filter((port) => port.valueType === 'flow')
   const executionOutputs = data.outputs.filter((port) => port.valueType === 'flow')
   const inputs = data.inputs.filter((port) => port.valueType !== 'flow')
-  const outputs = data.outputs.filter((port) => port.valueType !== 'flow')
+  const outputs = [...(executionOutputs.length > 1 ? executionOutputs : []), ...data.outputs.filter((port) => port.valueType !== 'flow')]
   const executionY = (index: number, count: number) => `${(index + 1) * 100 / (count + 1)}%`
   return <div className={`flow-node${data.kind === 'event' ? ' event-node' : ''}${selected ? ' selected' : ''}`}>
-    <div className={`node-title${executionOutputs.length ? ' has-execution-output' : ''}`} title="Double-click to rename" onDoubleClick={(event) => { event.stopPropagation(); data.editTitle(id) }}>
+    <div className={`node-title${executionOutputs.length === 1 ? ' has-execution-output' : ''}`} title="Double-click to rename" onDoubleClick={(event) => { event.stopPropagation(); data.editTitle(id) }}>
       {executionInputs.map((port, index) => <Handle key={`in:${port.id}`} className={`flow-handle node-title-flow-handle${data.connectedHandles.includes(`in:${port.id}`) ? '' : ' unconnected'}`} id={`in:${port.id}`} type="target" position={Position.Left} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionInputs.length), color: pinTypeColor('flow') }}><PinGlyph execution /></Handle>)}
       <Icon size={15} />{data.label}
-      {executionOutputs.map((port, index) => <Handle key={`out:${port.id}`} className={`flow-handle node-title-flow-handle${data.connectedHandles.includes(`out:${port.id}`) ? '' : ' unconnected'}`} id={`out:${port.id}`} type="source" position={Position.Right} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionOutputs.length), color: pinTypeColor('flow') }}><PinGlyph execution /></Handle>)}
+      {executionOutputs.length === 1 && executionOutputs.map((port, index) => <Handle key={`out:${port.id}`} className={`flow-handle node-title-flow-handle${data.connectedHandles.includes(`out:${port.id}`) ? '' : ' unconnected'}`} id={`out:${port.id}`} type="source" position={Position.Right} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionOutputs.length), color: pinTypeColor('flow') }}><PinGlyph execution /></Handle>)}
     </div>
     <div className="node-body">
       {(inputs.length > 0 || outputs.length > 0) && <div className="node-ports">
@@ -166,7 +174,8 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
   locked: boolean
 }) {
   const { fitView, getViewport, getInternalNode, screenToFlowPosition, setViewport } = useReactFlow<CanvasNode>()
-  const measuredNodes = useStore(state => JSON.stringify([...state.nodeLookup.values()].map(node => [node.id, node.internals.positionAbsolute, node.internals.handleBounds])))
+  const measuredNodes = useStore(state => JSON.stringify([...state.nodeLookup.values()].map(node => [node.id, node.measured, node.internals.positionAbsolute, node.internals.handleBounds])))
+  const [formatRequest, setFormatRequest] = useState<{ selectedIds: string[]; onlySelected: boolean } | null>(null)
   const initialized = useNodesInitialized()
   useEffect(() => {
     if (initialized && focusRequest) void fitView({ nodes: [{ id: focusRequest.id }], minZoom: 1, maxZoom: 1, duration: 250 })
@@ -241,6 +250,36 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
       editTitle: editNodeTitle,
     },
   })), [blueprint.edges, blueprint.nodes, blueprint.recordState, blueprint.values, definitions, editNodeTitle, related])
+  useEffect(() => {
+    if (!formatRequest) return
+    const frame = requestAnimationFrame(() => {
+      if (locked) { setFormatRequest(null); return }
+      if (!initialized || measuredNodes === '[]') return
+      const geometry = new Map<string, NodeGeometry>()
+      for (const node of nodes) {
+        const internal = getInternalNode(node.id)
+        if (!internal?.measured?.width || !internal.measured.height) return
+        geometry.set(node.id, {
+          width: internal.measured.width, height: internal.measured.height,
+          handles: Object.fromEntries([...(internal.internals.handleBounds?.source ?? []), ...(internal.internals.handleBounds?.target ?? [])].map(handle => [handle.id, { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 }])),
+        })
+      }
+      const result = formatGraph(nodes, blueprint.edges, geometry, formatRequest.selectedIds, formatRequest.onlySelected)
+      if (!result) return
+      setFormatRequest(null)
+      if (!result.positions.size && !result.resetRouteEdgeIds.size) return
+      update(current => ({ ...current,
+        nodes: current.nodes.map(node => result.positions.has(node.id) ? { ...node, position: result.positions.get(node.id)! } : node),
+        edges: current.edges.map(edge => {
+          if (!result.resetRouteEdgeIds.has(edge.id)) return edge
+          const data = { ...edge.data }
+          delete data.routePoints
+          return { ...edge, data }
+        }),
+      }))
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [formatRequest, initialized, locked, measuredNodes, nodes, blueprint.edges, getInternalNode, update])
   const offsets = useMemo(() => {
     if (measuredNodes === '[]') return new Map<string, number>()
     return ribbonOffsets(blueprint.edges.flatMap(edge => {
@@ -352,9 +391,17 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     setContextMenu(next)
   }
   const onGraphKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest('input, textarea, select, button')) return
+    if ((event.target as HTMLElement).closest('input, textarea, select, button, [contenteditable]:not([contenteditable="false"])')) return
     if (event.key === 'Escape') { setContextMenu(null); return }
-    if (event.key.toLowerCase() === 'f') { event.preventDefault(); void fitView({ padding: .2 }); return }
+    if (event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault()
+      if (event.repeat) return
+      const selectedIds = blueprint.nodes.filter(node => node.selected).map(node => node.id)
+      if (blueprint.selectedNode && !selectedIds.includes(blueprint.selectedNode)) selectedIds.push(blueprint.selectedNode)
+      if (!selectedIds.length) { if (!event.shiftKey) void fitView({ padding: .2 }); return }
+      if (!locked) { setContextMenu(null); setFormatRequest({ selectedIds, onlySelected: event.shiftKey }) }
+      return
+    }
     if (event.key.toLowerCase() === 'c' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); copyNodes(); return }
     if (event.key.toLowerCase() === 'v' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); pasteNodes() }
   }

@@ -464,6 +464,35 @@ test('Ribbon separates overlapping corridors deterministically and reuses clear 
   assert.notEqual(roundedPath(aligned.start, aligned.end, alignedOffsets.get('a')), roundedPath(aligned.start, aligned.end, alignedOffsets.get('b')))
 })
 
+test('ordered parameter fans retain non-crossing curved Subway paths in both directions', () => {
+  const polyline = path => {
+    const tokens = path.match(/[MLQ]|-?(?:\d*\.?\d+)(?:e[+-]?\d+)?/gi)
+    const points = []
+    let p = { x: 0, y: 0 }
+    for (let i = 0; i < tokens.length;) {
+      const command = tokens[i++]
+      const a = { x: Number(tokens[i++]), y: Number(tokens[i++]) }
+      const end = command === 'Q' ? { x: Number(tokens[i++]), y: Number(tokens[i++]) } : a
+      if (command === 'Q') for (let n = 1; n < 12; n++) {
+        const t = n / 12
+        points.push({ x: (1 - t) ** 2 * p.x + 2 * (1 - t) * t * a.x + t * t * end.x, y: (1 - t) ** 2 * p.y + 2 * (1 - t) * t * a.y + t * t * end.y })
+      }
+      points.push(end); p = end
+    }
+    return points.slice(1).map((point, i) => [points[i], point])
+  }
+  const cross = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+  for (const sign of [-1, 1]) {
+    const routes = ['z', 'a', 'x', 'b', 'c'].map((id, i) => ({ id, start: { x: 0, y: sign * (100 + i * 120) }, end: { x: 120, y: sign * i * 24 } }))
+    const offsets = ribbonOffsets(routes)
+    assert.deepEqual(ribbonOffsets([...routes].reverse()), offsets)
+    const paths = routes.map(route => polyline(roundedPath(route.start, route.end, offsets.get(route.id))))
+    for (let i = 0; i < paths.length; i++) for (const other of paths.slice(i + 1)) for (const [a, b] of paths[i]) for (const [c, d] of other) {
+      assert.ok(!(cross(a, b, c) * cross(a, b, d) < -1e-6 && cross(c, d, a) * cross(c, d, b) < -1e-6), 'ordered fan curves must not intersect')
+    }
+  }
+})
+
 test('expanding a toolbar preserves its anchor and stays within the work area', () => {
   const work = {x:0,y:0,width:1920,height:1080}
   for (const y of [8,200,600,1016]) {

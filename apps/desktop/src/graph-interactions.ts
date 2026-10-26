@@ -18,6 +18,31 @@ export function ribbonOffsets(routes: { id: string; start: RoutePoint; end: Rout
     occupied.push({ x: middleX + offset, top, bottom })
     offsets.set(id, offset)
   }
+  const fans: typeof routes[] = []
+  for (const route of [...routes].sort((a, b) => a.id.localeCompare(b.id))) {
+    if (route.end.x <= route.start.x || route.end.y === route.start.y) continue
+    const fan = fans.find(group => Math.abs(group[0]!.start.x - route.start.x) < 1 && Math.abs(group[0]!.end.x - route.end.x) < 1 && Math.sign(group[0]!.end.y - group[0]!.start.y) === Math.sign(route.end.y - route.start.y))
+    if (fan) fan.push(route)
+    else fans.push([route])
+  }
+  for (const fan of fans) {
+    fan.sort((a, b) => a.end.y - b.end.y || a.id.localeCompare(b.id))
+    if (fan.some((route, i) => i > 0 && (route.start.y <= fan[i - 1]!.start.y || route.end.y <= fan[i - 1]!.end.y))) continue
+    const clusters: typeof routes[] = []
+    for (const route of [...fan].sort((a, b) => Math.min(a.start.y, a.end.y) - Math.min(b.start.y, b.end.y))) {
+      const last = clusters.at(-1)
+      if (last && Math.min(route.start.y, route.end.y) <= Math.max(...last.map(item => Math.max(item.start.y, item.end.y))) + 12) last.push(route)
+      else clusters.push([route])
+    }
+    for (const cluster of clusters) {
+      if (cluster.length < 2) continue
+      cluster.sort((a, b) => a.end.y - b.end.y)
+      const spacing = Math.min(12, (Math.min(...cluster.map(route => route.end.x - route.start.x)) - 32) / (cluster.length - 1))
+      if (spacing <= 0) continue
+      // Upward fans turn left-to-right; downward fans reverse that order to avoid crossings.
+      cluster.forEach((route, i) => offsets.set(route.id, (i - (cluster.length - 1) / 2) * spacing * (route.end.y < route.start.y ? 1 : -1)))
+    }
+  }
   return offsets
 }
 

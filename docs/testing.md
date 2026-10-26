@@ -112,3 +112,19 @@ Nodrec 脚本另用 `Input.synthesizePinchGesture`（`gestureSourceType: mouse`�
 最终布局版本通过窗口边界、面板避让、菜单横向布局及比例同步断言并保存截图；该轮运行到原生捕获校准时为黑帧，因此最终一轮实录未判通过。此前三轮实录与完整解码通过，需屏幕处于活动状态再复测最终版本。
 
 未保存提示与快捷保存回归（2026-10-23）：TypeScript/Vite、lint（保留 RegionTool 原有警告）、Tauri Release 和 `test:blueprint-runtime` 通过。验证未修改标签无圆点、修改后同一蓝图各标签及列表显示圆点，输入框聚焦时 Ctrl+S 使 Order 实际落盘并清除圆点；原有保存按钮及工作流回归通过。快捷键通过 WebView2 CDP 输入验证，未使用物理键盘验收。
+
+## 节点自动整理
+
+- `npm run test:model` 包含 `graph-layout.test.mjs`：覆盖执行链／分叉汇合、严格选区、单参数 Helixing／多参数左排、共享归属、独立媒体图、固定锚点／范围外节点、手动路径边界、未完成测量、循环、配置引用隔离和重复整理稳定性。
+- `npm run test:graph-interactions` 使用隔离的 Release exe 和临时蓝图，已接入 `npm run verify`。除了原有图交互，检查真实渲染尺寸和动态引脚、鼠标框选后 Shift+F 的严格范围及边界路径保留、F／Shift+F、文本输入与重复按键保护、Event 固定、视口／选区保持、节点不重叠、内部路径清理、函数图隔离、Ctrl+S／重载及重复整理不产生未保存状态。截图在 `apps/desktop/src-tauri/target/graph-interactions-check/layout-before.png` 和 `layout-after.png`。
+- `test:blueprint-runtime` 的 F 适配视图测试显式清空选择，避免与新增整理快捷键冲突。物理键盘、不同 DPI 和大规模图性能未作验收；没有通用撤销或完整连线避障承诺。
+
+2026-10-24 验证通过：50 项模型测试（含 19 项排版测试）、TypeScript/Vite、Tauri Release、`test:graph-interactions` 与完整 `test:blueprint-runtime`。Lint 无错误，仅保留 RegionTool 既有警告。Release 截图已检查单参数位于使用节点下方，执行链水平对齐且无节点重叠。新增引脚刷新仅在端口集合变化时执行，避免初次挂载逐节点测量让初始 fitView 只包含首个节点。
+
+参数排列顺序修正（2026-10-25）：上一轮实时连线避障、附带修改和相关文档说明已撤销，保留原有 Subway／Ribbon 路由。新增模型用例先复现按节点 ID 误排为 Bitrate／Encoding Mode／Fps／Resolution，再验证按目标引脚排列为 Fps／Resolution／Bitrate／Encoding Mode；同时覆盖节点与边数组反转、嵌套参数树及纯数据消费节点。52 项模型测试（含 21 项排版测试）、lint（既有 RegionTool 警告）、TypeScript/Vite、Tauri Release、图交互及完整蓝图回归通过。Release 实际鼠标选择后按 F，验证 Encode 四个参数与 Output Path 的 Directory／Filename 顺序正确，使用节点保持原位，重复整理稳定；截图位于 `graph-interactions-check/parameter-order.png`。未修改用户蓝图资产，尚未验证任意复杂图的全局最少交叉。
+
+参数间距与扇入通道（2026-10-25）：53 项模型测试、lint（既有 RegionTool 警告）、TypeScript/Vite、Tauri Release、图交互和完整蓝图回归通过。左侧参数列与使用节点至少间隔 120，参数行至少间隔 40；上行／下行的有序扇入按几何顺序分配通道。模型测试检查两个方向的圆角曲线路径不相交及输入数组反转后的确定性；Release 实测节点边界间距，并使用 SVG 原生曲线每 3 个画布单位采样检查 Encode 参数线两两无交叉。截图已目视检查。手动路径和顺序本身相反的端点不在有序扇入保证内，不引入实时节点避障。
+
+主线通道留白（2026-10-26）：54 项模型测试、lint（既有 RegionTool 警告）、TypeScript/Vite、Tauri Release 和图交互验收通过。新增 Capture→Encode→Write 与嵌套 Output Path 场景，验证 F 后所有参数节点顶部位于相应主节点执行／媒体引脚区域下方至少 25 个画布单位，参数顺序、120／40 间距、固定锚点、重复整理及无交叉扇入仍通过；主线引脚未完成测量时延后整理。`parameter-order.png` 已目视检查蓝色主线从参数组上方通过。只在整理范围内应用，未验证任意复杂跨分支主线遮挡。
+
+多分支执行输出（2026-10-26）：通用显示规则见 UI 规范。TypeScript/Vite、lint（既有 RegionTool 警告）、Tauri Release、图交互和完整蓝图回归通过。实际渲染验证 Branch 的 True／False、Select Region 的 Selected／Cancelled 均在正文右侧逐行显示；标题仅保留执行入口，单输出节点仍使用标题输出。检查分支行高至少 22 CSS px、文字与引脚同行、连接／空心状态及端口 ID 保持原义；`graph-interactions-check/branch-pins.png` 已目视检查。完整回归首轮在无关的侧栏拖宽还原等待处超时，重试通过；未修改该侧栏逻辑，未做其他 DPI 验证。

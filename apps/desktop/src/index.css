@@ -378,7 +378,7 @@ select.field-control { padding-right: 23px; }
 .node-ports { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; }
 .port-column { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .port-row { min-height: 22px; position: relative; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
-.port-row.exec-port { min-height: 12px; height: 12px; }
+.port-row.exec-port { min-height: 22px; color: var(--text); }
 .port-row.in { padding-left: 6px; }
 .port-row.out { justify-content: end; padding-right: 6px; }
 .port-row.in .react-flow__handle { left: -13px; }
