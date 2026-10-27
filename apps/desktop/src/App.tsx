@@ -1,6 +1,7 @@
-import { Fragment, createContext, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { Fragment, createContext, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useId, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 import { startupLog } from './startup'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -161,8 +162,28 @@ function useParameterSizing(value: unknown) {
   return ref
 }
 
+function BuiltinBadge() {
+  const [anchor, setAnchor] = useState<DOMRect | null>(null)
+  const tooltipId = useId()
+  return <><span className="builtin-badge" role="img" aria-label="Built-in blueprint" aria-describedby={anchor ? tooltipId : undefined} tabIndex={0}
+    onMouseEnter={event => setAnchor(event.currentTarget.getBoundingClientRect())} onMouseLeave={() => setAnchor(null)}
+    onFocus={event => setAnchor(event.currentTarget.getBoundingClientRect())} onBlur={() => setAnchor(null)}
+    onKeyDown={event => { if (event.key === 'Escape') setAnchor(null) }}><Package size={14} /></span>
+    {anchor && createPortal(<span id={tooltipId} className="builtin-tooltip" role="tooltip" style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 368)), top: anchor.bottom + 6 }}>Built-in blueprint. Replaced on every update. Duplicate to keep your changes.</span>, document.body)}</>
+}
+
 function ParameterControl({ definition, value, onChange, compact = false }: { definition: ParameterDefinition; value: Value; onChange: (value: Value) => void; compact?: boolean }) {
   const displays = useContext(DisplayContext)
+  const [picking, setPicking] = useState(false)
+  const [pickerError, setPickerError] = useState('')
+  async function pickFolder() {
+    setPicking(true); setPickerError('')
+    try {
+      const path = await open({ directory: true, multiple: false, defaultPath: String(value) || undefined, title: `Select ${definition.label}` })
+      if (path !== null) onChange(path)
+    } catch (error) { setPickerError(String(error)) }
+    finally { setPicking(false) }
+  }
   const changed = definition.kind !== 'readonly' && value !== definition.initial
   const sizingRef = useParameterSizing(JSON.stringify([value, displays]))
   return <span className="parameter-control-wrap" ref={sizingRef}>
@@ -173,7 +194,9 @@ function ParameterControl({ definition, value, onChange, compact = false }: { de
       </select>
       : definition.kind === 'choice' ? <select className="field-control" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(typeof definition.initial === 'number' ? Number(event.target.value) : event.target.value)}>{definition.options?.map((option) => <option key={option} value={option}>{option === 'Software' ? 'Software (CPU; higher CPU usage)' : option}</option>)}</select>
         : definition.kind === 'readonly' ? <span className="readonly-value" title={String(value)}>{String(value)}</span>
-          : <input className="field-control" type={definition.kind === 'number' ? 'number' : 'text'} min={definition.kind === 'number' ? 0 : undefined} step="1" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(definition.kind === 'number' ? Number(event.target.value) : event.target.value)} />}
+          : <input className="field-control" disabled={picking} type={definition.kind === 'number' ? 'number' : 'text'} min={definition.kind === 'number' ? 0 : undefined} step="1" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(definition.kind === 'number' ? Number(event.target.value) : event.target.value)} />}
+    {definition.kind === 'folder' && <button type="button" className="parameter-browse" aria-label={`Browse ${definition.label}`} title="Choose folder" disabled={picking || !isTauriWindow()} onClick={() => { void pickFolder() }}><Folder size={14} /></button>}
+    {pickerError && <span className="parameter-picker-error" role="alert">{pickerError}</span>}
     {changed ? <button type="button" className="parameter-reset" aria-label={`Reset ${definition.label}`} title="Reset to default" onClick={(event) => { event.stopPropagation(); onChange(definition.initial) }}><Undo2 size={13} /></button> : <span className="parameter-reset-space" aria-hidden="true" />}
   </span>
 }
@@ -936,7 +959,6 @@ export default function App() {
   const [updating, setUpdating] = useState(false)
   const [diagnostics, setDiagnostics] = useState<string[]>([])
   const [notice, setNotice] = useState<string | null>(() => isTauriWindow() ? null : 'Blueprint files are loaded by the Nodrec desktop app.')
-  const notifyUpdate = useCallback((version: string) => setNotice(`Nodrec ${version} is available. Open Settings → About to update.`), [])
   const [loading, setLoading] = useState(isTauriWindow)
   const [controls, setControls] = useState<RegisteredControl[]>([])
   const [registeredDisplays, setRegisteredDisplays] = useState<RegisteredDisplay[]>([])
@@ -1239,7 +1261,7 @@ export default function App() {
         <div className="blueprint-list">{blueprints.map((blueprint) => {
           const dirty = savedDocuments[blueprint.id] !== JSON.stringify(serializeBlueprint(blueprint))
           return <div className={`blueprint-nav-item${blueprint.id === activeBlueprintId ? ' active' : ''}`} key={blueprint.id}>
-            <button className="blueprint-select" disabled={runtimeLocked && blueprint.id !== activeBlueprintId} onClick={() => switchBlueprint(blueprint.id)}><span className="blueprint-icon"><Workflow size={15} /></span><span className="blueprint-name">{blueprint.name}</span>{blueprint.scope === 'builtin' && <span className="builtin-badge" title="Built-in blueprint. Replaced on every update. Duplicate to keep your changes." role="img" aria-label="Built-in blueprint"><Package size={14} /></span>}{dirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}</button>
+            <button className="blueprint-select" disabled={runtimeLocked && blueprint.id !== activeBlueprintId} onClick={() => switchBlueprint(blueprint.id)}><span className="blueprint-icon"><Workflow size={15} /></span><span className="blueprint-name">{blueprint.name}</span>{blueprint.scope === 'builtin' && <BuiltinBadge />}{dirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}</button>
             {dirty && <button className="blueprint-save" title={`Save ${blueprint.name}`} aria-label={`Save ${blueprint.name}`} disabled={savingBlueprints.has(blueprint.id) || runtimeLocked && blueprint.id === activeBlueprintId} onClick={() => { void saveBlueprint(blueprint.id) }}><Save size={14} /></button>}
             <button className="blueprint-more" title="More actions" aria-label={`More actions for ${blueprint.name}`} disabled={runtimeLocked} onClick={(event) => toggleBlueprintMenu(blueprint.id, event.currentTarget)}><Ellipsis size={16} /></button>
           </div>
@@ -1257,7 +1279,7 @@ export default function App() {
       <section className="work-area">
         {notice && <div className="app-notice" role="status">{notice}<button aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={13} /></button></div>}
         {diagnostics.length > 0 && <div className="app-diagnostics">{diagnostics.map((item, index) => <div key={`${index}:${item}`}>{item}</div>)}</div>}
-        <SettingsPanel visible={page === 'settings'} locked={runtimeLocked || savingBlueprints.size > 0} onUpdate={installUpdate} onAvailable={notifyUpdate} />
+        <SettingsPanel visible={page === 'settings'} locked={runtimeLocked || savingBlueprints.size > 0} onUpdate={installUpdate} />
         {page === 'settings' ? null : page !== 'workspace' ? <EmptyPage /> : !activeBlueprint ? <main className="empty-blueprints"><div className="empty-icon"><Workflow size={24} /></div><span className="eyebrow">BLUEPRINTS</span><h1>{loading ? 'Loading blueprints' : 'No blueprints found'}</h1><p>{loading ? 'Reading files beside the application.' : 'Create a blueprint to start building a workflow.'}</p><button className="button primary" disabled={loading} onClick={() => setDialog({ kind: 'new' })}><Plus size={14} />New blueprint</button></main>
           : runtimeLocked ? <main className="runtime-locked"><div className="empty-icon"><Video size={24} /></div><span className="eyebrow">{activeBlueprint.name}</span><h1>{status === 'paused' ? 'Recording paused' : status === 'starting' ? 'Starting workflow' : status === 'stopping' ? 'Finalizing MP4' : 'Recording'}</h1><p>{frameCount} encoded frames. Use the blueprint controls above to continue or stop.</p>{recording && <><p>{recording.encoder} · {recording.adapter}<br />{recording.width} × {recording.height} · {recording.fps} fps · {(recording.durationMs / 1000).toFixed(1)} s<br />{recording.droppedFrames} dropped · {recording.repeatedFrames} repeated</p><p>{recording.outputPath}</p></>}</main>
             : <>

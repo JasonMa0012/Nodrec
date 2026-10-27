@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
 import { listen } from '@tauri-apps/api/event'
-import { Download, ExternalLink, Globe, Info, Settings } from 'lucide-react'
+import { Download, ExternalLink, Globe, Info, Settings, X } from 'lucide-react'
 
 type Preferences = { checkOnStartup: boolean; proxyMode: 'direct' | 'system' | 'custom'; proxyUrl: string }
 type UpdateInfo = { currentVersion: string; version: string | null; notes: string | null; mainland: boolean | null; route: string }
@@ -11,8 +11,8 @@ type Progress = { downloaded: number; total: number | null; route: string }
 const defaults: Preferences = { checkOnStartup: true, proxyMode: 'system', proxyUrl: 'http://127.0.0.1:7890' }
 const sections = [{ id: 'general', label: 'General', icon: Settings }, { id: 'network', label: 'Network', icon: Globe }, { id: 'about', label: 'About', icon: Info }]
 
-export default function SettingsPanel({ visible, locked, onUpdate, onAvailable }: {
-  visible: boolean; locked: boolean; onUpdate: () => Promise<void>; onAvailable: (version: string) => void
+export default function SettingsPanel({ visible, locked, onUpdate }: {
+  visible: boolean; locked: boolean; onUpdate: () => Promise<void>
 }) {
   const [section, setSection] = useState('general')
   const [preferences, setPreferences] = useState(defaults)
@@ -23,6 +23,8 @@ export default function SettingsPanel({ visible, locked, onUpdate, onAvailable }
   const [installing, setInstalling] = useState(false)
   const [message, setMessage] = useState('')
   const [update, setUpdate] = useState<UpdateInfo | null>(null)
+  const [dismissed, setDismissed] = useState(false)
+  const [installError, setInstallError] = useState('')
   const [progress, setProgress] = useState<Progress | null>(null)
   const dirty = JSON.stringify(preferences) !== JSON.stringify(saved)
 
@@ -39,12 +41,11 @@ export default function SettingsPanel({ visible, locked, onUpdate, onAvailable }
         if (cancelled) return
         setUpdate(result)
         setMessage(result.version ? `Nodrec ${result.version} is available.` : 'You are up to date.')
-        if (result.version) onAvailable(result.version)
       } catch (error) { if (!cancelled) setMessage(String(error)) }
       finally { if (!cancelled) setBusy(false) }
     }).catch(error => { if (!cancelled) setMessage(String(error)) })
     return () => { cancelled = true }
-  }, [onAvailable])
+  }, [])
 
   useEffect(() => {
     if (!('__TAURI_INTERNALS__' in window)) return
@@ -61,6 +62,7 @@ export default function SettingsPanel({ visible, locked, onUpdate, onAvailable }
     finally { setBusy(false) }
   }
   async function check() {
+    setDismissed(false); setInstallError('')
     setBusy(true); setMessage('Checking for updates…'); setProgress(null); setUpdate(null)
     try {
       const result = await invoke<UpdateInfo>('check_update')
@@ -69,12 +71,13 @@ export default function SettingsPanel({ visible, locked, onUpdate, onAvailable }
     finally { setBusy(false) }
   }
   async function install() {
+    setInstallError('')
     setBusy(true); setInstalling(true); setProgress(null); setMessage('Saving changes and downloading update…')
     try { await onUpdate() }
-    catch (error) { setMessage(String(error)) }
+    catch (error) { setMessage(String(error)); setInstallError(String(error)) }
     finally { setBusy(false); setInstalling(false) }
   }
-  return <><main className="app-settings" hidden={!visible}>
+  return <>{update?.version && !dismissed && <div className="app-notice" role="status"><span>{installError || `Nodrec ${update.version} is available.`}</span><button className="notice-update" disabled={busy || locked || dirty} onClick={() => { void install() }}>Update now</button><button aria-label="Dismiss update notification" onClick={() => setDismissed(true)}><X size={13} /></button></div>}<main className="app-settings" hidden={!visible}>
     <nav className="settings-navigation" aria-label="Settings pages">
       <h1>Settings</h1>
       {sections.map(({ id, label, icon: Icon }) => <button key={id} className={section === id ? 'active' : ''} aria-current={section === id ? 'page' : undefined} onClick={() => setSection(id)}><Icon size={16} />{label}</button>)}

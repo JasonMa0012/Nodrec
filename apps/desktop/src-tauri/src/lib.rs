@@ -173,6 +173,7 @@ pub fn run() {
     let store = storage::BlueprintStore::beside_executable().expect("cannot locate the Nodrec application directory");
     log_startup("storage located; building Tauri");
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(settings::UpdateState::default())
         .plugin(tauri::plugin::Builder::<tauri::Wry>::new("startup-diagnostics")

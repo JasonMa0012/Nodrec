@@ -515,3 +515,13 @@ test('region fields use display percentages and preserve opposite edges', () => 
   const dock = dockRegion({x:200,y:650,width:800,height:200}, bounds,760,56,8)
   assert.ok(expandToolbar(dock,bounds,56,410,4).offset > 0)
 })
+
+
+test('output folder control keeps its string path through save and reload', () => {
+  const blueprint = createBlueprint('folder-test', 'Folder test')
+  assert.equal(allParameters(blueprint).find(item => item.id === 'output').kind, 'folder')
+  blueprint.values.output = 'C:/录屏/My recordings'
+  const stored = serializeBlueprint(blueprint)
+  assert.equal(stored.values.output, blueprint.values.output)
+  assert.equal(hydrateBlueprint(stored, 'user', null).values.output, blueprint.values.output)
+})

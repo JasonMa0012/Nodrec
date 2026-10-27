@@ -1,0 +1,10 @@
+{
+  "identifier": "folder-picker",
+  "description": "Allow the main window to choose an output folder",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "dialog:allow-open"
+  ]
+}

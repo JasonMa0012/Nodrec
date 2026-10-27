@@ -1,5 +1,6 @@
 @import '@xyflow/react/dist/style.css';
 
+.builtin-tooltip { position: fixed; z-index: 2000; width: max-content; max-width: min(360px, calc(100vw - 16px)); padding: 8px 10px; border: 1px solid var(--stroke); border-radius: 6px; color: var(--text); background: var(--panel); box-shadow: var(--shadow); font-size: 12px; line-height: 1.5; pointer-events: none; }
 .builtin-badge { display: inline-flex; flex-shrink: 0; color: var(--muted); cursor: help; }
 .app-settings { display: flex; flex: 1; min-height: 0; overflow: auto; }
 .app-settings[hidden] { display: none; }
@@ -153,6 +154,8 @@ button:disabled { opacity: .38; cursor: not-allowed !important; }
 .button:disabled, .blueprint-sidebar button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 .app-notice, .app-diagnostics { padding: 8px 12px; color: #f1c981; background: #45371f; border-bottom: 1px solid #786039; font-size: 12px; }
 .app-notice { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.app-notice .notice-update { width: auto; margin-left: auto; padding: 0 8px; border: 1px solid currentColor; border-radius: 4px; white-space: nowrap; }
+.app-notice .notice-update:disabled { opacity: .5; cursor: default; }
 .app-notice button { width: 22px; height: 22px; border: 0; display: grid; place-items: center; color: inherit; background: transparent; cursor: pointer; }
 .app-diagnostics { color: #e5b0ad; background: #40282a; border-color: #694143; }
 .app-diagnostics > div + div { margin-top: 4px; }
@@ -288,6 +291,8 @@ select.field-control { padding-right: 23px; }
 .readonly-value { display: flex; align-items: center; overflow: hidden; color: var(--muted); background: var(--panel-raised); text-overflow: ellipsis; white-space: nowrap; }
 .parameter-control-wrap { width: 100%; min-width: 0; display: flex; align-items: center; gap: 4px; flex: 1 1 auto; }
 .parameter-control-wrap > .field-control:not(.checkbox-control), .parameter-control-wrap > .readonly-value { min-width: 0; flex: 1 1 auto; }
+.parameter-browse { width: 28px; height: 28px; flex: 0 0 28px; padding: 0; display: grid; place-items: center; border: 1px solid #3b4049; border-radius: 4px; color: inherit; background: #ffffff06; cursor: pointer; }
+.parameter-picker-error { color: #e5b0ad; font-size: 11px; overflow-wrap: anywhere; }
 .parameter-reset, .parameter-reset-space { width: 18px; height: 20px; flex: 0 0 18px; }
 .parameter-reset { padding: 0; border: 0; border-radius: 4px; display: grid; place-items: center; color: #8290a2; background: transparent; cursor: pointer; }
 .parameter-reset svg { width: 13px; height: 13px; }

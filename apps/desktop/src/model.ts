@@ -2,7 +2,7 @@ import type { Edge, Node } from '@xyflow/react'
 import type { LayoutItem, ResponsiveLayouts } from 'react-grid-layout'
 
 export type Value = string | boolean | number
-export type ParameterKind = 'readonly' | 'text' | 'choice' | 'boolean' | 'number'
+export type ParameterKind = 'readonly' | 'text' | 'folder' | 'choice' | 'boolean' | 'number'
 export type ParameterDefinition = {
   id: string
   label: string
@@ -127,7 +127,7 @@ export const parameters: ParameterDefinition[] = [
   { id: 'microphone', label: 'Microphone', kind: 'readonly', initial: 'Not available yet' },
   { id: 'device', label: 'Device', kind: 'readonly', initial: 'Not available yet' },
   { id: 'sampleRate', label: 'Sample rate', kind: 'readonly', initial: 'Not available yet' },
-  { id: 'output', label: 'Output folder', kind: 'text', initial: 'C:/Recordings' },
+  { id: 'output', label: 'Output folder', kind: 'folder', initial: 'C:/Recordings' },
   { id: 'filename', label: 'Filename pattern', kind: 'text', initial: '{blueprint}_{timestamp}' },
   { id: 'pointer', label: 'Pointer mode', kind: 'choice', initial: 'Semantic + absolute fallback', options: ['Semantic + absolute fallback', 'Absolute coordinates'] },
   { id: 'keyboard', label: 'Keyboard input', kind: 'boolean', initial: true },
