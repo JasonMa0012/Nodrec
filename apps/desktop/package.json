@@ -1,7 +1,7 @@
 {
   "name": "nodrec-desktop",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.4",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "test:model": "node --experimental-strip-types --test src/model.test.mjs src/graph-layout.test.mjs",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --lib",
+    "test:update": "node scripts/verify-updates.mjs",
     "test:overview-drag": "node scripts/verify-overview-drag.mjs",
     "test:graph-interactions": "node scripts/verify-graph-interactions.mjs",
     "test:blueprint-runtime": "node scripts/verify-blueprint-runtime.mjs",
@@ -20,7 +21,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "node scripts/stage-blueprints.mjs debug && tauri dev",
-    "tauri:build": "tauri build && node scripts/stage-blueprints.mjs release"
+    "tauri:build": "node scripts/release.mjs --build-only",
+    "release": "node --use-env-proxy scripts/release.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

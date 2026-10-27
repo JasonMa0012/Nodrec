@@ -2,7 +2,9 @@
 
 ## 当前实现
 
-蓝图以 UTF-8 `.nodrec.json` 单文件保存，`schemaVersion` 当前为 1。运行时只扫描 exe 旁的 `blueprints/builtin/` 与 `blueprints/user/`；扫描不创建目录或补建缺失文件。内置源文件位于 `apps/desktop/blueprints/builtin/`，构建脚本将其放进对应 exe 目录，仅复制目标中缺少的文件。
+蓝图以 UTF-8 `.nodrec.json` 单文件保存，`schemaVersion` 当前为 1。运行时只扫描 exe 旁的 `blueprints/builtin/` 与 `blueprints/user/`；扫描不创建目录或补建缺失文件。内置源文件位于 `apps/desktop/blueprints/builtin/`，开发构建脚本仅复制缺少文件；发行安装器每次安装／升级覆盖内置发行模板，保留 user 目录。保留内置修改应先 Duplicate 为用户配置。
+
+应用设置由 `settings.rs` 保存到当前用户 Tauri 配置目录的 `settings.json`，复用蓝图的原子替换；默认启动检查和系统代理。设置与 exe 旁蓝图分开存储，升级不覆盖。见 [发布与更新](../releases.md)。
 
 - 保存按钮显式写入蓝图原位置；临时文件写完后原子替换，并用内容 revision 拒绝磁盘外部修改覆盖。文件上限为 16 MB。
 - 内置与用户蓝图都能删除；删除移动到 `.trash/`，本次应用运行期间可撤销。启动时不恢复已删除蓝图。

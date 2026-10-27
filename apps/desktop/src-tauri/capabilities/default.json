@@ -4,6 +4,7 @@
   "description": "Window controls for the main Nodrec window",
   "windows": ["main", "region-frame", "region-toolbar"],
   "permissions": [
+    "core:app:allow-version",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-close",

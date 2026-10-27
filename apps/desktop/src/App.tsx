@@ -12,9 +12,10 @@ import 'react-resizable/css/styles.css'
 import {
   ArrowRightToLine, AudioLines, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, Ellipsis, FileVideo2, Folder,
   FolderPlus, GripVertical, LayoutGrid, Minus, Monitor,
-  Pin, Plus, Save, ScrollText, Settings, Square, Undo2, X, Workflow, Keyboard, Video,
+  Package, Pin, Plus, Save, ScrollText, Settings, Square, Undo2, X, Workflow, Keyboard, Video,
 } from 'lucide-react'
 import GraphEditor from './GraphEditor'
+import SettingsPanel from './SettingsPanel'
 import { ControlButton, RuntimeDisplay } from './WorkflowControls'
 import { overviewCollisionDetection, overviewDropPlacement } from './overview-dnd'
 import {
@@ -904,9 +905,8 @@ function BlueprintContent({ blueprint, update, openCard, catalog, locked }: { bl
   return <main className="overview-page"><OverviewCards blueprint={blueprint} update={update} /></main>
 }
 
-function EmptyPage({ page }: { page: 'runs' | 'settings' }) {
-  const settings = page === 'settings'
-  return <main className="empty-page"><div className="empty-icon">{settings ? <Settings size={24} /> : <Clock3 size={24} />}</div><span className="eyebrow">NODREC</span><h1>{settings ? 'Settings' : 'Runs'}</h1><p>{settings ? 'Application preferences will live here.' : 'Recording sessions and replay results will appear here.'}</p><span className="coming-soon">UI preview</span></main>
+function EmptyPage() {
+  return <main className="empty-page"><div className="empty-icon"><Clock3 size={24} /></div><span className="eyebrow">NODREC</span><h1>Runs</h1><p>Recording sessions and replay results will appear here.</p><span className="coming-soon">UI preview</span></main>
 }
 
 function BlueprintDialog({ dialog, initialName, onClose, onSave }: { dialog: NameDialog; initialName: string; onClose: () => void; onSave: (name: string) => void }) {
@@ -933,8 +933,10 @@ export default function App() {
   const [catalog, setCatalog] = useState<NodeTypeDefinition[]>([])
   const [savedDocuments, setSavedDocuments] = useState<Record<string, string>>({})
   const [savingBlueprints, setSavingBlueprints] = useState<Set<string>>(() => new Set())
+  const [updating, setUpdating] = useState(false)
   const [diagnostics, setDiagnostics] = useState<string[]>([])
   const [notice, setNotice] = useState<string | null>(() => isTauriWindow() ? null : 'Blueprint files are loaded by the Nodrec desktop app.')
+  const notifyUpdate = useCallback((version: string) => setNotice(`Nodrec ${version} is available. Open Settings → About to update.`), [])
   const [loading, setLoading] = useState(isTauriWindow)
   const [controls, setControls] = useState<RegisteredControl[]>([])
   const [registeredDisplays, setRegisteredDisplays] = useState<RegisteredDisplay[]>([])
@@ -1124,19 +1126,31 @@ export default function App() {
 
   const saveBlueprint = useCallback(async (id: string) => {
     const blueprint = blueprints.find((item) => item.id === id)
-    if (!blueprint || !isTauriWindow() || runtimeLocked && id === activeBlueprintId || savingBlueprints.has(id)) return
+    if (!blueprint || !isTauriWindow() || runtimeLocked && id === activeBlueprintId || savingBlueprints.has(id)) return false
     const document = serializeBlueprint(blueprint)
     const serialized = JSON.stringify(document)
-    if (savedDocuments[id] === serialized) return
+    if (savedDocuments[id] === serialized) return true
     setSavingBlueprints((current) => new Set(current).add(id)); setNotice(null)
     try {
       const revision = await invoke<string>('save_blueprint', { scope: blueprint.scope, id: blueprint.id, document, expectedRevision: blueprint.revision })
       setBlueprints((current) => current.map((item) => item.id === id ? { ...item, revision } : item))
       setSavedDocuments((current) => ({ ...current, [id]: serialized }))
-    } catch (error) { setNotice(`Save failed: ${String(error)}`) } finally {
+      return true
+    } catch (error) { setNotice(`Save failed: ${String(error)}`); return false } finally {
       setSavingBlueprints((current) => { const next = new Set(current); next.delete(id); return next })
     }
   }, [blueprints, runtimeLocked, activeBlueprintId, savingBlueprints, savedDocuments])
+
+  async function installUpdate() {
+    if (runtimeLocked || savingBlueprints.size || updating) throw new Error('Stop recording and wait for saves before updating.')
+    setUpdating(true)
+    try {
+      for (const blueprint of blueprints) {
+        if (!await saveBlueprint(blueprint.id)) throw new Error(`Could not save ${blueprint.name}. Update cancelled.`)
+      }
+      await invoke('install_update')
+    } finally { setUpdating(false) }
+  }
 
   useEffect(() => {
     const save = (event: KeyboardEvent) => {
@@ -1216,7 +1230,7 @@ export default function App() {
   }
   const showLogs = () => { setLogsOpen(true); logsPanelRef.current?.expand() }
   const contextBlueprint = menuBlueprint ? blueprints.find((blueprint) => blueprint.id === menuBlueprint.id) : null
-  return <DisplayContext.Provider value={displays}><div className="desktop-window">
+  return <DisplayContext.Provider value={displays}><div className="desktop-window" inert={updating}>
     <TitleBar displays={registeredDisplays} durationMs={recording?.durationMs ?? 0} controls={controls} status={status} hasBlueprint={Boolean(activeBlueprint)} controlsDisabled={!activeBlueprint?.supported} onControlEvent={dispatchEvent} sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((current) => !current)} navigate={selectPage} showLogs={showLogs} />
     <Group className="desktop-panels" orientation="vertical" defaultLayout={{ workspace: 78, logs: 22 }} resizeTargetMinimumSize={{ fine: 8, coarse: 12 }}>
     <Panel id="workspace" minSize="35%" className="desktop-main-panel">
@@ -1225,7 +1239,7 @@ export default function App() {
         <div className="blueprint-list">{blueprints.map((blueprint) => {
           const dirty = savedDocuments[blueprint.id] !== JSON.stringify(serializeBlueprint(blueprint))
           return <div className={`blueprint-nav-item${blueprint.id === activeBlueprintId ? ' active' : ''}`} key={blueprint.id}>
-            <button className="blueprint-select" disabled={runtimeLocked && blueprint.id !== activeBlueprintId} onClick={() => switchBlueprint(blueprint.id)}><span className="blueprint-icon"><Workflow size={15} /></span><span className="blueprint-name">{blueprint.name}</span>{dirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}</button>
+            <button className="blueprint-select" disabled={runtimeLocked && blueprint.id !== activeBlueprintId} onClick={() => switchBlueprint(blueprint.id)}><span className="blueprint-icon"><Workflow size={15} /></span><span className="blueprint-name">{blueprint.name}</span>{blueprint.scope === 'builtin' && <span className="builtin-badge" title="Built-in blueprint. Replaced on every update. Duplicate to keep your changes." role="img" aria-label="Built-in blueprint"><Package size={14} /></span>}{dirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}</button>
             {dirty && <button className="blueprint-save" title={`Save ${blueprint.name}`} aria-label={`Save ${blueprint.name}`} disabled={savingBlueprints.has(blueprint.id) || runtimeLocked && blueprint.id === activeBlueprintId} onClick={() => { void saveBlueprint(blueprint.id) }}><Save size={14} /></button>}
             <button className="blueprint-more" title="More actions" aria-label={`More actions for ${blueprint.name}`} disabled={runtimeLocked} onClick={(event) => toggleBlueprintMenu(blueprint.id, event.currentTarget)}><Ellipsis size={16} /></button>
           </div>
@@ -1243,7 +1257,8 @@ export default function App() {
       <section className="work-area">
         {notice && <div className="app-notice" role="status">{notice}<button aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={13} /></button></div>}
         {diagnostics.length > 0 && <div className="app-diagnostics">{diagnostics.map((item, index) => <div key={`${index}:${item}`}>{item}</div>)}</div>}
-        {page !== 'workspace' ? <EmptyPage page={page} /> : !activeBlueprint ? <main className="empty-blueprints"><div className="empty-icon"><Workflow size={24} /></div><span className="eyebrow">BLUEPRINTS</span><h1>{loading ? 'Loading blueprints' : 'No blueprints found'}</h1><p>{loading ? 'Reading files beside the application.' : 'Create a blueprint to start building a workflow.'}</p><button className="button primary" disabled={loading} onClick={() => setDialog({ kind: 'new' })}><Plus size={14} />New blueprint</button></main>
+        <SettingsPanel visible={page === 'settings'} locked={runtimeLocked || savingBlueprints.size > 0} onUpdate={installUpdate} onAvailable={notifyUpdate} />
+        {page === 'settings' ? null : page !== 'workspace' ? <EmptyPage /> : !activeBlueprint ? <main className="empty-blueprints"><div className="empty-icon"><Workflow size={24} /></div><span className="eyebrow">BLUEPRINTS</span><h1>{loading ? 'Loading blueprints' : 'No blueprints found'}</h1><p>{loading ? 'Reading files beside the application.' : 'Create a blueprint to start building a workflow.'}</p><button className="button primary" disabled={loading} onClick={() => setDialog({ kind: 'new' })}><Plus size={14} />New blueprint</button></main>
           : runtimeLocked ? <main className="runtime-locked"><div className="empty-icon"><Video size={24} /></div><span className="eyebrow">{activeBlueprint.name}</span><h1>{status === 'paused' ? 'Recording paused' : status === 'starting' ? 'Starting workflow' : status === 'stopping' ? 'Finalizing MP4' : 'Recording'}</h1><p>{frameCount} encoded frames. Use the blueprint controls above to continue or stop.</p>{recording && <><p>{recording.encoder} · {recording.adapter}<br />{recording.width} × {recording.height} · {recording.fps} fps · {(recording.durationMs / 1000).toFixed(1)} s<br />{recording.droppedFrames} dropped · {recording.repeatedFrames} repeated</p><p>{recording.outputPath}</p></>}</main>
             : <>
               <div className="workspace-tabs"><div className="tabs-list">{activeBlueprint.tabs.map((tab) => <div className={`workspace-tab${tab.id === activeBlueprint.activeTab ? ' active' : ''}`} key={tab.id} title={activeBlueprintDirty ? `Unsaved changes in ${activeBlueprint.name} (Ctrl+S to save)` : undefined}>

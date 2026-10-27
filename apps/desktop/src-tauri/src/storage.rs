@@ -243,7 +243,7 @@ fn revision(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
     let temp = path.with_extension(format!("tmp-{}-{stamp}", std::process::id()));
     let result = (|| {

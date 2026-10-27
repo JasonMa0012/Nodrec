@@ -1,5 +1,33 @@
 @import '@xyflow/react/dist/style.css';
 
+.builtin-badge { display: inline-flex; flex-shrink: 0; color: var(--muted); cursor: help; }
+.app-settings { display: flex; flex: 1; min-height: 0; overflow: auto; }
+.app-settings[hidden] { display: none; }
+.settings-navigation { width: 155px; flex-shrink: 0; padding: 24px 12px; border-right: 1px solid var(--stroke-soft); }
+.settings-navigation h1 { font-size: 18px; margin: 0 12px 24px; }
+.settings-navigation button { display: flex; align-items: center; gap: 10px; padding: 10px 12px; width: 100%; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; text-align: left; }
+.settings-navigation button.active { background: var(--pink-soft); color: var(--pink); }
+.settings-navigation button:hover { background: var(--panel-hover); }
+.settings-content { padding: 28px; width: 100%; max-width: 740px; min-width: 0; }
+.settings-content h2 { margin: 0 0 28px; font-size: 22px; }
+.settings-content p, .settings-content small { color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
+.settings-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--stroke); flex-wrap: wrap; }
+.settings-content select, .settings-proxy input { padding: 8px 12px; background: var(--input); color: var(--text); border: 1px solid var(--stroke); border-radius: 6px; max-width: 100%; }
+.settings-option input[type=checkbox] { accent-color: var(--pink); width: 17px; height: 17px; }
+.settings-proxy { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
+.settings-about { display: flex; align-items: center; gap: 18px; margin-bottom: 26px; }
+.settings-about .brand-mark { width: 64px; height: 64px; font-size: 36px; }
+.settings-about h2 { margin-bottom: 6px; }
+.settings-updates { margin-top: 32px; border-top: 1px solid var(--stroke); padding-top: 16px; }
+.settings-updates small { display: block; margin-top: 14px; }
+.release-notes { white-space: pre-wrap; max-height: 240px; overflow: auto; }
+.settings-save { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 24px; font-size: 12px; color: var(--muted); }
+.settings-message { padding: 12px; background: var(--panel); border-radius: 6px; }
+.settings-content progress, .update-overlay progress { width: 100%; accent-color: var(--pink); margin-top: 16px; }
+.update-overlay { position: fixed; inset: 0; z-index: 10000; background: #000a; display: grid; place-items: center; padding: 24px; }
+.update-overlay > div { max-width: 440px; padding: 32px; border: 1px solid var(--stroke); border-radius: 12px; background: var(--panel); }
+@media (max-width: 650px) { .app-settings { flex-direction: column; } .settings-navigation { width: 100%; display: flex; flex-wrap: wrap; padding: 12px; border-right: 0; border-bottom: 1px solid var(--stroke); } .settings-navigation h1 { width: 100%; margin: 0 0 10px; } .settings-navigation button { width: auto; } .settings-content { padding: 20px; } }
+
 html.region-surface, .region-surface body, .region-surface #root { background: transparent; }
 .region-frame { width: 100vw; height: 100vh; outline: none; user-select: none; }
 .region-frame.picking { background: #0003; }

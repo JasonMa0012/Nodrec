@@ -1,4 +1,5 @@
 mod storage;
+mod settings;
 mod workflow;
 pub mod recording;
 mod region_tool;
@@ -172,12 +173,19 @@ pub fn run() {
     let store = storage::BlueprintStore::beside_executable().expect("cannot locate the Nodrec application directory");
     log_startup("storage located; building Tauri");
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(settings::UpdateState::default())
         .plugin(tauri::plugin::Builder::<tauri::Wry>::new("startup-diagnostics")
             .js_init_script(include_str!("../startup.js").to_string()).build())
         .on_page_load(|webview, payload| log_startup(&format!("{} page {:?}", webview.label(), payload.event())))
         .setup(|_| { log_startup("Tauri setup: configured windows created"); Ok(()) })
         .manage(AppState { store, workflow: workflow::WorkflowRuntime::default(), store_lock: Mutex::new(()), shutting_down: AtomicBool::new(false) })
         .invoke_handler(tauri::generate_handler![
+            settings::get_settings,
+            settings::save_settings,
+            settings::check_update,
+            settings::install_update,
+            settings::open_project,
             startup_log,
             list_blueprints,
             save_blueprint,

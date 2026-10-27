@@ -1,5 +1,7 @@
 # 跨模块接口议题
 
+设置与更新（Windows）：主窗口调用 `get_settings`／`save_settings`、`check_update`、`install_update`、`open_project`。检查返回当前／可用版本、说明、出口地区和成功线路；下载通过 `update-progress` 发送 downloaded／total 字节及线路。Rust 保存最近检查的更新对象，前端不能提交任意下载地址；更改设置会清除旧检查。安装前 Desktop 必须保存全部修改，Rust 拒绝录制中的安装，并串行化设置／检查／安装操作。详见 [发布与更新](releases.md)。
+
 已实现的蓝图存储及 Rust 运行接口见下表；Windows 首版媒体接口见下；音频、回放和多路产物接口仍待确定。
 
 | 协作边界 | 需要表达的内容 |
