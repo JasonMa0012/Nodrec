@@ -2,12 +2,21 @@
 
 ## 打包和发布
 
-- Windows x64：双击根目录 `Release.bat`，输入版本号和描述；或在 `apps/desktop` 执行 `npm run release -- 0.1.2 "Release notes"`。需要项目 Node/Rust 依赖、MSVC 工具链及有本仓库 Release 写权限的 `MOOATOON_ENGINE_TOKEN`（也接受 `GITHUB_TOKEN`）。令牌仅用于本地 GitHub API 发布，不进入安装包。
+- Windows x64：双击根目录 `_Release.bat`，输入版本号和描述；或在 `apps/desktop` 执行 `npm run release -- 0.1.2 "Release notes"`。需要项目 Node/Rust 依赖、MSVC 工具链及有本仓库 Release 写权限的 `MOOATOON_ENGINE_TOKEN`（也接受 `GITHUB_TOKEN`）。令牌仅用于本地 GitHub API 发布，不进入安装包。
 - 版本同步到 Tauri、Cargo、npm 及锁文件；不会自动提交或推送源码。GitHub 在远端默认分支创建 Release 标签，安装包来自本地工作区；需要源码对应时应先自行提交和推送。
-- 只打包：`npm run tauri:build`。输出 `apps/desktop/src-tauri/target/release/bundle/nsis/Nodrec_<version>_x64-setup.exe` 和 `.sig`。发布先创建草稿，上传安装器、签名和 `latest.json` 后才公开；失败的草稿应检查并删除后重试。
+- 只打包：`npm run tauri:build`，同样需要更新签名私钥。输出 `apps/desktop/src-tauri/target/release/bundle/nsis/Nodrec_<version>_x64-setup.exe` 和 `.sig`。发布先创建草稿，上传安装器、签名和 `latest.json` 后才公开；失败的草稿应检查并删除后重试。
 - 原始更新私钥位于 `%USERPROFILE%/.tauri/nodrec.key`，相邻 `.pub` 为公钥；只有公钥进入仓库。务必备份私钥，更换密钥会使旧版无法验证更新。可用 `TAURI_SIGNING_PRIVATE_KEY` 指定密钥文件路径，`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 指定密码。
 - 更新签名不是 Windows Authenticode 证书，目前安装器未配置 Windows 代码签名证书。
 - 2026-10-27 用户明确选择将现有 `JasonMa0012/Nodrec` 改为 public，已通过 GitHub API 修改并确认。应用匿名读取同一仓库的 Release；发布脚本仍拒绝向私有仓库发布，避免生成无法匿名更新的版本。早期 v0.1.0／v0.1.1 为链路测试包，正式使用应选择最新版本。
+
+没有项目签名私钥时，可以在 `apps/desktop` 构建本地 Release 可执行文件，并按开发构建规则补齐缺少的内置蓝图：
+
+```powershell
+npm exec tauri -- build --no-bundle
+node scripts/stage-blueprints.mjs release
+```
+
+可执行文件位于 `src-tauri/target/release/nodrec-desktop.exe`；这不生成安装器或更新签名，也不会覆盖已有蓝图。
 
 ## 安装和数据
 

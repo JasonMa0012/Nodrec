@@ -6,7 +6,7 @@
 
 桌面版现有单文件 JSON 工作流、Rust 节点执行器和真实无声录屏管线：
 
-- [graph.h](../../prototypes/imgui/graph.h)定义稳定的节点、端口和连线 ID，端口类型、方向和节点目录；[ui.cpp](../../prototypes/imgui/ui.cpp)负责节点目录、节点内容及与画布的交互，两者分离。
+- [workflow.rs](../../apps/desktop/src-tauri/src/workflow.rs) 提供节点目录、图校验及执行；[GraphEditor.tsx](../../apps/desktop/src/GraphEditor.tsx) 负责画布编辑与交互。
 - Rust 节点目录定义事件、执行、值与媒体流端口；包含控件注册／更新、日志、可取消延迟、参数读取、常量、比较、条件分支、屏幕区域／输出路径、真实屏幕／H.264／MP4 节点，以及尚未实现的音频节点。
 - On Initialize 执行 Register Control 和 Register Control Menu 节点，返回总控按钮与 Split Button 菜单；每个菜单节点只注册一个路径，例如 `Start` 与 `Start/Start after 3s`，运行时按路径组装层级。主按钮和菜单项分别绑定事件。整数 Order 控制总控栏顺序，同序号维持注册顺序；控制逻辑可更新按钮文字、图标、事件、顺序和可用状态。
 - 旧版控件中的递归菜单会在加载时迁移为路径节点；新版保存不再写递归菜单数组。菜单路径最多 8 层，每个子路径必须有对应的父菜单注册。

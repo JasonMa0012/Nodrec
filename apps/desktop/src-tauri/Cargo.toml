@@ -1,7 +1,7 @@
 [package]
 name = "nodrec-desktop"
 version = "0.1.4"
-description = "Nodrec desktop UI prototype"
+description = "Nodrec desktop application"
 authors = ["Nodrec"]
 edition = "2021"
 
