@@ -7,7 +7,7 @@
 节点目录与图编译在 [workflow.rs](../../apps/desktop/src-tauri/src/workflow.rs)，画布交互在 [GraphEditor.tsx](../../apps/desktop/src/GraphEditor.tsx)。桌面以 schemaVersion 2 的单文件数据图为唯一执行模型；旧 Event／Function／Register／Update／Branch 执行节点及执行线均已移除，不提供旧文件转换或执行兼容。
 
 - 节点目录统一提供数据端口、可接线字段、默认配置、动作和 Provider choices。全部用户字段默认内联展开，接线字段在 Details 灰显上游当前值，来源保留在悬浮提示中；无编辑器快照的区域/媒体输出显示 Unavailable，本地值保持锁定；断线恢复原本本地值。Details 保留多选参数编辑。
-- 控件直接绑定稳定 graphId/nodeId/action，顺序由每个显示目标的 ID 数组定义。Recording graph 中通过节点动作把手拖入主窗口总控栏，直接排序或删除快捷方式；动作按钮本身仍执行动作。节点和总控栏共用带边框的拖动把手，拖动时显示跟随指针的控件预览，并高亮总控栏，进入总控栏时加强边框提示。主窗口、录屏节点和浮动工具条提供统一录制控件。多个图可导航、保存及绑定，节点 ID 在图内解析。
+- 控件直接绑定稳定 graphId/nodeId/action，顺序由每个显示目标的 ID 数组定义。Recording graph 中通过节点动作把手拖入主窗口总控栏，直接排序或删除快捷方式；动作按钮本身仍执行动作。节点和总控栏的每个控件由同一外框包住把手与内容，把手排在内容前，共用按钮背景与文字颜色，拖动时显示跟随指针的控件预览，并高亮总控栏，进入总控栏时加强边框提示。主窗口、录屏节点和浮动工具条提供统一录制控件。多个图可导航、保存及绑定，节点 ID 在图内解析。
 - Screen Capture 拥有 fps、cursor 和启动延迟；Media Foundation Encode 拥有 codec、resolution、bitrate、encodingMode，目前仅 H.264；Write MP4 消费编码流和路径。Provider 由节点类型确定，前后端共享目录选项，FFmpeg/H.265 尚未实现。
 - 从被操作的录屏节点收集启用且有输出用途的编码和写入分支。一个采集源可接多个编码节点，一个编码节点可接多个写入端；按编码节点 ID 去重，不创建无写入用途的编码资源。无有效输出或路径冲突拒绝启动。
 - 节点具有 enabled 状态，通过节点右键菜单的 Enable / Disable 切换，Details 不再显示 Enabled 复选框。Read Parameter 节点与其 Details 复用参数控件，直接编辑所引用参数的当前默认值，修改同步到 Overview 和其他引用节点，替代 Parameter Id 选择器。参数节点标题使用参数名称，默认值控件与无文字输出引脚同行显示，节点内省略 Default Value 标签。同类型输入输出能唯一对应时可旁路禁用节点，否则截断。禁用编码器不能把原始帧直接送给 MP4。循环、类型、端口、重复输入、缺失参数及 Provider 配置均有校验。
@@ -36,3 +36,9 @@
 - 后续交互验收覆盖参数名标题、无输出标签、默认值控件和引脚同行、连接字段当前值及锁定状态。编辑器当前值支持参数、常量、命名值和比较链，循环/禁用源/缺失数据灰显 Unavailable。
 
 - 本轮验证通过前端构建、72 项单测、lint（保留 RegionTool 既有警告）、Rust release 编译及 graph-interactions。Computer Use 观察确认参数紧凑同行布局、参数名标题、无文字输出，以及 Capture Screen 的 Cursor=true / Fps=60 灰显。
+
+### 一体化拖动把手验收（2026-11-13）
+
+- 总控栏与节点动作、状态、时长采用包住整个控件的外框，把手继承文字颜色并透出整块背景；Record 把手随主按钮使用粉色底，拖动预览沿用相同外观。
+- 前端及 Release 构建、74 项前端单测、lint、图交互与蓝图运行回归通过。新增断言检查外框范围、把手无独立边框／底色、同色及无间隙连接。
+- Computer Use 检查实际总控栏及节点样式，并从节点把手拖入已有总控栏位置，未触发录制。隔离夹具为 `apps/desktop/src-tauri/target/integrated-ui-check-1794501250260`。本轮未重打安装包。

@@ -773,7 +773,7 @@ function CaptureActions({ node, status, durationMs, graphId, actionsReady, locke
       if(nextIndex<0||nextIndex>=order.length)return
       const next=[...order];[next[index],next[nextIndex]]=[next[nextIndex]!,next[index]!]
       update(current=>({...current,nodes:current.nodes.map(item=>item.id===node.id?{...item,data:{...item.data,actionOrder:next}}:item)}))
-    }} className={`node-action-control${insertion?.id===id?insertion.after?' insert-after':' insert-before':''}`}>
+    }} className={`node-action-control action-control${insertion?.id===id?insertion.after?' insert-after':' insert-before':''}`}>
       <ActionDragHandle binding={{...control.binding,...(source?{source}: {})}} label={label} disabled={locked}/>
       {source?<RuntimeDisplay display={{id:`node-${node.id}-${source}`,binding:control.binding,source,format:source==='status'?'text':'HH:mm:ss',order:0,targets:[]}} status={status} durationMs={durationMs}/>:<ControlButton control={control} status={status} durationMs={durationMs} disabled={!supported||!actionsReady||node.data.enabled===false}/>}
     </div>

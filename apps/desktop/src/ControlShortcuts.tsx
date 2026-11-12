@@ -58,8 +58,8 @@ export default function ControlShortcuts({blueprint,controls,displays,status,dur
       if(!action||!binding)return null
       const label=display?display.source==='status'?'Recording status':'Recording time':action.label
       const runtime=controls.find(item=>item.id===control.id)
-      return <div key={control.id} className={`control-shortcut${insertion?.id===control.id?insertion.after?' insert-after':' insert-before':''}`} data-shortcut-id={control.id}>
-        {editing&&<span onKeyDown={event=>{if(event.altKey&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();const other=visible[visible.indexOf(control)+(event.key==='ArrowLeft'?-1:1)];if(other)update(current=>dropNodeShortcut(current,binding,'main',control.id,other.id,event.key==='ArrowRight'))}}}><ActionDragHandle binding={binding} label={label}/></span>}
+      return <div key={control.id} className={`control-shortcut action-control${insertion?.id===control.id?insertion.after?' insert-after':' insert-before':''}`} data-shortcut-id={control.id}>
+        {editing&&<span className="action-grip-slot" onKeyDown={event=>{if(event.altKey&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();const other=visible[visible.indexOf(control)+(event.key==='ArrowLeft'?-1:1)];if(other)update(current=>dropNodeShortcut(current,binding,'main',control.id,other.id,event.key==='ArrowRight'))}}}><ActionDragHandle binding={binding} label={label}/></span>}
         {display?<RuntimeDisplay display={display} status={status} durationMs={durationMs}/>:<ControlButton control={{...control as RegisteredControl,label:action.label,icon:action.icon,enabled:(control as RegisteredControl).enabled&&action.enabled,error:runtime?.error}} status={status} durationMs={durationMs} disabled={disabled}/>}
         {editing&&<button className="shortcut-remove" aria-label={`Remove ${label} shortcut`} title="Remove shortcut" onClick={()=>update(current=>removeNodeShortcut(current,control.id,'main'))}><X size={10}/></button>}
       </div>

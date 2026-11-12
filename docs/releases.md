@@ -22,7 +22,7 @@ node scripts/stage-blueprints.mjs release
 
 NSIS 当前用户安装，默认创建开始菜单图标，不选桌面快捷方式，完成页默认启动。静默／被动安装也不默认创建桌面快捷方式。更新被动安装后自动重启原路径程序。
 
-每次安装／升级覆盖 `blueprints/builtin/` 中的发行模板；普通启动不补回已删除模板。`blueprints/user/` 和 `.trash/` 不作为安装资源覆盖。保留内置修改需要先 Duplicate 成用户蓝图。
+每次安装／升级在替换前将现有内置蓝图备份到 `blueprints/.backups/`，随后覆盖 `blueprints/builtin/` 中的发行模板；普通启动不补回已删除模板。`blueprints/user/` 和 `.trash/` 不作为安装资源覆盖。保留内置修改需要先 Duplicate 成用户蓝图。
 
 ## 设置和更新链路
 
@@ -45,3 +45,10 @@ NSIS 当前用户安装，默认创建开始菜单图标，不选桌面快捷方
 2026-10-27：公开 v0.1.2 已发布，修复版已安装 0.1.1 → 0.1.2 的真实自动升级通过；App Direct connection 定位 CN，检查和下载均经 `gh-proxy.com`，签名校验、保存冲突保护、自动保存／安装／重启、用户数据保留与内置覆盖均通过。测试后恢复系统代理。旧 v0.1.0／早期 v0.1.1 存在 TLS provider 初始化问题，请直接安装 v0.1.2 或更新版本。
 
 验收命令：`npm run test:update -- "<已安装旧版exe绝对路径>" <已公开的新版本号>`。测试临时新增 `update-acceptance` 用户蓝图，恢复原代理设置并清理该用户蓝图；会真实更新指定安装、修改并覆盖它的内置 Screen recording 模板，应只针对测试安装运行。结果位于 `src-tauri/target/update-acceptance/`。`--settings-only` 仅验证设置／代理／内置图标和检查请求，不安装更新。
+
+## v0.1.6 发布内容（2026-11-13）
+
+- 发布版本统一为 0.1.6，包含 V2 数据图与节点动作、独立录制输出与故障隔离、参数／图编辑改进、路径控件、Toggle 和一体化拖动把手。
+- 本版使用 schemaVersion 2；旧 V1 蓝图需要使用 V2 节点重新创建。安装器替换内置模板前备份现有文件，用户蓝图文件保留。
+- 控件修改已完成前端构建、74 项单测、图交互、蓝图运行及 Computer Use 复验。此前完整回归、原生捕获与安装器备份证据见 [验收记录](testing.md)。
+- 0.1.6 本地发布检查通过，74 项前端单测、59 项常规 Rust 单测、lint、Release／NSIS 构建与安装器备份回归完成。使用应用内置公钥及更新器依赖 minisign-verify 独立验证安装包签名，并确认篡改后的安装包被拒绝；应用文件版本为 0.1.6。日志位于 `out/release-0.1.6-unit.log` 和 `out/release-0.1.6-build.log`。此次未执行真实安装升级。

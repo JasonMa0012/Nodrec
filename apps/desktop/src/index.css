@@ -617,9 +617,19 @@ select.field-control { padding-right: 23px; }
 
 .control-shortcut { display:flex; align-items:center; position:relative; gap:3px; flex:0 0 auto; }
 .shortcut-editing { min-width:180px; min-height:36px; padding:3px 8px; border:1px dashed var(--stroke); border-radius:8px; }
-.action-drag-handle { touch-action:none; display:grid; place-items:center; flex:0 0 18px; width:18px; height:28px; padding:0; border:1px solid var(--stroke); border-radius:5px; background:#ffffff06; color:var(--subtle); cursor:grab; }
-.action-drag-handle:hover, .action-drag-handle:focus-visible { color:var(--pink); background:var(--pink-soft); }
+.action-drag-handle { touch-action:none; display:grid; place-items:center; align-self:stretch; flex:0 0 22px; width:22px; padding:0; border:0; border-radius:6px 0 0 6px; background:transparent; color:inherit; cursor:grab; }
+.action-drag-handle:focus-visible { outline:2px solid var(--blue); outline-offset:-3px; }
 .action-drag-handle:active { cursor:grabbing; }
+.action-control:has(.action-drag-handle) { min-height:34px; align-items:stretch; gap:0; border:1px solid #3c3d43; border-radius:7px; color:#d8d8dc; background:#27282c; }
+.action-control:has(.action-drag-handle):hover { border-color:#515258; background:#34353a; }
+.action-control:has(.action-drag-handle):has(.button.primary) { color:#24151b; border-color:var(--pink); background:var(--pink); box-shadow:0 3px 12px #f48fb124; }
+.action-control:has(.action-drag-handle):has(.button.primary):hover { background:#f7a4be; }
+.action-control:has(.action-drag-handle) .button { min-height:32px; padding-left:4px; border:0; border-radius:0 6px 6px 0; color:inherit; background:transparent; box-shadow:none; transform:none; }
+.action-control:has(.action-drag-handle) .split-control > .button:not(:last-of-type) { border-radius:0; border-right:1px solid var(--stroke); }
+.action-control:has(.action-drag-handle) .registered-display { padding:0 9px 0 4px; color:inherit; }
+.action-grip-slot { display:flex; align-self:stretch; }
+.titlebar-recording-actions .action-control:has(.action-drag-handle) { min-height:32px; }
+.titlebar-recording-actions .action-control:has(.action-drag-handle) .button { min-height:30px; }
 .shortcut-remove { position:absolute; top:-4px; right:-4px; width:15px; height:15px; padding:0; display:grid; place-items:center; border:1px solid var(--stroke); border-radius:50%; background:var(--panel); color:var(--muted); z-index:2; }
 .shortcut-remove:hover { background:var(--red); color:white; }
 .control-shortcut.insert-before::before, .control-shortcut.insert-after::after { content:''; position:absolute; top:0; bottom:0; width:3px; background:var(--pink); border-radius:3px; }
@@ -658,6 +668,6 @@ select.field-control { padding-right: 23px; }
 
 .shortcut-editing.shortcut-dragging { border-color:var(--pink); background:var(--pink-soft); box-shadow:0 0 0 2px #f38caf22; }
 .shortcut-editing.shortcut-drag-over { border-style:solid; box-shadow:0 0 0 2px #f38caf55; }
-.action-drag-preview { position:fixed; z-index:3000; pointer-events:none; padding:5px 8px; border:1px solid var(--pink); border-radius:8px; background:var(--panel); box-shadow:var(--shadow); opacity:.95; }
-.action-drag-preview > div { display:flex; align-items:center; gap:6px; }
+.action-drag-preview { position:fixed; z-index:3000; pointer-events:none; border-radius:7px; box-shadow:var(--shadow); opacity:.95; }
+.action-drag-preview > .action-control { margin:0; }
 .action-drag-preview .shortcut-remove { display:none; }

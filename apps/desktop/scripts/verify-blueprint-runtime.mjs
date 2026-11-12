@@ -87,6 +87,12 @@ try {
   await click('.workspace-tab button','Blueprint')
   await until(()=>evaluate(`!!document.querySelector('.react-flow__node[data-id="screen"] .action-drag-handle')`))
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('.library-section:first-child .tree-item')].map(b=>b.textContent.trim())`),['Custom Recording Graph','Second Graph'])
+  const integratedControls=await evaluate(`[...document.querySelectorAll('.action-control')].filter(item=>item.querySelector('.action-drag-handle')).map(item=>{const grip=item.querySelector('.action-drag-handle'),content=item.querySelector('.button,.registered-display'),box=item.getBoundingClientRect(),g=grip.getBoundingClientRect(),c=content.getBoundingClientRect();return {border:parseFloat(getComputedStyle(item).borderTopWidth),gripBorder:parseFloat(getComputedStyle(grip).borderTopWidth),gripBackground:getComputedStyle(grip).backgroundColor,sameColor:getComputedStyle(grip).color===getComputedStyle(content).color,encloses:box.left<=g.left&&box.right>=c.right,joined:Math.abs(g.right-c.left)<1}})`)
+  assert.ok(integratedControls.length>=7)
+  for(const item of integratedControls) {
+    assert.ok(item.border>0&&item.gripBorder===0&&item.sameColor&&item.encloses&&item.joined,JSON.stringify(item))
+    assert.equal(item.gripBackground,'rgba(0, 0, 0, 0)')
+  }
   const shortcutLabels=()=>evaluate(`[...document.querySelectorAll('.titlebar .control-shortcut .button')].map(b=>b.textContent.trim())`)
   const removeRecord=async()=>{
     await evaluate(`document.querySelector('.titlebar [aria-label="Remove Record shortcut"]').click()`)
