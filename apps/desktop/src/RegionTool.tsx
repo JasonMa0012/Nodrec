@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type KeyboardEvent } from 'react'
+import { Toggle } from './FieldControls'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type KeyboardEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { Crop, GripVertical, LockKeyhole, Ellipsis, X, ChevronDown } from 'lucide-react'
@@ -17,7 +18,6 @@ export default function RegionTool({ role, token }: { role: string; token: strin
   const [ratioLocked, setRatioLocked] = useState(false)
   const [hover, setHover] = useState<Handle | null>(null)
   const [menu, setMenu] = useState<'size' | 'more' | null>(null)
-  const [toolbarOffset, setToolbarOffset] = useState(0)
   const surface = useRef<HTMLDivElement>(null)
   const drag = useRef<{ start: { x: number; y: number }; rect: Rect; handle: Handle; picking: boolean } | null>(null)
   const queued = useRef<Rect | null>(null)
@@ -76,18 +76,23 @@ export default function RegionTool({ role, token }: { role: string; token: strin
   }, [menu])
 
   const targets = `region:${tool?.toolId ?? ''}`
-  const items = state ? [...state.runtime.controls.filter(c => c.targets?.includes(targets)), ...state.runtime.displays.filter(c => c.targets?.includes(targets))].sort((a, b) => a.order - b.order) : []
+  const items = state ? [...state.runtime.controls.filter(c => c.targets?.includes(targets)), ...state.runtime.displays.filter(c => c.targets?.includes(targets))].sort((a, b) => (a.targetOrder?.[targets] ?? 10000+(a.order ?? 0)) - (b.targetOrder?.[targets] ?? 10000+(b.order ?? 0))) : []
   const toolbarWidth = tool ? Math.min(Math.max(760, 250 + items.reduce((total, item) => total + ('source' in item ? 100 : Math.max(70, item.label.length * 8 + 50)), 0)), tool.work.width / tool.scale - 16) : 600
-  useLayoutEffect(() => {
-    if (role !== 'toolbar' || !tool || !rect) return
+  const toolbarLayout = useMemo(() => {
+    if (role !== 'toolbar' || !tool || !rect) return null
     const width = Math.round(toolbarWidth * tool.scale)
     const height = Math.round(Math.min(410, tool.work.height / tool.scale - 16) * tool.scale)
     const preferred = rect.y - tool.work.y >= tool.work.y + tool.work.height - rect.y - rect.height ? 0 : 1
     const dock = dockRegion(rect, tool.work, width, 56 * tool.scale, 8 * tool.scale, preferred)
     const expanded = expandToolbar(dock, tool.work, 56 * tool.scale, height, 4 * tool.scale)
-    setToolbarOffset(expanded.offset / tool.scale)
-    void invoke('region_tool_layout', { token, x: Math.round(dock.x), y: Math.round(expanded.y), width, height: Math.round(expanded.height) }).catch(e => setError(String(e)))
-  }, [role, tool, rect, toolbarWidth, token])
+    return { x: Math.round(dock.x), y: Math.round(expanded.y), width, height: Math.round(expanded.height), offset: expanded.offset / tool.scale }
+  }, [role, tool, rect, toolbarWidth])
+  const toolbarOffset = toolbarLayout?.offset ?? 0
+  useLayoutEffect(() => {
+    if (!toolbarLayout) return
+    const { x, y, width, height } = toolbarLayout
+    void invoke('region_tool_layout', { token, x, y, width, height }).catch(e => setError(String(e)))
+  }, [toolbarLayout, token])
 
   const shapeScale = tool?.scale
   useLayoutEffect(() => {
@@ -97,7 +102,7 @@ export default function RegionTool({ role, token }: { role: string; token: strin
     const update = () => {
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
-        const areas = Array.from(surface.current!.querySelectorAll<HTMLElement>('.region-toolbar, .region-popup, .control-menu[open] > .control-menu-popover, .control-submenu[open] > .control-submenu-popover, .region-error')).filter(el => el.getClientRects().length).map(el => {
+        const areas = Array.from(surface.current!.querySelectorAll<HTMLElement>('.region-toolbar, .region-popup, .region-error')).filter(el => el.getClientRects().length).map(el => {
           const r = el.getBoundingClientRect()
           const x = Math.max(0, r.x), y = Math.max(0, r.y)
           return { x: Math.floor(x * shapeScale), y: Math.floor(y * shapeScale), width: Math.max(0, Math.ceil((Math.min(innerWidth, r.right) - x) * shapeScale)), height: Math.max(0, Math.ceil((Math.min(innerHeight, r.bottom) - y) * shapeScale)) }
@@ -145,7 +150,9 @@ export default function RegionTool({ role, token }: { role: string; token: strin
     drag.current = null
     event.currentTarget.releasePointerCapture(event.pointerId)
     if (d.picking) {
-      if (rect && rect.width >= 16 && rect.height >= 16) void act('select', rect)
+      const selected = selectionRect(d.start, point(event), bounds)
+      setRect(selected)
+      if (selected.width >= 16 && selected.height >= 16) void act('select', selected)
       else { setRect(tool.rect); setError('Select at least 16 × 16 physical pixels') }
     }
   }
@@ -165,7 +172,7 @@ export default function RegionTool({ role, token }: { role: string; token: strin
   </div>
   const renderItem = (item: RegisteredControl | RegisteredDisplay) => 'source' in item
     ? <RuntimeDisplay key={item.id} display={item} status={state.runtime.status} durationMs={state.runtime.recording?.durationMs ?? 0} />
-    : <ControlButton key={item.id} control={item} dispatch={eventId => { setMenu(null); void invoke('region_tool_dispatch', { token, controlId: item.id, eventId }).catch(e => setError(String(e))) }} disabled={false} />
+    : <ControlButton key={item.id} control={item} durationMs={state.runtime.recording?.durationMs ?? 0} status={state?.runtime.status} token={token} disabled={false} />
   return <div ref={surface} className={`region-toolbar-window${toolbarOffset ? ' popups-up' : ''}`} style={{ paddingTop: toolbarOffset + 4 }} onKeyDown={key}>
     <div className="region-toolbar" aria-label="Region toolbar">
       <button className="icon-button region-grip" aria-label="Move region" disabled={locked} onPointerDown={event => start(event, 'move')} onPointerMove={move} onPointerUp={finish}><GripVertical size={16} /></button>
@@ -178,7 +185,7 @@ export default function RegionTool({ role, token }: { role: string; token: strin
     {menu === 'size' && rect && <div className="region-popup">
       <RegionFields key={`${rect.x}:${rect.y}:${rect.width}:${rect.height}`} rect={rect} bounds={bounds} locked={locked} ratioLocked={ratioLocked} setRatioLocked={setRatioLocked} initialRatio={tool.aspectRatio} syncRatio={ratio => { void invoke('region_tool_ratio', { token, ratio }).catch(e => setError(String(e))) }} apply={next => { setRect(next); void sendChange(next) }} />
     </div>}
-    {menu === 'more' && <div className="region-popup region-settings"><label className="region-capture-toggle">Exclude from capture<span className="field-control checkbox-control compact"><input type="checkbox" role="switch" aria-label="Exclude from capture" checked={tool.captureExclusion} onChange={event => void act(event.target.checked ? 'exclude-capture' : 'allow-capture')} /><span className="toggle-track"><i /></span></span></label></div>}
+    {menu === 'more' && <div className="region-popup region-settings"><label className="region-capture-toggle">Exclude from capture<Toggle label="Exclude from capture" checked={tool.captureExclusion} onChange={checked => void act(checked ? 'exclude-capture' : 'allow-capture')} /></label></div>}
     {(error || state.runtime.error) && <div className="region-error" role="alert">{error || state.runtime.error}</div>}
   </div>
 }

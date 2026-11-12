@@ -1,5 +1,6 @@
 mod storage;
 mod settings;
+mod shell;
 mod workflow;
 pub mod recording;
 mod region_tool;
@@ -82,18 +83,18 @@ async fn activate_blueprint(app: tauri::AppHandle, window: tauri::WebviewWindow,
     let before = state.workflow.snapshot();
     let previous_tools = state.workflow.tool_definitions();
     let result = state.workflow.activate(document)?;
-    if before.blueprint_id != state.workflow.snapshot().blueprint_id || previous_tools != state.workflow.tool_definitions()
-        || state.workflow.tools.snapshot().is_some_and(|t| t.picking) { state.workflow.tools.reset(&app); }
+    let next_tools = state.workflow.tool_definitions();
+    let same_tools = previous_tools == next_tools || region_tool::same_tool_definitions(previous_tools, next_tools, &recording::displays().unwrap_or_default());
+    if before.blueprint_id != state.workflow.snapshot().blueprint_id || !same_tools { state.workflow.tools.reset(&app); }
     let _ = app.emit("workflow-status", state.workflow.snapshot());
     Ok(result)
 }
 
 #[tauri::command]
-fn dispatch_blueprint_event(app: tauri::AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, event_id: String) -> Result<workflow::RuntimeSnapshot, String> {
-    if window.label() != "main" { return Err("Use the region tool session to dispatch controls".into()); }
-    state.workflow.dispatch(app, event_id)
+async fn dispatch_node_action(app: tauri::AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, graph_id: String, node_id: String, action: String) -> Result<workflow::RuntimeSnapshot, String> {
+    if window.label() != "main" { return Err("Only the main window can dispatch node actions".into()); }
+    state.workflow.dispatch_node(app, graph_id, node_id, action)
 }
-
 #[tauri::command]
 fn region_tool_state(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Value, String> {
     state.workflow.tools.validate_display(&app)?;
@@ -112,6 +113,9 @@ async fn region_tool_action(app: tauri::AppHandle, window: tauri::WebviewWindow,
     if action == "ready" { state.workflow.tools.ready(window.label()); }
     let locked = matches!(state.workflow.snapshot().status.as_str(), "starting" | "recording" | "paused" | "stopping");
     state.workflow.tools.update(&app, &token, &tool.blueprint_id, &action, rect, locked)?;
+    if action == "select" {
+        if let Some(selected) = state.workflow.tools.snapshot() { let _ = app.emit("region-confirmed", selected); }
+    }
     if action == "reselect" || (action == "ready" && window.label() == "region-frame" && tool.picking) {
         if let Some(frame) = app.get_webview_window("region-frame") { frame.set_focus().map_err(|e| e.to_string())?; }
     }
@@ -148,18 +152,15 @@ async fn region_tool_layout(app: tauri::AppHandle, window: tauri::WebviewWindow,
 }
 
 #[tauri::command]
-fn region_tool_dispatch(app: tauri::AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, token: String, control_id: String, event_id: String) -> Result<workflow::RuntimeSnapshot, String> {
+async fn region_tool_node_action(app: tauri::AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, token: String, control_id: String, action: String) -> Result<workflow::RuntimeSnapshot, String> {
     let tool = check_tool(&window, &state, &token)?;
     let snapshot = state.workflow.snapshot();
-    fn has_menu(items: &Value, event: &str) -> bool {
-        items.as_array().is_some_and(|items| items.iter().any(|item| item["eventId"] == event || has_menu(&item["children"], event)))
-    }
     let target = format!("region:{}", tool.tool_id);
-    let valid = snapshot.controls.iter().any(|c| c["id"] == control_id && c["enabled"] != false
-        && c["targets"].as_array().is_some_and(|targets| targets.iter().any(|t| t == &target))
-        && (c["eventId"] == event_id || has_menu(&c["menu"], &event_id)));
-    if !valid { return Err("Control is disabled or not registered for this tool".into()); }
-    state.workflow.dispatch(app, event_id)
+    let control = snapshot.controls.iter().find(|control| control["id"] == control_id && control["enabled"] != false && control["targets"].as_array().is_some_and(|targets| targets.iter().any(|value| value == &target)))
+        .ok_or("Control is not enabled for this tool")?;
+    let binding = &control["binding"];
+    if binding["action"] != "record" && binding["action"] != "select" { return Err("Control does not provide recording actions".into()); }
+    state.workflow.dispatch_node(app, binding["graphId"].as_str().ok_or("Missing graph")?.into(), binding["nodeId"].as_str().ok_or("Missing node")?.into(), action)
 }
 
 #[tauri::command]
@@ -186,7 +187,8 @@ pub fn run() {
             settings::save_settings,
             settings::check_update,
             settings::install_update,
-            settings::open_project,
+            shell::open_project,
+            shell::open_folder,
             startup_log,
             list_blueprints,
             save_blueprint,
@@ -195,14 +197,16 @@ pub fn run() {
             list_node_types,
             list_displays,
             activate_blueprint,
-            dispatch_blueprint_event,
+
+            dispatch_node_action,
             runtime_snapshot,
             region_tool_state,
             region_tool_action,
             region_tool_layout,
             region_tool_shape,
             region_tool_ratio,
-            region_tool_dispatch,
+
+            region_tool_node_action,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

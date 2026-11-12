@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
   addEdge, applyEdgeChanges, applyNodeChanges, Background, BackgroundVariant, BaseEdge, Handle, Position, reconnectEdge,
@@ -6,14 +6,15 @@ import {
   type Connection, type ConnectionLineComponentProps, type Edge, type EdgeProps, type EdgeChange, type Node, type NodeChange, type NodeProps,
 } from '@xyflow/react'
 import {
-  AudioLines, CirclePlay, Clock3, Copy, FileOutput, FolderOpen, GitBranch, ListPlus, Monitor, MousePointer2,
-  Pause, Play, Settings, Square, StopCircle, Video, Workflow,
+  AudioLines, Copy, FileOutput, FolderOpen, GitBranch, ListPlus, Monitor, MousePointer2,
+  Settings, Square, Video, Workflow,
 } from 'lucide-react'
 import { connectedNodeIds, ribbonOffsets, routePoints, roundedPath, type RoutePoint } from './graph-interactions'
 import { formatGraph, type NodeGeometry } from './graph-layout'
-import { exposedInputIds, parameterInputPortId, pinTypeColor, pinTypeForValue, type Blueprint, type BlueprintNodeData, type BlueprintSelection, type NodePortDefinition, type NodeTypeDefinition } from './model'
+import { allParameters, copyNamedValues, parameterInputPortId, pinTypeColor, pinTypeForValue, type Blueprint, type BlueprintNodeData, type BlueprintSelection, type NodePortDefinition, type NodeTypeDefinition } from './model'
 
-type CanvasNodeData = BlueprintNodeData & {
+type CanvasNodeData = BlueprintNodeData & { configEditor: ReactNode; actionEditor: ReactNode;
+  inputEditor: (port:NodePortDefinition) => ReactNode
   inputs: NodePortDefinition[]
   outputs: NodePortDefinition[]
   connectedHandles: string[]
@@ -61,32 +62,26 @@ function RoundedConnection({ fromX, fromY, toX, toY, connectionLineStyle }: Conn
 }
 
 const icons = {
-  select_region: MousePointer2, get_selected_region: MousePointer2, register_display: Clock3, event: CirclePlay, register_control: Settings, register_menu: Settings, update_control: Settings, log: FileOutput,
-  delay: Clock3, branch: GitBranch, read_parameter: Settings, constant: Square, make_boolean: Square, make_byte: Square, make_integer: Square, make_integer64: Square, make_float: Square, make_double: Square, make_name: Square, make_string: Square, make_text: Square, compare: GitBranch,
-  start_pipeline: Play, pause_pipeline: Pause, resume_pipeline: Play,
-  stop_pipeline: StopCircle, region: MousePointer2, path: FileOutput, screen: Monitor,
-  audio: AudioLines, encode: Video, write: FileOutput,
+  define_value: Square, read_value: Square,
+  select_region: MousePointer2, get_selected_region: MousePointer2,
+  read_parameter: Settings, constant: Square, make_boolean: Square, make_byte: Square, make_integer: Square, make_integer64: Square, make_float: Square, make_double: Square, make_name: Square, make_string: Square, make_text: Square, compare: GitBranch,
+  region: MousePointer2, path: FileOutput, screen: Monitor,
+  audio: AudioLines, encode_media_foundation: Video, write: FileOutput,
 }
 
-function PinGlyph({ execution }: { execution: boolean }) {
-  return <svg className="pin-glyph" viewBox="0 0 12 12" aria-hidden="true">
-    {execution ? <path d="M3 1.5 L10 6 L3 10.5 Z" /> : <circle cx="6" cy="6" r="4" />}
-  </svg>
-}
-
-function Port({ port, side, connected }: { port: NodePortDefinition; side: 'in' | 'out'; connected: boolean }) {
-  const execution = port.valueType === 'flow'
+function Port({ port, side, connected, editor, hideLabel = false }: { hideLabel?: boolean; port: NodePortDefinition; side: 'in' | 'out'; connected: boolean; editor?:ReactNode }) {
   const color = pinTypeColor(port.valueType)
-  return <div className={`port-row ${side}${execution ? ' exec-port' : ''}`}>
-    {side === 'in' && <Handle className={`${execution ? 'flow-handle' : ''}${connected ? '' : ' unconnected'}`} id={`in:${port.id}`} type="target" position={Position.Left} title={port.label} aria-label={port.label} style={{ color }}><PinGlyph execution={execution} /></Handle>}
-    <span>{port.label}</span>
-    {side === 'out' && <Handle className={`${execution ? 'flow-handle' : ''}${connected ? '' : ' unconnected'}`} id={`out:${port.id}`} type="source" position={Position.Right} title={port.label} aria-label={port.label} style={{ color }}><PinGlyph execution={execution} /></Handle>}
+  const glyph = <svg className="pin-glyph" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4" /></svg>
+  return <div className={`port-row ${side}`}>
+    {side === 'in' && <Handle className={connected ? '' : ' unconnected'} id={`in:${port.id}`} type="target" position={Position.Left} title={port.label} aria-label={port.label} style={{ color }}>{glyph}</Handle>}
+    {!hideLabel && <span className="port-label">{port.label}</span>}{side==='in'&&!connected&&editor}
+    {side === 'out' && <Handle className={connected ? '' : ' unconnected'} id={`out:${port.id}`} type="source" position={Position.Right} title={port.label} aria-label={port.label} style={{ color }}>{glyph}</Handle>}
   </div>
 }
 
 function configInputPorts(node: Blueprint['nodes'][number], definition: NodeTypeDefinition): NodePortDefinition[] {
   const config = node.data.config ?? {}
-  const exposed = exposedInputIds(node.data.kind, config).filter((id) => definition.inputParameters.includes(id))
+  const exposed = definition.inputParameters
   const inputs = definition.inputs.filter((port) => !definition.inputParameters.includes(port.id) || exposed.includes(port.id))
   return [...inputs, ...exposed.flatMap((id) => {
     if (definition.inputs.some((port) => port.id === id)) return []
@@ -120,39 +115,22 @@ function WorkflowNode({ id, data, selected }: NodeProps<CanvasNode>) {
     updateNodeInternals(id)
   }, [id, portIds, updateNodeInternals])
   const Icon = icons[data.kind] ?? Square
-  const config = data.config ?? {}
-  const caption = typeof config.message === 'string' ? config.message
-    : typeof config.control === 'object' && config.control && 'label' in config.control ? String(config.control.label)
-      : data.kind === 'register_menu' && typeof config.path === 'string' ? config.path
-      : typeof config.milliseconds === 'number' ? `${config.milliseconds} ms`
-        : data.kind.endsWith('_pipeline') ? data.recordState : data.note
-  const executionInputs = data.inputs.filter((port) => port.valueType === 'flow')
-  const executionOutputs = data.outputs.filter((port) => port.valueType === 'flow')
-  const inputs = data.inputs.filter((port) => port.valueType !== 'flow')
-  const outputs = [...(executionOutputs.length > 1 ? executionOutputs : []), ...data.outputs.filter((port) => port.valueType !== 'flow')]
-  const executionY = (index: number, count: number) => `${(index + 1) * 100 / (count + 1)}%`
-  return <div className={`flow-node${data.kind === 'event' ? ' event-node' : ''}${selected ? ' selected' : ''}`}>
-    <div className={`node-title${executionOutputs.length === 1 ? ' has-execution-output' : ''}`} title="Double-click to rename" onDoubleClick={(event) => { event.stopPropagation(); data.editTitle(id) }}>
-      {executionInputs.map((port, index) => <Handle key={`in:${port.id}`} className={`flow-handle node-title-flow-handle${data.connectedHandles.includes(`in:${port.id}`) ? '' : ' unconnected'}`} id={`in:${port.id}`} type="target" position={Position.Left} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionInputs.length), color: pinTypeColor('flow') }}><PinGlyph execution /></Handle>)}
-      <Icon size={15} />{data.label}
-      {executionOutputs.length === 1 && executionOutputs.map((port, index) => <Handle key={`out:${port.id}`} className={`flow-handle node-title-flow-handle${data.connectedHandles.includes(`out:${port.id}`) ? '' : ' unconnected'}`} id={`out:${port.id}`} type="source" position={Position.Right} title={port.label} aria-label={port.label} style={{ top: executionY(index, executionOutputs.length), color: pinTypeColor('flow') }}><PinGlyph execution /></Handle>)}
+  const caption = data.note
+  const inputs = data.inputs
+  const outputs = data.outputs
+  return <div data-kind={data.kind} className={`flow-node${data.enabled === false ? ' node-disabled' : ''}${selected ? ' selected' : ''}`}>
+    <div className="node-title" title="Double-click to rename" onDoubleClick={(event) => { event.stopPropagation(); data.editTitle(id) }}>
+      <Icon size={15} />{data.label}{data.enabled === false && <span> · Disabled</span>}
     </div>
     <div className="node-body">
-      {(inputs.length > 0 || outputs.length > 0) && <div className="node-ports">
-        <div className="port-column input-ports">{inputs.map((port) => <Port key={`in:${port.id}`} port={port} side="in" connected={data.connectedHandles.includes(`in:${port.id}`)} />)}</div>
+      {data.actionEditor}
+      {data.kind === 'read_parameter' ? <div className="parameter-node-value"><div className="node-inline-config nodrag nowheel nopan">{data.configEditor}</div>{outputs.map(port => <Port hideLabel key={port.id} port={port} side="out" connected={data.connectedHandles.includes(`out:${port.id}`)} />)}</div> : (inputs.length > 0 || outputs.length > 0) && <div className="node-ports">
+        <div className="port-column input-ports">{inputs.map((port) => <Port key={`in:${port.id}`} port={port} side="in" connected={data.connectedHandles.includes(`in:${port.id}`)} editor={data.inputEditor(port)} />)}</div>
         <div className="port-column output-ports">{outputs.map((port) => <Port key={`out:${port.id}`} port={port} side="out" connected={data.connectedHandles.includes(`out:${port.id}`)} />)}</div>
       </div>}
-      {caption && <div className="node-note">{caption}</div>}
+      {caption && <div className="node-note">{caption}</div>}{data.kind !== 'read_parameter' && <div className="node-inline-config nodrag nowheel nopan">{data.configEditor}</div>}
     </div>
   </div>
-}
-
-function remapEventId(value: unknown, eventIds: Map<string, string>) {
-  return typeof value === 'string' ? eventIds.get(value) ?? value : value
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 function withoutSelectedNodes(selection: BlueprintSelection, removed: Set<string>): BlueprintSelection {
@@ -162,7 +140,10 @@ function withoutSelectedNodes(selection: BlueprintSelection, removed: Set<string
   return keys.length > 1 ? { kind: 'nodes', keys } : keys.length === 1 ? { kind: 'node', key: keys[0]! } : null
 }
 
-function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, catalog, locked, focusRequest, graphName }: {
+function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, catalog, locked, focusRequest, graphName, renderNodeConfig, renderNodeActions, renderNodeInput }: {
+  renderNodeConfig: (node: Blueprint['nodes'][number]) => ReactNode
+  renderNodeActions: (node: Blueprint['nodes'][number]) => ReactNode
+  renderNodeInput: (node: Blueprint['nodes'][number],port:NodePortDefinition) => ReactNode
   focusRequest?: { id: string; sequence: number } | null
   graphName?: string
   blueprint: Blueprint
@@ -177,6 +158,13 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
   const measuredNodes = useStore(state => JSON.stringify([...state.nodeLookup.values()].map(node => [node.id, node.measured, node.internals.positionAbsolute, node.internals.handleBounds])))
   const [formatRequest, setFormatRequest] = useState<{ selectedIds: string[]; onlySelected: boolean } | null>(null)
   const initialized = useNodesInitialized()
+  const initialViewport = useRef(false)
+  useEffect(() => {
+    if (!initialized || initialViewport.current) return
+    initialViewport.current = true
+    const entry = blueprint.nodes.find(node => node.id === blueprint.selectedNode) ?? blueprint.nodes.find(node => node.data.kind === 'screen') ?? blueprint.nodes[0]
+    if (entry) void setViewport({ x:64-entry.position.x*.9, y:88-entry.position.y*.9, zoom:.9 })
+  }, [initialized, blueprint.nodes, blueprint.selectedNode, setViewport])
   useEffect(() => {
     if (initialized && focusRequest) void fitView({ nodes: [{ id: focusRequest.id }], minZoom: 1, maxZoom: 1, duration: 250 })
   }, [fitView, initialized, focusRequest])
@@ -240,6 +228,7 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     className: related && !related.has(node.id) ? 'unrelated-node' : undefined,
     data: {
       ...node.data,
+      label: node.data.kind === 'read_parameter' ? allParameters(blueprint).find(parameter => parameter.id === node.data.config?.parameterId)?.label ?? node.data.label : node.data.label,
       inputs: definitions.get(node.data.kind) ? configInputPorts(node, definitions.get(node.data.kind)!) : [],
       outputs: definitions.get(node.data.kind) ? configOutputPorts(node, definitions.get(node.data.kind)!, blueprint.values) : [],
       connectedHandles: blueprint.edges.flatMap((edge) => [
@@ -247,9 +236,9 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
         edge.target === node.id ? edge.targetHandle : undefined,
       ].filter((handle): handle is string => typeof handle === 'string')),
       recordState: blueprint.recordState,
-      editTitle: editNodeTitle,
+      editTitle: editNodeTitle, inputEditor: (port:NodePortDefinition)=>renderNodeInput(node,port), configEditor: renderNodeConfig(node), actionEditor: renderNodeActions(node),
     },
-  })), [blueprint.edges, blueprint.nodes, blueprint.recordState, blueprint.values, definitions, editNodeTitle, related])
+  })), [blueprint, definitions, editNodeTitle, related, renderNodeConfig, renderNodeActions, renderNodeInput])
   useEffect(() => {
     if (!formatRequest) return
     const frame = requestAnimationFrame(() => {
@@ -302,7 +291,7 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     const targetPort = target?.data.inputs.find((port) => `in:${port.id}` === edge.targetHandle)
     const valueType = sourcePort?.valueType === 'value' ? targetPort?.valueType : sourcePort?.valueType
     const type = valueType ?? 'value'
-    return { ...edge, type: 'routed', data: { ...edge.data, ribbonOffset: offsets.get(edge.id) ?? 0, setPoints: setRoutePoints, locked }, className: related && !related.has(edge.source) ? 'unrelated-edge' : undefined, style: { ...edge.style, stroke: pinTypeColor(type), strokeWidth: type === 'flow' ? 2 : 1.7 } }
+    return { ...edge, type: 'routed', data: { ...edge.data, ribbonOffset: offsets.get(edge.id) ?? 0, setPoints: setRoutePoints, locked }, className: related && !related.has(edge.source) ? 'unrelated-edge' : undefined, style: { ...edge.style, stroke: pinTypeColor(type), strokeWidth: 1.7 } }
   }), [blueprint.edges, nodes, setRoutePoints, locked, related, offsets])
   const nodeTypes = useMemo(() => Object.fromEntries(catalog.map((definition) => [
     definition.kind,
@@ -342,39 +331,16 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     const clipboard = clipboardRef.current
     if (locked || !clipboard) return
     const nodeIds = new Map(clipboard.nodes.map((node) => [node.id, `node-${crypto.randomUUID()}`]))
-    const eventIds = new Map(clipboard.nodes.flatMap((node) => {
-      const id = node.data.kind === 'event' ? node.data.config?.eventId : null
-      return typeof id === 'string' ? [[id, `event-${crypto.randomUUID()}`] as const] : []
-    }))
-    const controlIds = new Map(clipboard.nodes.flatMap((node) => {
-      const control = node.data.kind === 'register_control' ? node.data.config?.control : null
-      return isRecord(control) && typeof control.id === 'string' ? [[control.id, `control-${crypto.randomUUID()}`] as const] : []
-    }))
     const offset = 32 * ++pasteCountRef.current
-    const pasted = structuredClone(clipboard.nodes).map((node) => {
+    const pasted = copyNamedValues(structuredClone(clipboard.nodes), blueprint.nodes, nodeIds).map((node) => {
       const config = node.data.config ?? {}
-      if (node.data.kind === 'event') config.eventId = remapEventId(config.eventId, eventIds)
-      if (node.data.kind === 'register_control' && isRecord(config.control)) {
-        const control = config.control
-        const oldId = typeof control.id === 'string' ? control.id : ''
-        config.control = { ...control, id: controlIds.get(oldId) ?? oldId, eventId: remapEventId(control.eventId, eventIds) }
-      }
-      if (node.data.kind === 'register_menu') {
-        if (typeof config.controlId === 'string') config.controlId = controlIds.get(config.controlId) ?? config.controlId
-        config.eventId = remapEventId(config.eventId, eventIds)
-      }
-      if (node.data.kind === 'update_control') {
-        if (typeof config.controlId === 'string') config.controlId = controlIds.get(config.controlId) ?? config.controlId
-        if (isRecord(config.patch) && typeof config.patch.eventId === 'string') config.patch = { ...config.patch, eventId: remapEventId(config.patch.eventId, eventIds) }
-      }
-      if (node.data.kind === 'start_pipeline' && typeof config.outputNodeId === 'string') config.outputNodeId = nodeIds.get(config.outputNodeId) ?? config.outputNodeId
       return { ...node, id: nodeIds.get(node.id)!, position: { x: node.position.x + offset, y: node.position.y + offset }, selected: true, data: { ...node.data, config } }
     })
     const edges = structuredClone(clipboard.edges).map((edge) => ({ ...edge, id: `edge-${crypto.randomUUID()}`, source: nodeIds.get(edge.source)!, target: nodeIds.get(edge.target)!, data: { ...edge.data, routePoints: routePoints(edge.data).map((point) => ({ x: point.x + offset, y: point.y + offset })) } }))
     update((current) => ({ ...current, nodes: [...current.nodes.map((node) => ({ ...node, selected: false })), ...pasted], edges: [...current.edges, ...edges] }))
     selectNodes(pasted.map((node) => node.id))
     setContextMenu(null)
-  }, [locked, selectNodes, update])
+  }, [blueprint.nodes, locked, selectNodes, update])
   const removeNode = (id: string) => {
     if (locked) return
     update((current) => ({ ...current, nodes: current.nodes.filter((node) => node.id !== id), edges: current.edges.filter((edge) => edge.source !== id && edge.target !== id), selectedNode: current.selectedNode === id ? null : current.selectedNode, selection: withoutSelectedNodes(current.selection, new Set([id])) }))
@@ -411,15 +377,13 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     const target = nodes.find((node) => node.id === connection.target)
     const sourcePort = source?.data.outputs.find((port) => `out:${port.id}` === connection.sourceHandle)
     const targetPort = target?.data.inputs.find((port) => `in:${port.id}` === connection.targetHandle)
-    if (!sourcePort || !targetPort || (sourcePort.valueType !== targetPort.valueType && (sourcePort.valueType === 'flow' || targetPort.valueType === 'flow' || (sourcePort.valueType !== 'value' && targetPort.valueType !== 'value')))) return false
+    if (!sourcePort || !targetPort || (sourcePort.valueType !== targetPort.valueType && (sourcePort.valueType !== 'value' && targetPort.valueType !== 'value'))) return false
     const otherEdges = blueprint.edges.filter((edge) => edge.id !== reconnecting.current?.id)
     return !otherEdges.some((edge) => edge.target === connection.target && edge.targetHandle === connection.targetHandle)
-      && (sourcePort.valueType !== 'flow' || !otherEdges.some((edge) => edge.source === connection.source && edge.sourceHandle === connection.sourceHandle))
   }, [blueprint.edges, nodes])
   const addNode = (definition: NodeTypeDefinition, position?: { x: number; y: number }) => {
     const id = `node-${crypto.randomUUID()}`
     const config = structuredClone(definition.defaultConfig)
-    if (definition.kind === 'event') config.eventId = `event-${crypto.randomUUID()}`
     update((current) => ({ ...current, nodes: [...current.nodes, {
       id, type: definition.kind, position: position ?? { x: 80 + current.nodes.length % 6 * 35, y: 80 + Math.floor(current.nodes.length / 6) * 55 },
       data: { kind: definition.kind, label: definition.label, config },
@@ -428,10 +392,10 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
   }
 
   return <div className="graph-shell" ref={shellRef} tabIndex={0} onKeyDownCapture={onGraphKeyDown} onMouseDownCapture={(event) => {
-    if (event.button === 2 && event.target instanceof Element && event.target.closest('.react-flow__edge')) {
+    if (event.button === 2 && event.target instanceof Element && event.target.closest('.react-flow__edge,.react-flow__node')) {
       const pane = shellRef.current?.querySelector('.react-flow__pane')
       if (pane) {
-        // React Flow marks edges nopan; start right-button panning from the pane instead.
+        // Start canvas panning when the gesture begins over a node or edge.
         event.preventDefault(); event.stopPropagation()
         pane.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, view: window, button: 2, buttons: 2, clientX: event.clientX, clientY: event.clientY }))
       }
@@ -452,7 +416,7 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     // Reuse React Flow's reconnect gesture from a Ctrl-dragged node handle.
     anchor.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, buttons: 1, clientX: event.clientX, clientY: event.clientY, ctrlKey: true }))
   }} onPointerDownCapture={(event) => {
-    if (event.button === 0 && event.target instanceof Element && event.target.closest('.react-flow')) shellRef.current?.focus({ preventScroll: true })
+    if (event.button === 0 && event.target instanceof Element && event.target.closest('.react-flow') && !event.target.closest('input,select,textarea,button,[contenteditable]')) shellRef.current?.focus({ preventScroll: true })
     if (event.button === 2) {
       rightDragStart.current = { x: event.clientX, y: event.clientY }
       rightDrag.current = false
@@ -483,14 +447,14 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
     openContextMenu(event, node?.dataset.id ?? null)
   }}>
         <div className="graph-canvas">
-      <div className="graph-breadcrumb" aria-label={`Current path: ${blueprint.name} / ${graphName ?? 'Events'}`}>
+      <div className="graph-breadcrumb" aria-label={`Current path: ${blueprint.name} / ${graphName ?? 'Recording graph'}`}>
         <span className="graph-breadcrumb-item"><Workflow size={14} />{blueprint.name}</span>
         <span className="graph-breadcrumb-divider" aria-hidden="true">/</span>
-        <span className="graph-breadcrumb-item current"><FolderOpen size={14} />{graphName ?? 'Events'}</span>
+        <span className="graph-breadcrumb-item current"><FolderOpen size={14} />{graphName ?? 'Recording graph'}</span>
       </div>
       <ReactFlow
         nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} connectionLineComponent={RoundedConnection} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onNodesDelete={onNodesDelete}
-        onConnect={onConnect} isValidConnection={isValidConnection}
+        onConnect={onConnect} isValidConnection={isValidConnection} connectionRadius={30}
         edgesReconnectable={!locked}
         onReconnectStart={(_, edge) => { reconnecting.current = { id: edge.id, completed: false } }}
         onReconnect={(edge, connection) => {
@@ -503,18 +467,22 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
           reconnecting.current = null
         }}
         onSelectionChange={onSelectionChange}
-        onNodeClick={(_, node) => { selectNode(node.id); setContextMenu(null); shellRef.current?.focus({ preventScroll: true }) }}
+        onNodeClick={(event, node) => { selectNode(node.id); setContextMenu(null); if (!(event.target instanceof Element) || !event.target.closest('input,select,textarea,button,[contenteditable]')) shellRef.current?.focus({ preventScroll: true }) }}
         onPaneClick={() => { selectNode(null); setContextMenu(null); shellRef.current?.focus({ preventScroll: true }) }}
-        nodesDraggable={!locked} nodesConnectable={!locked} panOnDrag={[1, 2]} zoomOnDoubleClick={false} panOnScroll={false} zoomOnPinch zoomOnScroll selectionOnDrag={!locked} selectionMode={SelectionMode.Partial} fitView fitViewOptions={{ padding: .2 }} deleteKeyCode={locked ? null : ['Backspace', 'Delete']} minZoom={.01} maxZoom={1.6}
+        nodesDraggable={!locked} nodesConnectable={!locked} panOnDrag={[1, 2]} zoomOnDoubleClick={false} panOnScroll={false} zoomOnPinch zoomOnScroll selectionOnDrag={!locked} selectionMode={SelectionMode.Partial} deleteKeyCode={locked ? null : ['Backspace', 'Delete']} minZoom={.01} maxZoom={1.6}
         proOptions={{ hideAttribution: true }} defaultEdgeOptions={{ style: { stroke: '#8492a9', strokeWidth: 1.6 } }}
       >
         <Background variant={BackgroundVariant.Lines} gap={22} size={1} color="#2c2d32" />
       </ReactFlow>
     </div>
-    {contextMenu && createPortal(<div className={`graph-context-menu${contextMenu.nodeId ? '' : ' create-node-menu'}`} role="menu" aria-label={contextMenu.nodeId ? 'Node actions' : 'Create node'} style={{ left: Math.max(8, Math.min(window.innerWidth - (contextMenu.nodeId ? 184 : 236), contextMenu.x)), top: Math.max(8, Math.min(window.innerHeight - (contextMenu.nodeId ? 166 : Math.min(window.innerHeight * .65, 520) + 16), contextMenu.y)) }} onContextMenu={(event) => event.preventDefault()}>
+    {contextMenu && createPortal(<div className={`graph-context-menu${contextMenu.nodeId ? '' : ' create-node-menu'}`} role="menu" aria-label={contextMenu.nodeId ? 'Node actions' : 'Create node'} style={{ left: Math.max(8, Math.min(window.innerWidth - (contextMenu.nodeId ? 184 : 236), contextMenu.x)), top: Math.max(8, Math.min(window.innerHeight - (contextMenu.nodeId ? 202 : Math.min(window.innerHeight * .65, 520) + 16), contextMenu.y)) }} onContextMenu={(event) => event.preventDefault()}>
       {contextMenu.nodeId ? <>
         <button role="menuitem" onClick={() => { copyNodes([contextMenu.nodeId!]); setContextMenu(null) }}><Copy size={13} />Copy <small>Ctrl+C</small></button>
         <button role="menuitem" disabled={locked} onClick={() => { copyNodes([contextMenu.nodeId!]); pasteNodes() }}><Copy size={13} />Duplicate</button>
+        <button role="menuitem" disabled={locked} onClick={() => {
+          update(current => ({ ...current, nodes: current.nodes.map(node => node.id === contextMenu.nodeId ? { ...node, data: { ...node.data, enabled: node.data.enabled === false } } : node) }))
+          setContextMenu(null)
+        }}>{blueprint.nodes.find(node => node.id === contextMenu.nodeId)?.data.enabled === false ? 'Enable' : 'Disable'}</button>
         <div className="graph-context-divider" />
         <button role="menuitem" disabled={locked} className="danger-action" onClick={() => removeNode(contextMenu.nodeId!)}><Square size={12} />Delete</button>
         {hasClipboard && <><div className="graph-context-divider" /><button role="menuitem" disabled={locked} onClick={pasteNodes}><ListPlus size={13} />Paste <small>Ctrl+V</small></button></>}
@@ -528,6 +496,9 @@ function Canvas({ blueprint, update, selectNode, selectNodes, editNodeTitle, cat
 }
 
 export default function GraphEditor(props: {
+  renderNodeConfig: (node: Blueprint['nodes'][number]) => ReactNode
+  renderNodeActions: (node: Blueprint['nodes'][number]) => ReactNode
+  renderNodeInput: (node: Blueprint['nodes'][number],port:NodePortDefinition) => ReactNode
   focusRequest?: { id: string; sequence: number } | null
   graphName?: string
   blueprint: Blueprint

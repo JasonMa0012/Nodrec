@@ -1,6 +1,6 @@
 [package]
 name = "nodrec-desktop"
-version = "0.1.4"
+version = "0.1.5"
 description = "Nodrec desktop application"
 authors = ["Nodrec"]
 edition = "2021"
@@ -27,6 +27,6 @@ windows = { version = "0.62.2", features = [
   "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_Media_MediaFoundation",
   "Win32_System_Com", "Win32_System_Variant", "Win32_System_WinRT_Direct3D11",
   "Win32_System_WinRT_Graphics_Capture", "Win32_System_Threading",
-  "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging",
   "Win32_Storage_FileSystem",
 ] }

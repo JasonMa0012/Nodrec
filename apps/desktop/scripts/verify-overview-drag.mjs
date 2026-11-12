@@ -21,7 +21,7 @@ try {
 const app = spawn(executable, [], {
   env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: webviewDataDirectory, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
   stdio: 'pipe',
-  windowsHide: false,
+  windowsHide: true,
 })
 let appOutput = ''
 app.stdout.setEncoding('utf8').on('data', (chunk) => { appOutput += chunk })
@@ -58,7 +58,27 @@ try {
   await command('Page.enable')
   await command('Runtime.enable')
   await command('Page.bringToFront')
+  await until(() => evaluate(`!![...document.querySelectorAll('.workspace-tab > button')].find(button => button.textContent.trim() === 'Overview')`))
+  await evaluate(`[...document.querySelectorAll('.workspace-tab > button')].find(button => button.textContent.trim() === 'Overview').click()`)
   await until(async () => (await evaluate(`document.querySelectorAll('.overview-layout-grid .settings-card').length`)) >= 4)
+  const fieldSizing = await evaluate(`(async () => {
+    const select = document.querySelector('select[aria-label="Display"]')
+    const row = select.closest('.parameter-field')
+    const option = select.selectedOptions[0]
+    const original = option.textContent
+    const originalWidth = row.style.width
+    try {
+      option.textContent = 'Generic PnP Monitor · \\\\.\\\\DISPLAY1 · 2880 × 1800'
+      row.style.width = '600px'
+      await new Promise(resolve => setTimeout(resolve, 150))
+      const style = getComputedStyle(select)
+      const canvas = document.createElement('canvas').getContext('2d')
+      canvas.font = style.font
+      const needed = canvas.measureText(option.textContent).width + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) + 20
+      return { actual: select.clientWidth, needed }
+    } finally { option.textContent = original; row.style.width = originalWidth }
+  })()`)
+  if (fieldSizing.actual + 1 < fieldSizing.needed) throw new Error(`Display field clips its selected text: ${JSON.stringify(fieldSizing)}`)
   await until(async () => evaluate(`(() => {
     const grid = document.querySelector('.settings-grid')?.getBoundingClientRect()
     const items = [...document.querySelectorAll('.overview-layout-grid .react-grid-item')].map(item => item.getBoundingClientRect())
@@ -91,11 +111,11 @@ try {
       return { name: card.querySelector('.settings-card-head h2')?.textContent, rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } }
     })
   }))()`)
-  const source = before.cards.find((card) => card.name === 'Audio')
+  const source = before.cards.find((card) => card.name === 'Audio (not available yet)')
   const targetCard = before.cards.find((card) => card.name === 'Recording settings')
   if (!source || !targetCard) throw new Error('Expected Audio and Recording settings cards were not found.')
   const longLabel = 'Select the preferred display surface and source when several monitor endpoints are present'
-  const longLabelProbe = await evaluate(`(() => {
+  const longLabelProbe = await evaluate(`(async () => {
     const card = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(item => item.querySelector('.settings-card-head h2')?.textContent === 'Recording settings')
     const field = card?.querySelector('.parameter-field.inline')
     const label = field?.querySelector('.parameter-label')
@@ -105,10 +125,12 @@ try {
     const before = { label: rect(label), control: rect(control) }
     const original = label.textContent
     label.textContent = ${JSON.stringify(longLabel)}
+    await new Promise(resolve=>setTimeout(resolve,300))
     const after = {
       label: rect(label),
       control: rect(control),
       field: rect(field),
+      stacked: field.classList.contains('stacked-parameter'),
       fullText: label.textContent,
       horizontalOverflow: label.scrollWidth > label.clientWidth + 1,
       verticalOverflow: label.scrollHeight > label.clientHeight + 1,
@@ -116,9 +138,10 @@ try {
       cardClipped: card.scrollHeight > card.clientHeight + 1,
     }
     label.textContent = original
+    await new Promise(resolve=>setTimeout(resolve,300))
     return { before, after }
   })()`)
-  if (!longLabelProbe || longLabelProbe.after.fullText !== longLabel || longLabelProbe.after.horizontalOverflow || longLabelProbe.after.verticalOverflow || longLabelProbe.after.whiteSpace !== 'normal' || longLabelProbe.after.control.width < 83 || longLabelProbe.after.control.x < longLabelProbe.after.label.right + 8 || longLabelProbe.after.control.right > longLabelProbe.after.field.right + 1 || longLabelProbe.after.control.width >= longLabelProbe.before.control.width || longLabelProbe.after.cardClipped) throw new Error(`Long parameter labels must wrap fully while shrinking the editor without clipping the card: ${JSON.stringify(longLabelProbe)}`)
+  if (!longLabelProbe || longLabelProbe.after.fullText !== longLabel || longLabelProbe.after.horizontalOverflow || longLabelProbe.after.verticalOverflow || longLabelProbe.after.whiteSpace !== 'normal' || longLabelProbe.after.control.width < 83 || (!longLabelProbe.after.stacked && longLabelProbe.after.control.x < longLabelProbe.after.label.right + 8) || longLabelProbe.after.control.right > longLabelProbe.after.field.right + 1 || longLabelProbe.after.cardClipped) throw new Error(`Long parameter labels must wrap fully with a usable inline or stacked editor without clipping the card: ${JSON.stringify(longLabelProbe)}`)
   const resizeProbe = await evaluate(`(() => {
     const card = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(card => card.querySelector('.settings-card-head h2')?.textContent === 'Recording settings')
     const gridItem = card?.parentElement
@@ -140,7 +163,7 @@ try {
       gripCenterSeparation: neighborHandleRect ? Math.abs((resizeRect.left + resizeRect.width / 2) - (neighborHandleRect.left + neighborHandleRect.width / 2)) : null,
       handleSeparation: neighborHandleRect ? neighborHandleRect.left - resizeRect.right : null,
       hitAreasOverlap: neighborHandleRect ? resizeRect.right > neighborHandleRect.left : true,
-      drag: (() => { const rect = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(item => item.querySelector('.settings-card-head h2')?.textContent === 'Audio').querySelector('.overview-card-drag-handle').getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } })(),
+      drag: (() => { const rect = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(item => item.querySelector('.settings-card-head h2')?.textContent === 'Audio (not available yet)').querySelector('.overview-card-drag-handle').getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } })(),
       handleFound: !!handle,
       buttonBorder: getComputedStyle(card.querySelector('.overview-card-drag-handle')).borderTopWidth,
       dragIconTransform: getComputedStyle(card.querySelector('.overview-card-drag-handle svg')).transform,
@@ -156,7 +179,7 @@ try {
   const handleAtEdge = await evaluate(`(() => { const handle = document.querySelector('.overview-layout-grid .react-resizable-handle:hover'); return handle && getComputedStyle(handle).opacity })()`)
   await saveScreenshot(command, 'overview-resize-handle-hover.png')
   const points = await evaluate(`(() => {
-    const source = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(card => card.querySelector('.settings-card-head h2')?.textContent === 'Audio')
+    const source = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(card => card.querySelector('.settings-card-head h2')?.textContent === 'Audio (not available yet)')
     const target = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(card => card.querySelector('.settings-card-head h2')?.textContent === 'Recording settings')
     const b = target.getBoundingClientRect()
     return { start: ${JSON.stringify(resizeProbe.drag)}, end: { x: b.right - 12, y: b.y + b.height / 2 } }
@@ -183,16 +206,16 @@ try {
     return { name: card.querySelector('.settings-card-head h2')?.textContent, x: rect.x, y: rect.y, width: rect.width }
   }))()`)
   await saveScreenshot(command, 'overview-drag-after.png')
-  const moved = after.find((card) => card.name === 'Audio')
+  const moved = after.find((card) => card.name === 'Audio (not available yet)')
   const target = after.find((card) => card.name === 'Recording settings')
-  const firstRow = after.filter((card) => Math.abs(card.y - target.y) < 8 && ['Audio', 'Recording settings', 'Video'].includes(card.name))
+  const firstRow = after.filter((card) => Math.abs(card.y - target.y) < 8 && ['Audio (not available yet)', 'Recording settings', 'Video'].includes(card.name))
   const rowWidthWithGaps = firstRow.reduce((width, card) => width + card.width, 0) + 14 * Math.max(0, firstRow.length - 1)
   const fillsGrid = Math.abs(rowWidthWithGaps - before.gridWidth) < 12
   const previewContainsPointer = during.preview && points.end.x >= during.preview.x && points.end.x <= during.preview.x + during.preview.width && points.end.y >= during.preview.y && points.end.y <= during.preview.y + during.preview.height
   const horizontalVerified = handleAtCardCenter === '0' && handleAtEdge === '1' && resizeProbe.buttonBorder === '0px' && resizeProbe.dragIconTransform !== 'none' && resizeProbe.resizeTransform === 'none' && resizeProbe.resizeBackgroundImage === 'none' && resizeProbe.resizeGripBorders.every((width) => width === '0px') && during.preview && previewContainsPointer && during.targetFeedback && during.sideFeedback && during.hint?.includes('right') && moved && target && firstRow.length === 3 && fillsGrid && moved.x > target.x
-  if (!horizontalVerified) throw new Error('Overview drag did not satisfy local-handle visibility, handle styling, pointer preview, side feedback and three-card auto-sizing checks.')
+  if (!horizontalVerified) throw new Error('Overview drag failed: '+JSON.stringify({handleAtCardCenter,handleAtEdge,resizeProbe,during,after,firstRow,fillsGrid,previewContainsPointer}))
 
-  const verticalStart = await evaluate(`(() => { const card = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(item => item.querySelector('.settings-card-head h2')?.textContent === 'Audio'); const rect = card.querySelector('.overview-card-drag-handle').getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } })()`)
+  const verticalStart = await evaluate(`(() => { const card = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(item => item.querySelector('.settings-card-head h2')?.textContent === 'Audio (not available yet)'); const rect = card.querySelector('.overview-card-drag-handle').getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } })()`)
   await command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...verticalStart })
   await command('Input.dispatchMouseEvent', { type: 'mousePressed', ...verticalStart, button: 'left', buttons: 1, clickCount: 1 })
   await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: verticalStart.x + 7, y: verticalStart.y + 5, button: 'left', buttons: 1 })
@@ -215,8 +238,8 @@ try {
   await delay(900)
   const afterEnd = await evaluate(`(() => [...document.querySelectorAll('.overview-layout-grid .settings-card')].map(card => { const rect = card.getBoundingClientRect(); return { name: card.querySelector('.settings-card-head h2')?.textContent, x: rect.x, y: rect.y, width: rect.width } }))()`)
   await saveScreenshot(command, 'overview-drag-end-after.png')
-  const movedToEnd = afterEnd.find((card) => card.name === 'Audio')
-  const lastOtherY = Math.max(...afterEnd.filter((card) => card.name !== 'Audio').map((card) => card.y))
+  const movedToEnd = afterEnd.find((card) => card.name === 'Audio (not available yet)')
+  const lastOtherY = Math.max(...afterEnd.filter((card) => card.name !== 'Audio (not available yet)').map((card) => card.y))
   const endPreviewContainsPointer = endDuring.preview && endPoint.x >= endDuring.preview.x && endPoint.x <= endDuring.preview.x + endDuring.preview.width && endPoint.y >= endDuring.preview.y && endPoint.y <= endDuring.preview.y + endDuring.preview.height
   const verticalVerified = endDuring.hint === 'Move to end' && endDuring.endFeedback && endPreviewContainsPointer && movedToEnd && movedToEnd.y > lastOtherY
   const abovePoints = await evaluate(`(() => {
@@ -257,11 +280,15 @@ try {
   await command('Input.dispatchMouseEvent', { type: 'mousePressed', ...belowPoints.start, button: 'left', buttons: 1, clickCount: 1 })
   await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: belowPoints.start.x + 7, y: belowPoints.start.y + 5, button: 'left', buttons: 1 })
   for (let step = 1; step <= 12; step++) {
+    belowPoints.end = await evaluate(`(() => { const card = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(card => card.querySelector('.settings-card-head h2')?.textContent === 'Recording settings'); const rect = card.getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.bottom - 8 } })()`)
     const t = step / 12
     await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: belowPoints.start.x + 7 + (belowPoints.end.x - belowPoints.start.x - 7) * t, y: belowPoints.start.y + 5 + (belowPoints.end.y - belowPoints.start.y - 5) * t, button: 'left', buttons: 1 })
     await delay(35)
   }
   await delay(250)
+  belowPoints.end = await evaluate(`(() => { const card = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(card => card.querySelector('.settings-card-head h2')?.textContent === 'Recording settings'); const rect = card.getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.bottom - 16 } })()`)
+  await command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...belowPoints.end, button: 'left', buttons: 1 })
+  await delay(50)
   const belowDuring = await evaluate(`(() => {
     const preview = document.querySelector('.overview-drag-overlay .settings-card')
     const target = [...document.querySelectorAll('.overview-layout-grid .settings-card')].find(card => card.querySelector('.settings-card-head h2')?.textContent === 'Recording settings')
@@ -274,7 +301,7 @@ try {
   await saveScreenshot(command, 'overview-drag-insert-below-after.png')
   const outputAfterBelow = afterBelow.find((card) => card.name === 'Output')
   const recordingAfterBelow = afterBelow.find((card) => card.name === 'Recording settings')
-  const audioAfterBelow = afterBelow.find((card) => card.name === 'Audio')
+  const audioAfterBelow = afterBelow.find((card) => card.name === 'Audio (not available yet)')
   const belowVerified = belowDuring.hint === 'Insert below of Recording settings' && belowDuring.targetFeedback && belowDuring.preview && outputAfterBelow && recordingAfterBelow && audioAfterBelow && outputAfterBelow.y > recordingAfterBelow.y && audioAfterBelow.y > outputAfterBelow.y
   const resizePoints = await evaluate(`(() => {
     const item = [...document.querySelectorAll('.overview-layout-grid .react-grid-item')].find(item => [...item.querySelectorAll('.settings-card-head h2')].some(title => title.textContent === 'Recording settings'))

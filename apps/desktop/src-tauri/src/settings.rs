@@ -193,12 +193,6 @@ pub async fn install_update(app: tauri::AppHandle, window: tauri::WebviewWindow,
     Err(format!("Cannot download a verified update: {}", errors.join("; ")))
 }
 
-#[tauri::command]
-pub fn open_project(window: tauri::WebviewWindow) -> Result<(), String> {
-    main_window(&window)?;
-    std::process::Command::new("rundll32.exe").args(["url.dll,FileProtocolHandler", REPOSITORY]).spawn().map_err(|e| e.to_string())?;
-    Ok(())
-}
 #[cfg(test)]
 mod tests {
     use super::*;

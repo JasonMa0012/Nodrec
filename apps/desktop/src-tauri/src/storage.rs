@@ -7,7 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u64 = 1;
+pub const SCHEMA_VERSION: u64 = 2;
 const MAX_BLUEPRINT_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -128,6 +128,7 @@ impl BlueprintStore {
         if document.get("name").and_then(Value::as_str).is_none_or(str::is_empty) {
             return Err("Blueprint name cannot be empty".into());
         }
+        if !valid_document_shape(&document) { return Err("Blueprint is missing required V2 data fields".into()); }
         let path = self.path(scope, id)?;
         let other_scope = match scope {
             BlueprintScope::Builtin => BlueprintScope::User,
@@ -223,15 +224,22 @@ fn read_blueprint(scope: BlueprintScope, filename_id: &str, path: &Path) -> Stor
         stored.error = Some("Unsupported blueprint schema version".into());
     } else if stored.name.trim().is_empty() {
         stored.error = Some("Blueprint name cannot be empty".into());
-    } else if !["nodes", "edges", "cards", "eventFolders", "events", "functionFolders", "functions", "variableFolders", "customParameters"].iter().all(|key| document.get(key).is_some_and(Value::is_array))
-        || !["values", "labels", "layouts", "overviewLayouts"].iter().all(|key| document.get(key).is_some_and(Value::is_object))
-    {
+    } else if !valid_document_shape(&document) {
         stored.error = Some("Blueprint is missing required data fields".into());
     } else {
         stored.runnable = document.get("supported").and_then(Value::as_bool).unwrap_or(true);
     }
     stored.document = Some(document);
     stored
+}
+
+fn valid_document_shape(document: &Value) -> bool {
+    !["eventFolders","events","functionFolders","functions"].iter().any(|key| document.get(key).is_some())
+        && ["graphs","controls","displays","cards","variableFolders","customParameters"].iter().all(|key| document.get(key).is_some_and(Value::is_array))
+        && ["values","labels","layouts","overviewLayouts","controlOrder"].iter().all(|key| document.get(key).is_some_and(Value::is_object))
+        && document["graphs"].as_array().is_some_and(|graphs| !graphs.is_empty() && graphs.iter().all(|graph| {
+            graph["id"].as_str().is_some_and(|id| !id.is_empty()) && graph["nodes"].is_array() && graph["edges"].is_array()
+        }))
 }
 
 fn valid_id(id: &str) -> bool {
@@ -289,11 +297,32 @@ mod tests {
 
     fn document(id: &str, name: &str) -> Value {
         json!({
-            "schemaVersion": 1, "id": id, "name": name, "supported": true,
-            "nodes": [], "edges": [], "cards": [], "eventFolders": [], "events": [],
-            "functionFolders": [], "functions": [], "variableFolders": [], "customParameters": [],
+            "schemaVersion": 2, "id": id, "name": name, "supported": true,
+            "graphs":[{"id":"recording","nodes":[],"edges":[]}],"controls":[],"displays":[],"controlOrder":{},"cards": [],
+            "variableFolders": [], "customParameters": [],
             "values": {}, "labels": {}, "layouts": {}, "overviewLayouts": {}
         })
+    }
+
+    #[test]
+    fn v2_builtin_templates_are_readable_and_legacy_graph_shapes_are_rejected() {
+        let (store, root) = temp_store();
+        let doc: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        store.save(BlueprintScope::Builtin,"screen-recording",doc,None).unwrap();
+        assert!(store.list().blueprints[0].error.is_none());
+        let mut obsolete = document("obsolete","Obsolete");
+        obsolete["events"] = json!([]);
+        assert!(store.save(BlueprintScope::User,"obsolete",obsolete,None).is_err());
+        let mut legacy = document("legacy","Legacy");
+        legacy.as_object_mut().unwrap().remove("graphs");
+        legacy["nodes"] = json!([]); legacy["edges"] = json!([]);
+        assert!(store.save(BlueprintScope::User,"legacy",legacy.clone(),None).is_err());
+        let path = root.join("builtin/legacy.nodrec.json");
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        fs::write(&path,&bytes).unwrap();
+        assert!(store.list().blueprints.iter().find(|entry|entry.id=="legacy").unwrap().error.is_some());
+        assert_eq!(fs::read(path).unwrap(),bytes);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

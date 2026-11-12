@@ -1,7 +1,225 @@
 import assert from 'node:assert/strict'
+import { copyNamedValues } from './model.ts'
+import { controlOrder, insertControl, reorderControls, setControlTargets, dropNodeShortcut, removeNodeShortcut, reconcileNodeShortcuts } from './control-order.ts'
 import test from 'node:test'
+import { createNodeControl } from './model.ts'
+import { connectedInputValue, parameterSources } from './model.ts'
+import { selectBlueprintGraph } from './model.ts'
+
+test('default graph explicitly connects region selection to the capture path',()=>{
+  const graph=createBlueprint('region-connection','Region')
+  const link=graph.edges.find(edge=>edge.source==='log-select-region'&&edge.target==='selected-region')
+  assert.equal(link?.sourceHandle,'out:region')
+  assert.equal(link?.targetHandle,'in:selected')
+  assert.ok(graph.edges.some(edge=>edge.source==='region'&&edge.target==='selected-region'&&edge.targetHandle==='in:fallback'))
+  assert.ok(graph.edges.some(edge=>edge.source==='selected-region'&&edge.target==='screen'&&edge.targetHandle==='in:region'))
+})
+
+test('toolbar shortcuts deduplicate node actions and remove only the displayed target', () => {
+  const blueprint=createBlueprint('shortcut-test','Shortcuts')
+  const original=structuredClone(blueprint)
+  const binding=blueprint.controls.find(control=>control.id==='start-recording').binding
+  const removed=removeNodeShortcut(blueprint,'start-recording','main')
+  assert.deepEqual(removed.controls.find(control=>control.id==='start-recording').targets,['region:capture-region'])
+  assert.deepEqual(removed.nodes,blueprint.nodes)
+  const restored=dropNodeShortcut(removed,binding,'main','ignored-id','select-region',false)
+  assert.deepEqual(restored.controlOrder.main,['start-recording','select-region','recording-status','recording-time'])
+  assert.equal(restored.controls.length,blueprint.controls.length)
+  assert.equal(dropNodeShortcut(restored,binding,'main','duplicate-id').controls.length,blueprint.controls.length)
+  assert.deepEqual(dropNodeShortcut(restored,binding,'main','duplicate-id','start-recording').controlOrder,restored.controlOrder)
+  assert.equal(dropNodeShortcut(blueprint,{...binding,nodeId:'missing'},'main','invalid'),blueprint)
+  assert.deepEqual(blueprint,original)
+})
+
+test('read-only shortcuts belong to capture nodes and share toolbar ordering without duplicating',()=>{
+  const blueprint=createBlueprint('display-shortcuts','Displays')
+  const display=blueprint.displays[0]
+  const binding={...display.binding,source:display.source}
+  const removed=removeNodeShortcut(blueprint,display.id,'main')
+  assert.deepEqual(removed.displays[0].targets,['region:capture-region'])
+  const moved=dropNodeShortcut(removed,binding,'main','ignored','select-region',false)
+  assert.equal(moved.controlOrder.main[0],display.id)
+  assert.equal(moved.displays.length,2)
+  assert.deepEqual(hydrateBlueprint(serializeBlueprint(moved),'user','v').controlOrder,moved.controlOrder)
+  const erased=removeNodeShortcut(removeNodeShortcut(moved,display.id,'main'),display.id,'region:capture-region')
+  assert.equal(erased.displays.length,1)
+  assert.deepEqual(erased.nodes,blueprint.nodes)
+  assert.equal(dropNodeShortcut(blueprint,{graphId:'recording',nodeId:'log-select-region',action:'select',source:'status'},'main','invalid'),blueprint)
+  const legacy=serializeBlueprint(blueprint)
+  legacy.displays.forEach(display=>delete display.binding)
+  legacy.controlOrder.main=legacy.controlOrder.main.filter(id=>!id.startsWith('recording-'))
+  const loaded=hydrateBlueprint(legacy,'user','v')
+  assert.equal(loaded.displays[0].binding.nodeId,'screen')
+  assert.ok(loaded.controlOrder.main.includes('recording-status'))
+})
+
+test('deleting a source node removes its shortcuts and obsolete toolbar targets', () => {
+  const blueprint=createBlueprint('shortcut-cleanup','Cleanup')
+  const withoutCapture=reconcileNodeShortcuts({...blueprint,nodes:blueprint.nodes.filter(node=>node.data.kind!=='screen')})
+  assert.ok(!withoutCapture.controls.some(control=>control.binding.action==='record'))
+  assert.ok(!withoutCapture.controlOrder.main.includes('start-recording'))
+  assert.equal(withoutCapture.displays.length,0)
+  assert.ok(!withoutCapture.controlOrder.main.includes('recording-status'))
+  const withoutTool=reconcileNodeShortcuts({...blueprint,nodes:blueprint.nodes.filter(node=>node.data.kind!=='select_region')})
+  assert.deepEqual(withoutTool.controls.find(control=>control.id==='start-recording').targets,['main'])
+  assert.ok(!('region:capture-region' in withoutTool.controlOrder))
+  assert.ok(withoutTool.displays.every(display=>display.targets.every(target=>target==='main')))
+})
+
+test('graph navigation preserves serialized order and edits only the chosen graph', () => {
+  const original = createBlueprint('graph-navigation','Graphs')
+  original.additionalGraphs = [{id:'second',name:'Second',nodes:structuredClone(original.nodes),edges:structuredClone(original.edges)}]
+  original.graphOrder.push('second')
+  const before = serializeBlueprint(original)
+  const selected = selectBlueprintGraph(original,'second')
+  assert.equal(selected.graphId,'second')
+  assert.deepEqual(serializeBlueprint(selected),before)
+  assert.equal(acceptBlueprintEdit(original,selected,true),selected)
+  selected.nodes = selected.nodes.map(node=>({...node,data:{...node.data,label:'Changed in second'}}))
+  const returned = selectBlueprintGraph(selected,'recording')
+  assert.deepEqual(returned.nodes,original.nodes)
+  assert.equal(serializeBlueprint(returned).graphs[1].nodes[0].data.label,'Changed in second')
+  assert.equal(selectBlueprintGraph(returned,'missing'),returned)
+})
+
+test('saving preserves graph identities and graphs outside the current editor', () => {
+  const document = serializeBlueprint(createBlueprint('graph-ids','Graph IDs'))
+  document.graphs[0].id = 'custom-capture'
+  document.graphs[0].name = 'Custom Capture'
+  document.controls.forEach(control => { control.binding.graphId = 'custom-capture' })
+  document.graphs.push({id:'another-capture',name:'Another Capture',nodes:[],edges:[]})
+  const blueprint = hydrateBlueprint(document,'user','revision')
+  blueprint.controls.push(createNodeControl(blueprint.nodes.find(node=>node.data.kind==='screen'),'main','added',blueprint.graphId))
+  const saved = serializeBlueprint(blueprint)
+  assert.deepEqual(saved.graphs,document.graphs)
+  assert.ok(saved.controls.every(control=>control.binding.graphId==='custom-capture'))
+  assert.equal('graphId' in saved,false)
+  assert.equal('additionalGraphs' in saved,false)
+  assert.equal('graphName' in saved,false)
+})
+
+test('wired fields show their source while preserving local values for disconnection', () => {
+  const blueprint = createBlueprint('sources','Sources')
+  const capture = blueprint.nodes.find(node => node.id === 'screen')
+  const before = structuredClone(capture.data.config)
+  assert.deepEqual(parameterSources(blueprint,['screen'],'fps'),['Read fps · value'])
+  blueprint.edges = blueprint.edges.filter(edge => !(edge.target === 'screen' && edge.targetHandle === 'in:param:fps'))
+  assert.deepEqual(parameterSources(blueprint,['screen'],'fps'),['Local value'])
+  assert.deepEqual(capture.data.config,before)
+  blueprint.edges.push({source:'missing',sourceHandle:'out:value',target:'screen',targetHandle:'in:param:fps'})
+  assert.deepEqual(parameterSources(blueprint,['screen'],'fps'),['Missing node (missing) · value'])
+  assert.deepEqual(parameterSources(blueprint,['screen','region'],'fps'),['Missing node (missing) · value','Local value'])
+})
+
+test('domain inputs show their source and keep local structured values after disconnecting', () => {
+  const blueprint = createBlueprint('domain-source','Sources')
+  const capture = blueprint.nodes.find(node=>node.data.kind==='screen')
+  capture.data.config.region={display:'Display 1',mode:'Rectangle',x:10,y:20,width:640,height:480}
+  const before=structuredClone(capture.data.config.region)
+  assert.notDeepEqual(parameterSources(blueprint,[capture.id],'region'),['Local value'])
+  blueprint.edges=blueprint.edges.filter(edge=>!(edge.target===capture.id&&edge.targetHandle==='in:region'))
+  assert.deepEqual(parameterSources(blueprint,[capture.id],'region'),['Local value'])
+  assert.deepEqual(capture.data.config.region,before)
+})
+
+test('changing control targets preserves independent orders and appends newly visible controls', () => {
+  const blueprint = createBlueprint('target-test','Targets')
+  blueprint.displays=[]
+  blueprint.controlOrder={main:['select-region','start-recording'],'region:capture-region':['start-recording']}
+  const before = structuredClone(blueprint)
+  const both = setControlTargets(blueprint,'select-region',['main','region:capture-region'])
+  assert.deepEqual(both.controlOrder.main,['select-region','start-recording'])
+  assert.deepEqual(both.controlOrder['region:capture-region'],['start-recording','select-region'])
+  const hidden = setControlTargets(both,'select-region',[])
+  assert.deepEqual(hidden.controlOrder.main,['start-recording'])
+  assert.deepEqual(hidden.controlOrder['region:capture-region'],['start-recording'])
+  assert.deepEqual(setControlTargets(hidden,'select-region',['main']).controlOrder.main,['start-recording','select-region'])
+  assert.deepEqual(blueprint,before)
+})
+
+test('control drop inserts on the indicated side in either direction', () => {
+  const ids = ['a','b','c','d']
+  assert.deepEqual(insertControl(ids,'a','c',false),['b','a','c','d'])
+  assert.deepEqual(insertControl(ids,'a','c',true),['b','c','a','d'])
+  assert.deepEqual(insertControl(ids,'d','b',false),['a','d','b','c'])
+  assert.deepEqual(insertControl(ids,'d','b',true),['a','b','d','c'])
+  assert.deepEqual(insertControl(ids,'a','a',true),ids)
+  assert.deepEqual(insertControl(ids,'missing','b',true),ids)
+  assert.deepEqual(ids,['a','b','c','d'])
+})
+
+test('new controls bind node actions and persist without geometry', () => {
+  const blueprint = createBlueprint('controls-test','Controls')
+  const source = blueprint.nodes.find(node => node.data.kind === 'screen')
+  const control = createNodeControl(source,'main','new-record')
+  assert.deepEqual(control.binding,{graphId:'recording',nodeId:source.id,action:'record'})
+  assert.deepEqual(control.targets,['main'])
+  assert.equal('width' in control,false)
+  assert.equal('position' in control,false)
+  blueprint.controls.push(control)
+  assert.deepEqual(hydrateBlueprint(serializeBlueprint(blueprint),'user','revision').controls.at(-1),control)
+  blueprint.controls.at(-1).order = 99
+  assert.equal('order' in serializeBlueprint(blueprint).controls.at(-1),false)
+  blueprint.controls.at(-1).error='Runtime only'
+  assert.equal('error' in serializeBlueprint(blueprint).controls.at(-1),false)
+  const writer = blueprint.nodes.find(node => node.data.kind === 'write')
+  assert.throws(() => createNodeControl(writer,'main','invalid'),/no control action/)
+})
+import { outputStatusText } from './output-status.ts'
+
+test('output status preserves partial failures after completion', () => {
+  const output = {path:'main.mp4',partialPath:'main.partial.mp4',finished:false,error:null}
+  assert.equal(outputStatusText(output),'Writing')
+  assert.equal(outputStatusText({...output,finished:true}),'Saved')
+  assert.equal(outputStatusText({...output,finished:true,error:'Publish failed'}),'Failed')
+})
+import { acceptBlueprintEdit } from './model.ts'
+
+test('running blueprints allow navigation but reject executable edits', () => {
+  const current = createBlueprint('locked', 'Locked')
+  const navigate = {...current,activeTab:'blueprint',selection:{kind:'node',key:'screen'}}
+  assert.equal(acceptBlueprintEdit(current,navigate,true),navigate)
+  const parameter = {...current,values:{...current.values,fps:30}}
+  assert.equal(acceptBlueprintEdit(current,parameter,true),current)
+  assert.equal(acceptBlueprintEdit(current,parameter,false),parameter)
+  const reorder = {...current,controlOrder:{main:['changed']}}
+  assert.equal(acceptBlueprintEdit(current,reorder,true),current)
+})
+
+test('V2 stores graph arrays and rejects legacy top-level graph documents', () => {
+  const document = serializeBlueprint(createBlueprint('v2', 'V2'))
+  assert.equal(document.schemaVersion, 2)
+  assert.equal('nodes' in document, false)
+  assert.equal('edges' in document, false)
+  assert.equal(document.graphs[0].id, 'recording')
+  assert.throws(() => hydrateBlueprint({...document,schemaVersion:1},'user','revision'), /Unsupported blueprint/)
+})
+
+test('copying named values remaps internal references and keeps external references', () => {
+  const definition = { id: 'definition', position: { x:0,y:0 }, data: { kind:'define_value', config:{name:'Answer'} } }
+  const reader = { id: 'reader', position: {x:0,y:0}, data: {kind:'read_value',config:{definitionId:'definition'}} }
+  const existing = [definition, {...definition,id:'another',data:{...definition.data,config:{name:'Answer 2'}}}]
+  const [copiedDefinition,copiedReader] = copyNamedValues([definition,reader],existing,new Map([['definition','new-definition'],['reader','new-reader']]))
+  assert.equal(copiedDefinition.data.config.name,'Answer 3')
+  assert.equal(copiedReader.data.config.definitionId,'new-definition')
+  assert.equal(copyNamedValues([reader],existing,new Map([['reader','new-reader']]))[0].data.config.definitionId,'definition')
+  assert.equal(definition.data.config.name,'Answer')
+  assert.equal(reader.data.config.definitionId,'definition')
+})
+
+test('control ordering is independent per display target and persists', () => {
+  const blueprint = createBlueprint('ordered', 'Ordered')
+  blueprint.displays=[]
+  blueprint.controlOrder = { main: ['record', 'region'], 'region:capture-region': ['region', 'record'] }
+  const moved = reorderControls(blueprint.controlOrder.main, 'region', 'record')
+  assert.deepEqual(moved, ['region', 'record'])
+  assert.deepEqual(blueprint.controlOrder.main, ['record', 'region'])
+  assert.deepEqual(reorderControls(moved, 'missing', 'record'), moved)
+  assert.equal(controlOrder({ id: 'record', order: 7 }, moved), 1)
+  assert.deepEqual(hydrateBlueprint(serializeBlueprint(blueprint), 'user', 'revision').controlOrder, blueprint.controlOrder)
+})
 import { verticalCompactor } from 'react-grid-layout'
-import { allParameters, createBlueprint, hydrateBlueprint, moveOverviewCardVertically, moveParameterLayout, overviewCardContentHeight, overviewGridHeight, pinTypeColor, pinTypeForValue, placeOverviewCardBeside, serializeBlueprint, swapOverviewCardPositions, syncBlueprintEvents } from './model.ts'
+import { allParameters, createBlueprint, hydrateBlueprint, moveOverviewCardVertically, moveParameterLayout, overviewCardContentHeight, overviewGridHeight, pinTypeColor, pinTypeForValue, placeOverviewCardBeside, serializeBlueprint, swapOverviewCardPositions } from './model.ts'
 import { connectedNodeIds, ribbonOffsets, routePoints, roundedPath } from './graph-interactions.ts'
 import { overviewCollisionDetection, overviewDropPlacement } from './overview-dnd.ts'
 import { hitRegion, handlePoint, handles, selectionRect, transformRegion, dockRegion, expandToolbar, editRegionField, elapsedText } from './region-geometry.ts'
@@ -50,10 +268,10 @@ test('toolbar docks inside the work area, avoids the top edge and uses hysteresi
 
 test('default recording UI is registered by blueprint and reads a live selected region', () => {
   const doc = serializeBlueprint(createBlueprint('test', 'Test'))
-  assert.ok(doc.nodes.some(n => n.data.kind === 'select_region'))
-  assert.ok(doc.nodes.some(n => n.data.kind === 'get_selected_region'))
-  assert.deepEqual(doc.nodes.filter(n => n.data.kind === 'register_display').map(n => n.data.config.display.source), ['status', 'elapsed'])
-  assert.deepEqual(doc.nodes.find(n => n.id === 'register-start').data.config.control.targets, ['main', 'region:capture-region'])
+  assert.ok(doc.graphs[0].nodes.some(n => n.data.kind === 'select_region'))
+  assert.ok(doc.graphs[0].nodes.some(n => n.data.kind === 'get_selected_region'))
+  assert.deepEqual(doc.displays.map(display => display.source), ['status', 'elapsed'])
+  assert.deepEqual(doc.controls.find(control => control.id === 'start-recording').targets, ['main', 'region:capture-region'])
   assert.equal(doc.values.regionMode, 'Selected Region')
   assert.equal('_selectedRegions' in doc, false)
 })
@@ -65,14 +283,14 @@ test('blueprint documents persist workflow graphs and controls, but reset editor
   const document = serializeBlueprint(blueprint)
   const restored = hydrateBlueprint(document, 'builtin', 'revision-token')
 
-  assert.equal(document.schemaVersion, 1)
+  assert.equal(document.schemaVersion, 2)
   assert.equal('recordState' in document, false)
   assert.deepEqual(restored.nodes, blueprint.nodes)
   assert.deepEqual(restored.edges, blueprint.edges)
   assert.equal(restored.recordState, 'ready')
   assert.equal(restored.selectedNode, null)
   assert.equal(restored.revision, 'revision-token')
-  assert.ok(restored.nodes.some((node) => node.data.kind === 'register_control'))
+  assert.ok(restored.controls.some(control => control.binding?.action === 'record'))
 })
 
 test('recording templates connect editable parameters to the real silent pipeline', () => {
@@ -80,9 +298,9 @@ test('recording templates connect editable parameters to the real silent pipelin
   assert.equal(typeof blueprint.values.fps, 'number')
   assert.equal(typeof blueprint.values.width, 'number')
   assert.equal(blueprint.values.encodingMode, 'Hardware Auto')
-  assert.equal(blueprint.nodes.find(node => node.id === 'encode').data.config.encoder, 'H.264')
-  assert.equal(blueprint.edges.some(edge => edge.target === 'encode' && edge.targetHandle === 'in:audio'), false)
-  for (const [target, field, parameter] of [['region', 'width', 'width'], ['encode', 'fps', 'fps'], ['path', 'directory', 'output']]) {
+  assert.equal(blueprint.nodes.find(node => node.id === 'encode_media_foundation').data.config.codec, 'H.264')
+  assert.equal(blueprint.edges.some(edge => edge.target === 'encode_media_foundation' && edge.targetHandle === 'in:audio'), false)
+  for (const [target, field, parameter] of [['region', 'width', 'width'], ['screen', 'fps', 'fps'], ['path', 'directory', 'output']]) {
     const reader = blueprint.nodes.find(node => node.data.kind === 'read_parameter' && node.data.config.parameterId === parameter)
     assert.ok(blueprint.edges.some(edge => edge.source === reader.id && edge.target === target && edge.targetHandle === `in:param:${field}`))
   }
@@ -91,60 +309,27 @@ test('recording templates connect editable parameters to the real silent pipelin
 
 test('workspaces open both editor tabs and registered controls carry explicit sort order', () => {
   const blueprint = createBlueprint('capture-test', 'Capture test')
-  const controls = blueprint.nodes.filter((node) => node.data.kind === 'register_control').map((node) => node.data.config.control.order)
+  const controls = blueprint.controls.map(control => control.id)
   const restored = hydrateBlueprint(serializeBlueprint(blueprint), 'user', 'revision-token')
 
   assert.deepEqual(blueprint.tabs.map(({ id }) => id), ['overview', 'blueprint'])
   assert.equal(blueprint.activeTab, 'overview')
-  assert.deepEqual(controls, [0, 1, 2, 3])
-  assert.ok(blueprint.nodes.some((node) => node.data.kind === 'register_menu' && node.data.config.path === 'Capture Target/Display 1'))
+  assert.equal(restored.activeTab, 'overview')
+  assert.deepEqual(controls, ['select-region','start-recording'])
+  assert.ok(blueprint.nodes.every(node => !['event','register_control','update_control','register_menu'].includes(node.data.kind)))
   assert.ok(blueprint.nodes.filter((node) => node.data.kind === 'register_control').every((node) => !('menu' in node.data.config.control)))
   assert.deepEqual(restored.tabs.map(({ id }) => id), ['overview', 'blueprint'])
 })
 
 test('Blueprint pin colors and primitive value types match Unreal pin categories', () => {
-  const pinTypes = ['flow', 'boolean', 'byte', 'class', 'integer', 'integer64', 'float', 'double', 'name', 'delegate', 'object', 'soft_object', 'soft_class', 'interface', 'string', 'text', 'struct', 'value', 'vector', 'rotator', 'transform']
-  assert.deepEqual(pinTypes.map(pinTypeColor), ['#FFFFFF', '#950000', '#006F65', '#5900BC', '#1FE3AF', '#ACE3AF', '#A1FF45', '#38D500', '#CD82FF', '#FF3838', '#00AAF5', '#95FFFF', '#FF95FF', '#F1FFAA', '#FF00D4', '#E77CAA', '#0059CB', '#817A7A', '#FFCA23', '#A0B4FF', '#FF7300'])
+  const pinTypes = ['boolean', 'byte', 'class', 'integer', 'integer64', 'float', 'double', 'name', 'delegate', 'object', 'soft_object', 'soft_class', 'interface', 'string', 'text', 'struct', 'value', 'vector', 'rotator', 'transform']
+  assert.deepEqual(pinTypes.map(pinTypeColor), ['#950000', '#006F65', '#5900BC', '#1FE3AF', '#ACE3AF', '#A1FF45', '#38D500', '#CD82FF', '#FF3838', '#00AAF5', '#95FFFF', '#FF95FF', '#F1FFAA', '#FF00D4', '#E77CAA', '#0059CB', '#817A7A', '#FFCA23', '#A0B4FF', '#FF7300'])
   assert.equal(pinTypeColor('region'), pinTypeColor('struct'))
   assert.equal(pinTypeColor('path'), pinTypeColor('string'))
   assert.equal(pinTypeColor('video_frames'), pinTypeColor('object'))
   assert.deepEqual([pinTypeForValue(false), pinTypeForValue(4), pinTypeForValue(4.5), pinTypeForValue('Record')], ['boolean', 'integer', 'float', 'string'])
 })
 
-test('legacy nested menus migrate to one registration node per slash-separated path', () => {
-  const document = serializeBlueprint(createBlueprint('capture-test', 'Capture test'))
-  const oldMenuNodes = new Set(document.nodes.filter((node) => node.data.kind === 'register_menu').map((node) => node.id))
-  document.nodes = document.nodes.filter((node) => !oldMenuNodes.has(node.id))
-  document.edges = document.edges.filter((edge) => !oldMenuNodes.has(edge.source) && !oldMenuNodes.has(edge.target))
-  document.nodes = document.nodes.map((node) => node.id === 'register-select' ? {
-    ...node,
-    data: { ...node.data, config: { ...node.data.config, control: { ...node.data.config.control, menu: [{
-      id: 'target', label: 'Capture Target', icon: 'monitor', eventId: 'event-select-display', children: [
-        { id: 'display-1', label: 'Display 1', icon: 'monitor', eventId: 'event-select-display-1' },
-      ],
-    }] } } },
-  } : node)
-
-  const restored = hydrateBlueprint(document, 'user', 'revision-token')
-  const registrations = restored.nodes.filter((node) => node.data.kind === 'register_menu')
-
-  assert.deepEqual(registrations.map((node) => node.data.config.path), ['Capture Target', 'Capture Target/Display 1'])
-  assert.ok(restored.nodes.find((node) => node.id === 'register-select').data.config.control.menu === undefined)
-  assert.ok(restored.edges.some((edge) => edge.source === 'register-stop' && edge.target === registrations[0].id))
-})
-
-test('older blueprints infer a visual Order from their registration sequence', () => {
-  const document = serializeBlueprint(createBlueprint('capture-test', 'Capture test'))
-  document.nodes = document.nodes.map((node) => {
-    if (node.data.kind !== 'register_control') return node
-    const control = { ...node.data.config.control }
-    delete control.order
-    return { ...node, data: { ...node.data, config: { ...node.data.config, control } } }
-  })
-  const restored = hydrateBlueprint(document, 'builtin', 'revision-token')
-
-  assert.deepEqual(restored.nodes.filter((node) => node.data.kind === 'register_control').map((node) => node.data.config.control.order), [0, 1, 2, 3])
-})
 
 test('transient React Flow selection and dragging state do not dirty a blueprint', () => {
   const blueprint = createBlueprint('capture-test', 'Capture test')
@@ -153,16 +338,6 @@ test('transient React Flow selection and dragging state do not dirty a blueprint
   assert.deepEqual(serializeBlueprint(edited), serializeBlueprint(blueprint))
 })
 
-test('event library stays in sync with Event nodes and drops deleted events', () => {
-  const blueprint = createBlueprint('capture-test', 'Capture test')
-  const customEvent = { ...blueprint.nodes.find((node) => node.data.kind === 'event'), id: 'event-custom', data: { kind: 'event', label: 'On Custom Event', config: { eventId: 'event-custom' } } }
-  const nodes = [...blueprint.nodes.map((node) => node.data.config?.eventId === 'event-start' ? { ...node, data: { ...node.data, label: 'On Recording Start' } } : node), customEvent]
-  const synced = syncBlueprintEvents({ ...blueprint, nodes, events: [...blueprint.events, { id: 'orphan', name: 'Orphan', folderId: 'recording' }], selection: { kind: 'event', key: 'event-start' } })
-
-  assert.deepEqual(synced.events.map(({ id, name }) => [id, name]), nodes.filter((node) => node.data.kind === 'event').map((node) => [node.data.config.eventId, node.data.label]))
-  assert.equal(synced.events.some(({ id }) => id === 'orphan'), false)
-  assert.equal(syncBlueprintEvents({ ...synced, nodes: nodes.filter((node) => node.data.config?.eventId !== 'event-start') }).selection, null)
-})
 
 test('dropping beside a parameter creates a column without resizing first', () => {
   const rows = [
@@ -380,17 +555,12 @@ test('overview vertical insertions create rows and a blank-area drop appends the
 })
 
 
-test('function graphs persist independently and discard transient node state', () => {
-  const blueprint = createBlueprint('functions-test', 'Functions test')
-  const node = { ...structuredClone(blueprint.nodes[0]), selected: true, measured: { width: 100, height: 60 } }
-  blueprint.functions[0].graph = { nodes: [node], edges: [] }
-  const document = serializeBlueprint(blueprint)
-  const restored = hydrateBlueprint(document, 'user', 'revision')
-  assert.equal(restored.functions[0].graph.nodes.length, 1)
-  assert.equal('selected' in document.functions[0].graph.nodes[0], false)
-  assert.equal('measured' in document.functions[0].graph.nodes[0], false)
-  assert.deepEqual(restored.nodes, serializeBlueprint(blueprint).nodes)
-  assert.equal(hydrateBlueprint({ ...document, functions: [{ id: 'legacy', name: 'Legacy', folderId: 'utilities' }] }, 'user', 'revision').functions[0].graph, undefined)
+test('V2 drops execution library fields and rejects obsolete document shapes', () => {
+  const document = serializeBlueprint(createBlueprint('clean-v2','Clean V2'))
+  for (const key of ['eventFolders','events','functionFolders','functions']) {
+    assert.equal(key in document,false)
+    assert.throws(() => hydrateBlueprint({...document,[key]:[]},'user','revision'),/Unsupported blueprint schema/)
+  }
 })
 
 
@@ -525,3 +695,24 @@ test('output folder control keeps its string path through save and reload', () =
   assert.equal(stored.values.output, blueprint.values.output)
   assert.equal(hydrateBlueprint(stored, 'user', null).values.output, blueprint.values.output)
 })
+
+ test('connected input preview follows current parameters and named values, preserving false and rejecting cycles', () => {
+  const blueprint = createBlueprint('preview', 'Preview')
+  blueprint.nodes = [
+    {id:'reader',position:{x:0,y:0},data:{kind:'read_parameter',label:'Read fps',config:{parameterId:'fps'}}},
+    {id:'target',position:{x:0,y:0},data:{kind:'make_integer',label:'Target',config:{value:10}}},
+  ]
+  blueprint.edges = [{id:'link',source:'reader',target:'target',sourceHandle:'out:value',targetHandle:'in:param:value'}]
+  blueprint.values.fps = 30
+  assert.equal(connectedInputValue(blueprint,'target','value'),30)
+  blueprint.values.fps = 60
+  assert.equal(connectedInputValue(blueprint,'target','value'),60)
+  blueprint.nodes[0].data.config.parameterId='cursor'
+  blueprint.values.cursor=false
+  assert.equal(connectedInputValue(blueprint,'target','value'),false)
+  blueprint.nodes[0].data={kind:'define_value',label:'Named',config:{name:'Example'}}
+  blueprint.edges.push({id:'cycle',source:'target',target:'reader',sourceHandle:'out:value',targetHandle:'in:value'})
+  assert.equal(connectedInputValue(blueprint,'target','value'),undefined)
+  blueprint.nodes[1].data={kind:'define_value',label:'Cycle',config:{name:'Cycle'}}
+  assert.equal(connectedInputValue(blueprint,'target','value'),undefined)
+ })

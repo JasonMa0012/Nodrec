@@ -1,7 +1,11 @@
+import brandIcon from '../src-tauri/icons/icon.svg'
+import ControlShortcuts, { ActionDragHandle, actionDragEvent, type ActionDrag } from './ControlShortcuts'
+import { reconcileNodeShortcuts } from './control-order'
+import { outputStatusText, type OutputStatus } from './output-status'
 import { Fragment, createContext, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useId, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { invoke } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-dialog'
+import { invoke, isTauri } from '@tauri-apps/api/core'
+import { FolderActions, Toggle } from './FieldControls'
 import { startupLog } from './startup'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -11,17 +15,17 @@ import { Responsive, useContainerWidth, verticalCompactor, type Layout } from 'r
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 import {
-  ArrowRightToLine, AudioLines, ChevronDown, ChevronRight, CircleHelp, Clock3, Copy, Ellipsis, FileVideo2, Folder,
+  AudioLines, ChevronDown, ChevronRight, Clock3, Copy, Ellipsis, FileVideo2, Folder,
   FolderPlus, GripVertical, LayoutGrid, Minus, Monitor,
-  Package, Pin, Plus, Save, ScrollText, Settings, Square, Undo2, X, Workflow, Keyboard, Video,
+  Package, Pin, Plus, Save, ScrollText, Settings, Square, Undo2, X, Workflow, Keyboard,
 } from 'lucide-react'
 import GraphEditor from './GraphEditor'
 import SettingsPanel from './SettingsPanel'
 import { ControlButton, RuntimeDisplay } from './WorkflowControls'
 import { overviewCollisionDetection, overviewDropPlacement } from './overview-dnd'
 import {
-  allParameters, configPathId, createBlueprint as makeBlueprint, exposedInputIds, exposeParameter, hydrateBlueprint, isPinned, moveOverviewCardVertically, moveParameterLayout, overviewCardContentHeight, overviewGridHeight, parameterInputPortId, placeOverviewCardBeside, serializeBlueprint, setPinned, swapOverviewCardPositions, syncBlueprintEvents,
-  type Blueprint, type BlueprintDocument, type BlueprintScope, type BlueprintSelection, type EditorTab, type NodeTypeDefinition, type OverviewLayouts, type ParameterDefinition, type ParameterDropPlacement, type ParameterRow, type RegisteredControl, type RegisteredDisplay, type TreeItem, type Value,
+  connectedInputValue, parameterSources, blueprintGraphs, selectBlueprintGraph, createNodeControl, acceptBlueprintEdit, allParameters, configPathId, createBlueprint as makeBlueprint, exposeParameter, hydrateBlueprint, isPinned, moveOverviewCardVertically, moveParameterLayout, overviewCardContentHeight, overviewGridHeight, parameterInputPortId, placeOverviewCardBeside, serializeBlueprint, setPinned, swapOverviewCardPositions,
+  type Blueprint, type BlueprintDocument, type BlueprintScope, type BlueprintSelection, type EditorTab, type NodeTypeDefinition, type OverviewLayouts, type ParameterDefinition, type ParameterDropPlacement, type ParameterRow, type RegisteredControl, type RegisteredDisplay, type Value,
 } from './model'
 
 type Page = 'workspace' | 'runs' | 'settings'
@@ -30,10 +34,11 @@ type OverviewCardDropPlacement = 'left' | 'right' | 'above' | 'below'
 type OverviewDropInfo = { cardId: string | null; placement: OverviewCardDropPlacement | 'swap' | 'end' } | null
 type BlueprintIndex = { blueprints: { scope: BlueprintScope; id: string; name: string; revision: string; document: BlueprintDocument | null; error: string | null; runnable: boolean }[]; diagnostics: string[] }
 type RuntimeLog = { sequence: number; blueprintId: string; runId: string | null; message: string }
-type RecordingStats = { encoder: string; adapter: string; width: number; height: number; fps: number; durationMs: number; encodedFrames: number; droppedFrames: number; repeatedFrames: number; outputPath: string; stopMs: number | null; error: string | null; finished: boolean }
+type RecordingStats = { outputs: OutputStatus[]; encoder: string; adapter: string; width: number; height: number; fps: number; durationMs: number; encodedFrames: number; droppedFrames: number; repeatedFrames: number; outputPath: string; stopMs: number | null; error: string | null; finished: boolean }
 type DisplayInfo = { id: string; name: string; width: number; height: number; x: number; y: number; hdr: boolean }
 const DisplayContext = createContext<DisplayInfo[]>([])
-type RuntimeSnapshot = { blueprintId: string | null; runId: string | null; status: Blueprint['recordState']; frameCount: number; controls: RegisteredControl[]; displays: RegisteredDisplay[]; logs: RuntimeLog[]; error: string | null; recording: RecordingStats | null }
+type NodeError = {graphId:string;nodeId:string;message:string}
+type RuntimeSnapshot = { nodeErrors:NodeError[]; blueprintId: string | null; runId: string | null; status: Blueprint['recordState']; frameCount: number; controls: RegisteredControl[]; displays: RegisteredDisplay[]; logs: RuntimeLog[]; error: string | null; recording: RecordingStats | null }
 type RemovedBlueprint = { blueprint: Blueprint; trashName: string | null; savedDocument: string | null }
 type Activation = { controls: RegisteredControl[]; diagnostics: string[] }
 const overviewWideBreakpoint = 740
@@ -51,9 +56,8 @@ function useDragSensors() {
   )
 }
 
-function isTauriWindow() { return '__TAURI_INTERNALS__' in window }
 function withWindow(action: 'minimize' | 'toggleMaximize' | 'close') {
-  if (!isTauriWindow()) return
+  if (!isTauri()) return
   const appWindow = getCurrentWindow()
   void appWindow[action]().catch((error) => console.error(`Tauri window ${action} failed`, error))
 }
@@ -63,15 +67,16 @@ function closeNestedMenus(menu: HTMLDetailsElement) {
   menu.querySelectorAll<HTMLDetailsElement>('details[open]').forEach(submenu => { submenu.open = false })
 }
 
-function TitleBar({ controls, displays, durationMs, status, controlsDisabled, onControlEvent, sidebarOpen, toggleSidebar, navigate, showLogs }: {
-  controls: RegisteredControl[]; displays: RegisteredDisplay[]; durationMs: number; status: Blueprint['recordState']; hasBlueprint: boolean; controlsDisabled: boolean; onControlEvent: (eventId: string) => void
+function TitleBar({ controls, displays, durationMs, status, controlsDisabled, sidebarOpen, toggleSidebar, navigate, showLogs, shortcutBlueprint, editingShortcuts, updateShortcuts }: {
+  shortcutBlueprint:Blueprint|null;editingShortcuts:boolean;updateShortcuts:(value:(current:Blueprint)=>Blueprint)=>void;
+  controls: RegisteredControl[]; displays: RegisteredDisplay[]; durationMs: number; status: Blueprint['recordState']; controlsDisabled: boolean
   sidebarOpen: boolean; toggleSidebar: () => void; navigate: (page: Page) => void; showLogs: () => void
 }) {
-  const dragWindow = () => { if (isTauriWindow()) void getCurrentWindow().startDragging().catch((error) => console.error('Tauri window dragging failed', error)) }
+  const dragWindow = () => { if (isTauri()) void getCurrentWindow().startDragging().catch((error) => console.error('Tauri window dragging failed', error)) }
   useEffect(() => {
     const closeMenus = (event: PointerEvent) => {
-      const targetMenu = event.target instanceof Element ? event.target.closest<HTMLDetailsElement>('.brand-menu, .control-menu, .plus-menu') : null
-      document.querySelectorAll<HTMLDetailsElement>('.brand-menu[open], .control-menu[open], .plus-menu[open]').forEach((menu) => {
+      const targetMenu = event.target instanceof Element ? event.target.closest<HTMLDetailsElement>('.brand-menu, .plus-menu') : null
+      document.querySelectorAll<HTMLDetailsElement>('.brand-menu[open], .plus-menu[open]').forEach((menu) => {
         if (menu !== targetMenu) { closeNestedMenus(menu); menu.open = false }
       })
     }
@@ -81,7 +86,7 @@ function TitleBar({ controls, displays, durationMs, status, controlsDisabled, on
   return <header className="titlebar" onMouseDown={(event) => { if (event.button === 0 && !(event.target as HTMLElement).closest('button, summary, a, input, select')) { if (event.detail === 2) withWindow('toggleMaximize'); else dragWindow() } }}>
     <div className="titlebar-start">
       <details className="brand-menu" name="global-dropdown-menu" onToggle={(event) => { if (!event.currentTarget.open) closeNestedMenus(event.currentTarget) }}>
-        <summary className="brand-menu-trigger" aria-label="Open Nodrec menu"><span className="brand-mark"><span>N</span></span><span className="brand-name">NODREC</span><ChevronDown size={13} /></summary>
+        <summary className="brand-menu-trigger" aria-label="Open Nodrec menu"><span className="brand-mark"><img src={brandIcon} alt="" /></span><span className="brand-name">NODREC</span><ChevronDown size={13} /></summary>
         <div className="brand-menu-popover">
           <button onClick={(event) => { navigate('workspace'); event.currentTarget.closest('details')?.removeAttribute('open') }}><Workflow size={14} />Workspace</button>
           <button onClick={(event) => { navigate('runs'); event.currentTarget.closest('details')?.removeAttribute('open') }}><Clock3 size={14} />Runs</button>
@@ -94,9 +99,7 @@ function TitleBar({ controls, displays, durationMs, status, controlsDisabled, on
       </details>
       <button className="icon-button sidebar-toggle" title={sidebarOpen ? 'Collapse blueprint list' : 'Expand blueprint list'} aria-label="Toggle blueprint list" onClick={toggleSidebar}><PanelGlyph collapsed={!sidebarOpen} /></button>
       <span className="titlebar-divider" />
-      <div className="titlebar-recording-actions">
-        {[...controls, ...displays].filter(item => !item.targets || item.targets.includes('main')).sort((a,b) => a.order-b.order).map(item => 'source' in item ? <RuntimeDisplay key={item.id} display={item} status={status} durationMs={durationMs} /> : <ControlButton key={item.id} control={item} primary={item.id === 'start-recording'} dispatch={onControlEvent} disabled={controlsDisabled} />)}
-      </div>
+      <ControlShortcuts blueprint={shortcutBlueprint} editing={editingShortcuts} update={updateShortcuts} controls={controls} displays={displays} durationMs={durationMs} status={status} disabled={controlsDisabled}/>
     </div>
     <div className="titlebar-drag-space" />
     <div className="window-controls">
@@ -138,7 +141,7 @@ function useParameterSizing(value: unknown) {
     const canvas = document.createElement('canvas')
     const context = canvas.getContext('2d')!
     const measure = () => {
-      const field = control.querySelector<HTMLElement>('.field-control, .readonly-value')
+      const field = control.querySelector<HTMLElement>('.field-control, .readonly-value, .checkbox-control')
       if (!field) return
       const labelStyle = getComputedStyle(label)
       context.font = `${labelStyle.fontWeight} ${labelStyle.fontSize} ${labelStyle.fontFamily}`
@@ -146,13 +149,17 @@ function useParameterSizing(value: unknown) {
       const fieldStyle = getComputedStyle(field)
       context.font = `${fieldStyle.fontWeight} ${fieldStyle.fontSize} ${fieldStyle.fontFamily}`
       const text = field instanceof HTMLSelectElement ? field.selectedOptions[0]?.textContent ?? '' : field instanceof HTMLInputElement ? field.value : field.textContent ?? ''
-      const fieldWidth = field.classList.contains('checkbox-control') ? 31 : Math.ceil(context.measureText(text).width) + (field instanceof HTMLSelectElement ? 38 : field instanceof HTMLInputElement && field.type === 'number' ? 38 : 20)
-      const extras = row.classList.contains('layout-field-heading') ? 88 : row.classList.contains('config-field') ? 38 : 10
+      const fieldChrome = parseFloat(fieldStyle.paddingLeft) + parseFloat(fieldStyle.paddingRight) + parseFloat(fieldStyle.borderLeftWidth) + parseFloat(fieldStyle.borderRightWidth)
+      // Native select arrows and number steppers occupy space inside the content box.
+      const nativeControlWidth = field instanceof HTMLSelectElement || field instanceof HTMLInputElement && field.type === 'number' ? 20 : 0
+      const fieldWidth = field.classList.contains('checkbox-control') ? 31 : Math.ceil(context.measureText(text).width + fieldChrome + nativeControlWidth)
+      const controlExtras = Array.from(control.children).filter(child => child !== field).reduce((total, child) => total + child.getBoundingClientRect().width, 0) + parseFloat(getComputedStyle(control).columnGap) * Math.max(0, control.children.length - 1)
+      const extras = row.classList.contains('layout-field-heading') ? 88 : 10
       const width = row.clientWidth
-      const stacked = labelWidth + fieldWidth + 22 + extras > width
+      const stacked = labelWidth + fieldWidth + controlExtras + extras > width
       const compact = labelWidth + width / 2 + 22 + extras > width
       row.classList.toggle('stacked-parameter', stacked)
-      row.style.setProperty('--content-field-width', `${Math.min(width - (row.classList.contains('layout-field-heading') ? 72 : 0), Math.max(stacked || compact ? 0 : width / 2 + 22, fieldWidth + 22))}px`)
+      row.style.setProperty('--content-field-width', `${Math.min(width - (row.classList.contains('layout-field-heading') ? 72 : 0), Math.max(stacked || compact ? 0 : width / 2 + 22, fieldWidth + controlExtras))}px`)
     }
     const observer = new ResizeObserver(measure)
     observer.observe(row)
@@ -172,31 +179,20 @@ function BuiltinBadge() {
     {anchor && createPortal(<span id={tooltipId} className="builtin-tooltip" role="tooltip" style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 368)), top: anchor.bottom + 6 }}>Built-in blueprint. Replaced on every update. Duplicate to keep your changes.</span>, document.body)}</>
 }
 
-function ParameterControl({ definition, value, onChange, compact = false }: { definition: ParameterDefinition; value: Value; onChange: (value: Value) => void; compact?: boolean }) {
+function ParameterControl({ definition, value, onChange }: { definition: ParameterDefinition; value: Value; onChange: (value: Value) => void }) {
   const displays = useContext(DisplayContext)
-  const [picking, setPicking] = useState(false)
-  const [pickerError, setPickerError] = useState('')
-  async function pickFolder() {
-    setPicking(true); setPickerError('')
-    try {
-      const path = await open({ directory: true, multiple: false, defaultPath: String(value) || undefined, title: `Select ${definition.label}` })
-      if (path !== null) onChange(path)
-    } catch (error) { setPickerError(String(error)) }
-    finally { setPicking(false) }
-  }
   const changed = definition.kind !== 'readonly' && value !== definition.initial
   const sizingRef = useParameterSizing(JSON.stringify([value, displays]))
   return <span className="parameter-control-wrap" ref={sizingRef}>
-    {definition.kind === 'boolean' ? <span className={`field-control checkbox-control${compact ? ' compact' : ''}`}><input aria-label={definition.label} type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} /><span className="toggle-track"><i /></span></span>
+    {definition.kind === 'boolean' ? <Toggle label={definition.label} checked={Boolean(value)} onChange={onChange} />
       : definition.id === 'display' ? <select className="field-control" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(event.target.value)}>
         {!displays.some((display) => display.id === value) && <option value={String(value)}>{String(value)} (select a display)</option>}
         {displays.map((display) => <option key={display.id} value={display.id}>{display.name} · {display.width} × {display.height}{display.hdr ? ' (HDR unsupported)' : ''}</option>)}
       </select>
       : definition.kind === 'choice' ? <select className="field-control" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(typeof definition.initial === 'number' ? Number(event.target.value) : event.target.value)}>{definition.options?.map((option) => <option key={option} value={option}>{option === 'Software' ? 'Software (CPU; higher CPU usage)' : option}</option>)}</select>
         : definition.kind === 'readonly' ? <span className="readonly-value" title={String(value)}>{String(value)}</span>
-          : <input className="field-control" disabled={picking} type={definition.kind === 'number' ? 'number' : 'text'} min={definition.kind === 'number' ? 0 : undefined} step="1" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(definition.kind === 'number' ? Number(event.target.value) : event.target.value)} />}
-    {definition.kind === 'folder' && <button type="button" className="parameter-browse" aria-label={`Browse ${definition.label}`} title="Choose folder" disabled={picking || !isTauriWindow()} onClick={() => { void pickFolder() }}><Folder size={14} /></button>}
-    {pickerError && <span className="parameter-picker-error" role="alert">{pickerError}</span>}
+          : <input className="field-control" type={definition.kind === 'number' ? 'number' : 'text'} min={definition.kind === 'number' ? 0 : undefined} step="1" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(definition.kind === 'number' ? Number(event.target.value) : event.target.value)} />}
+    {definition.kind === 'folder' && <FolderActions label={definition.label} value={String(value)} onChange={onChange} />}
     {changed ? <button type="button" className="parameter-reset" aria-label={`Reset ${definition.label}`} title="Reset to default" onClick={(event) => { event.stopPropagation(); onChange(definition.initial) }}><Undo2 size={13} /></button> : <span className="parameter-reset-space" aria-hidden="true" />}
   </span>
 }
@@ -212,7 +208,7 @@ function ParameterCard({ definition, value, pinned, onChange, selected = false, 
     <div className="layout-field-heading">
       {dragProps ? <button type="button" className="parameter-drag-handle" aria-label={`Drag ${definition.label}`} {...dragProps}><GripVertical size={13} /></button> : <GripVertical size={13} />}
       <span className="parameter-label">{definition.label}</span>
-      <ParameterControl definition={definition} value={value} onChange={onChange} compact />
+      <ParameterControl definition={definition} value={value} onChange={onChange} />
       <button type="button" className={`icon-button pin-button${pinned ? ' pinned' : ''}`} aria-label={pinned ? 'Unpin parameter' : 'Pin parameter'} onClick={(event) => { event.stopPropagation(); onPin?.() }}><Pin size={14} /></button>
     </div>
   </div>
@@ -304,7 +300,7 @@ function ParameterField({ blueprint, definition, update, compact = false, inline
   const changed = definition.kind !== 'readonly' && value !== definition.initial
   return <label className={`parameter-field${compact ? ' compact' : ''}${inline ? ' inline' : ''}${definition.kind === 'boolean' ? ' boolean-field' : ''}${changed ? ' has-reset' : ''}`}>
     <span className="parameter-label">{definition.label}</span>
-    <ParameterControl definition={definition} value={value} onChange={(value) => update((current) => ({ ...current, values: { ...current.values, [definition.id]: value } }))} compact={compact} />
+    <ParameterControl definition={definition} value={value} onChange={(value) => update((current) => ({ ...current, values: { ...current.values, [definition.id]: value } }))} />
   </label>
 }
 
@@ -553,58 +549,42 @@ function FolderLine({ name, open, selected, onToggle, onSelect, onDoubleClick, c
   </div>
 }
 
-function LibraryEditor({ blueprint, update, openCard, openEvent, openFunction }: { blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; openCard: (id: string) => void; openEvent: (id: string) => void; openFunction: (id: string) => void }) {
+function LibraryEditor({ blueprint, update, openCard }: { blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; openCard: (id: string) => void }) {
   const definitions = allParameters(blueprint)
   const exposedParameters = new Set(blueprint.cards.flatMap((card) => card.parameters))
   const setSelection = (selection: BlueprintSelection) => update((current) => ({ ...current, selection, selectedParameter: selection?.kind === 'parameter' ? selection.key : null, selectedNode: null }))
   const toggleFolder = (folderId: string) => update((current) => ({ ...current, openFolders: { ...current.openFolders, [folderId]: !(current.openFolders[folderId] ?? true) } }))
-  const sectionsOpen = Object.fromEntries(['events', 'functions', 'parameters', 'variables'].map((section) => [section, blueprint.openFolders[`section-${section}`] ?? true])) as Record<'events' | 'functions' | 'parameters' | 'variables', boolean>
-  const createFolder = (kind: 'events' | 'functions' | 'variables' | 'parameters') => update((current) => {
+  const sectionsOpen = Object.fromEntries(['graphs', 'parameters', 'variables'].map((section) => [section, blueprint.openFolders[`section-${section}`] ?? true])) as Record<'graphs' | 'parameters' | 'variables', boolean>
+  const createFolder = (kind: 'variables' | 'parameters') => update((current) => {
     const id = `${kind}-folder-${crypto.randomUUID().slice(0, 6)}`
     if (kind === 'parameters') {
       const card = { id, name: 'New card', parameters: [] }
       return { ...current, cards: [...current.cards, card], layouts: { ...current.layouts, [id]: [] }, openFolders: { ...current.openFolders, [id]: true }, selection: { kind: 'card', key: id } }
     }
-    const key = kind === 'events' ? 'eventFolders' : kind === 'functions' ? 'functionFolders' : 'variableFolders'
+    const key = 'variableFolders'
     const folders = current[key]
     return { ...current, [key]: [...folders, { id, name: 'New folder' }], openFolders: { ...current.openFolders, [id]: true }, selection: { kind: 'folder', key: id } }
   })
-  const createTreeItem = (kind: 'events' | 'functions') => update((current) => {
-    const id = kind === 'events' ? `event-${crypto.randomUUID()}` : `function-${crypto.randomUUID()}`
-    const folders = kind === 'events' ? current.eventFolders : current.functionFolders
-    const folderId = folders[0]?.id ?? ''
-    const item: TreeItem = { id, name: kind === 'events' ? 'New Event' : 'New Function', folderId }
-    if (kind === 'events') return { ...current, events: [...current.events, item], nodes: [...current.nodes, { id, type: 'event', position: { x: 80 + current.nodes.length % 6 * 35, y: 80 + Math.floor(current.nodes.length / 6) * 55 }, data: { kind: 'event', label: item.name, config: { eventId: id } } }], selection: { kind: 'event', key: id } }
-    return { ...current, functions: [...current.functions, item], selection: { kind: 'function', key: id } }
-  })
   const createVariable = () => update((current) => {
     const id = `variable-${crypto.randomUUID().slice(0, 6)}`
-    const definition: ParameterDefinition = { id, label: 'New variable', kind: 'text', initial: '' }
+    const definition: ParameterDefinition = { id, label: 'New parameter', kind: 'text', initial: '' }
     const customFolder = current.variableFolders.find((folder) => folder.id === 'custom')
     return { ...current, customParameters: [...current.customParameters, definition], values: { ...current.values, [id]: '' }, variableFolders: customFolder ? current.variableFolders : [...current.variableFolders, { id: 'custom', name: 'Custom' }], selection: { kind: 'parameter', key: id } }
   })
-  const folderForVariable = (id: string) => id.startsWith('variable-') ? 'custom' : id === 'display' || id === 'region' || id === 'cursor' || id === 'delay' ? 'capture' : ['resolution', 'fps', 'encoder', 'bitrate'].includes(id) ? 'video' : ['systemAudio', 'microphone', 'device', 'sampleRate'].includes(id) ? 'audio' : ['output', 'filename'].includes(id) ? 'output' : 'input'
+  const folderForVariable = (id: string) => id.startsWith('variable-') ? 'custom' : id === 'display' || id === 'region' || id === 'cursor' || id === 'delay' ? 'capture' : ['resolution', 'fps', 'codec', 'bitrate'].includes(id) ? 'video' : ['systemAudio', 'microphone', 'device', 'sampleRate'].includes(id) ? 'audio' : ['output', 'filename'].includes(id) ? 'output' : 'input'
 
-  const sectionPlus = (title: string, kind: 'events' | 'functions' | 'variables' | 'parameters') => <PlusMenu label={title}>
+  const sectionPlus = (title: string, kind: 'variables' | 'parameters') => <PlusMenu label={title}>
     <button onClick={() => createFolder(kind)}><FolderPlus size={14} />Folder</button>
-    {kind === 'events' && <button onClick={() => createTreeItem('events')}>Event</button>}
-    {kind === 'functions' && <button onClick={() => createTreeItem('functions')}>Function</button>}
-    {kind === 'variables' && <button onClick={createVariable}>Variable</button>}
+    {kind === 'variables' && <button onClick={createVariable}>Parameter</button>}
     {kind === 'parameters' && <div className="menu-nested-label">Add variable to card</div>}
     {kind === 'parameters' && blueprint.cards.map((card) => <details className="menu-submenu" name="plus-menu-submenu" key={card.id}><summary>{card.name}<ChevronRight size={13} /></summary><div>{definitions.filter((definition) => !card.parameters.includes(definition.id)).map((definition) => <button key={definition.id} onClick={() => update((current) => exposeParameter(current, card.id, definition.id))}>{definition.label}</button>)}</div></details>)}
   </PlusMenu>
 
   return <aside className="blueprint-library">
+
     <div className="library-scroll">
-      <section className="library-section"><SectionTitle title="Events" open={sectionsOpen.events} onToggle={() => toggleFolder('section-events')} addMenu={sectionPlus('Events', 'events')} />
-        {sectionsOpen.events && blueprint.eventFolders.map((folder) => <FolderLine key={folder.id} name={folder.name} open={blueprint.openFolders[folder.id] ?? true} selected={blueprint.selection?.kind === 'folder' && blueprint.selection.key === folder.id} onToggle={() => toggleFolder(folder.id)} onSelect={() => setSelection({ kind: 'folder', key: folder.id })}>
-          {blueprint.events.filter((event) => event.folderId === folder.id).map((event) => <button className={`tree-item${blueprint.selection?.kind === 'event' && blueprint.selection.key === event.id ? ' selected' : ''}`} key={event.id} onClick={() => setSelection({ kind: 'event', key: event.id })} onDoubleClick={() => openEvent(event.id)}><CircleHelp size={13} />{event.name}</button>)}
-        </FolderLine>)}
-      </section>
-      <section className="library-section"><SectionTitle title="Functions" open={sectionsOpen.functions} onToggle={() => toggleFolder('section-functions')} addMenu={sectionPlus('Functions', 'functions')} />
-        {sectionsOpen.functions && blueprint.functionFolders.map((folder) => <FolderLine key={folder.id} name={folder.name} open={blueprint.openFolders[folder.id] ?? true} selected={blueprint.selection?.kind === 'folder' && blueprint.selection.key === folder.id} onToggle={() => toggleFolder(folder.id)} onSelect={() => setSelection({ kind: 'folder', key: folder.id })}>
-          {blueprint.functions.filter((item) => item.folderId === folder.id).map((item) => <button className={`tree-item${blueprint.selection?.kind === 'function' && blueprint.selection.key === item.id ? ' selected' : ''}`} key={item.id} onClick={() => setSelection({ kind: 'function', key: item.id })} onDoubleClick={() => openFunction(item.id)}><Workflow size={13} />{item.name}</button>)}
-        </FolderLine>)}
+      <section className="library-section"><SectionTitle title="Graphs" open={sectionsOpen.graphs} onToggle={()=>toggleFolder('section-graphs')} addMenu={<button className="icon-button" aria-label="Add graph" onClick={()=>update(current=>{const id=`graph-${crypto.randomUUID()}`;return {...selectBlueprintGraph({...current,additionalGraphs:[...current.additionalGraphs,{id,name:'New graph',nodes:[],edges:[]}],graphOrder:[...current.graphOrder,id]},id),activeTab:'blueprint'}})}><Plus size={14}/></button>}/>
+      {sectionsOpen.graphs&&blueprintGraphs(blueprint).map(graph=><button key={graph.id} className={`tree-item${blueprint.graphId===graph.id?' selected':''}`} onClick={()=>update(current=>({...selectBlueprintGraph(current,graph.id),activeTab:'blueprint'}))}><Workflow size={14}/>{graph.name}</button>)}
       </section>
       <section className="library-section"><SectionTitle title="Parameters" open={sectionsOpen.parameters} onToggle={() => toggleFolder('section-parameters')} addMenu={sectionPlus('Parameters', 'parameters')} />
         {sectionsOpen.parameters && blueprint.cards.map((card) => <FolderLine key={card.id} name={card.name} open={blueprint.openFolders[card.id] ?? true} selected={blueprint.selection?.kind === 'card' && blueprint.selection.key === card.id} onToggle={() => toggleFolder(card.id)} onSelect={() => setSelection({ kind: 'card', key: card.id })} onDoubleClick={() => openCard(card.id)} onDrop={(event) => {
@@ -619,7 +599,7 @@ function LibraryEditor({ blueprint, update, openCard, openEvent, openFunction }:
           })}
         </FolderLine>)}
       </section>
-      <section className="library-section"><SectionTitle title="Variables" open={sectionsOpen.variables} onToggle={() => toggleFolder('section-variables')} addMenu={sectionPlus('Variables', 'variables')} />
+      <section className="library-section"><SectionTitle title="Unexposed parameters" open={sectionsOpen.variables} onToggle={() => toggleFolder('section-variables')} addMenu={sectionPlus('Unexposed parameters', 'variables')} />
         {sectionsOpen.variables && blueprint.variableFolders.map((folder) => {
           const inFolder = definitions.filter((definition) => !exposedParameters.has(definition.id) && (folder.id.startsWith('variables-') ? false : folderForVariable(definition.id) === folder.id || (folder.id === 'input' && ['pointer', 'keyboard', 'mouse', 'threshold'].includes(definition.id))))
           return <FolderLine key={folder.id} name={folder.name} open={blueprint.openFolders[folder.id] ?? true} selected={blueprint.selection?.kind === 'folder' && blueprint.selection.key === folder.id} onToggle={() => toggleFolder(folder.id)} onSelect={() => setSelection({ kind: 'folder', key: folder.id })}>
@@ -680,124 +660,133 @@ function sameConfigValue(left: unknown, right: unknown) {
   return Object.is(left, right) || JSON.stringify(left) === JSON.stringify(right)
 }
 
-function canRenderConfig(name: string, values: unknown[]): boolean {
-  if (name === 'menu' || name === 'children' || values.length === 0) return false
+function canRenderConfig(values: unknown[]): boolean {
+  if (values.length === 0) return false
   const value = values[0]
+
 
   const type = Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value
   if (values.some((item) => (Array.isArray(item) ? 'array' : item === null ? 'null' : typeof item) !== type)) return false
-  if (isConfigObject(value)) return Object.keys(value).some((key) => canRenderConfig(key, values.map((item) => isConfigObject(item) ? item[key] : undefined)))
+  if (isConfigObject(value)) return Object.keys(value).some((key) => canRenderConfig(values.map((item) => isConfigObject(item) ? item[key] : undefined)))
   return value !== undefined
 }
 
 function configOptions(name: string, blueprint: Blueprint, displays: DisplayInfo[]): ConfigOption[] {
-  if (name === 'eventId') return blueprint.nodes.flatMap((node) => {
-    const id = node.data.kind === 'event' ? node.data.config?.eventId : null
-    return typeof id === 'string' ? [{ value: id, label: node.data.label }] : []
-  })
-  if (name === 'controlId') return blueprint.nodes.flatMap((node) => {
-    const control = node.data.kind === 'register_control' ? node.data.config?.control : null
-    return isConfigObject(control) && typeof control.id === 'string' ? [{ value: control.id, label: String(control.label ?? control.id) }] : []
-  })
-  if (name === 'parameterId') return allParameters(blueprint).map((parameter) => ({ value: parameter.id, label: parameter.label }))
-  if (name === 'outputNodeId') return blueprint.nodes.filter((node) => node.data.kind === 'write').map((node) => ({ value: node.id, label: node.data.label }))
-  if (name === 'icon') return ['circle-help', 'crop', 'monitor', 'play', 'pause', 'square', 'stop-circle', 'settings', 'video', 'folder', 'mouse-pointer-2', 'audio-lines', 'clock-3'].map((value) => ({ value, label: configFieldLabel(value) }))
+  if (name === 'definitionId') return blueprint.nodes.filter(node => node.data.kind === 'define_value').map(node => ({ value: node.id, label: String(node.data.config?.name ?? node.data.label) }))
   if (name === 'operator') return ['equal', 'not_equal', 'contains'].map((value) => ({ value, label: configFieldLabel(value) }))
   if (name === 'display') return displays.map((display) => ({ value: display.id, label: `${display.name} · ${display.width} × ${display.height}${display.hdr ? ' (HDR unsupported)' : ''}` }))
-  if (name === 'source') return ['status', 'elapsed'].map(value => ({ value, label: value }))
-  if (name === 'format') return ['text', 'HH:mm:ss'].map(value => ({ value, label: value }))
   if (name === 'mode') return ['Selected Region', 'Full Display', 'Rectangle'].map((value) => ({ value, label: value }))
-  if (name === 'encodingMode') return [{ value: 'Hardware Auto', label: 'Hardware Auto' }, { value: 'Software', label: 'Software (CPU; higher CPU usage)' }]
-  if (name === 'resolution') return ['Source Size', '1920 × 1080', '2560 × 1440'].map((value) => ({ value, label: value }))
-  if (name === 'encoder') return [{ value: 'H.264', label: 'H.264' }]
   return []
 }
 
-function ConfigField({ name, values, path, blueprint, defaultConfigs, eventNodeSelected, inputParameters, exposedInputsByNode, toggleInput, updateValue, resetValue }: {
-  name: string; values: unknown[]; path: ConfigPath; blueprint: Blueprint; defaultConfigs: Record<string, unknown>[]; eventNodeSelected: boolean; inputParameters: string[]; exposedInputsByNode: Set<string>[]; toggleInput: (path: ConfigPath, enabled: boolean) => void; updateValue: (path: ConfigPath, value: unknown) => void; resetValue: (path: ConfigPath) => void
+function ConfigField({ name, values, path, blueprint, defaultConfigs, nodeIds, inputParameters, connectedInputsByNode, choices = {}, updateValue, resetValue }: {
+  choices?: Record<string, string[]>; name: string; values: unknown[]; path: ConfigPath; blueprint: Blueprint; defaultConfigs: Record<string, unknown>[]; nodeIds: string[]; inputParameters: string[]; connectedInputsByNode: Set<string>[]; updateValue: (path: ConfigPath, value: unknown) => void; resetValue: (path: ConfigPath) => void
 }) {
   const displays = useContext(DisplayContext)
   const sizingRef = useParameterSizing(JSON.stringify([values, displays]))
   const label = configFieldLabel(name)
-  if (name === 'menu' || name === 'children' || name === 'exposedInputs') return null
   const value = values[0]
-  if (name === 'targets') {
-    const selected = Array.isArray(value) ? value as string[] : ['main']
-    const targets = ['main', ...blueprint.nodes.filter(node => node.data.kind === 'select_region').map(node => `region:${node.data.config?.toolId ?? ''}`)]
-    const changed = values.some((item, index) => !sameConfigValue(item, readConfigPath(defaultConfigs[index] ?? {}, path).value ?? ['main']))
-    return <div className="parameter-field config-field"><span className="parameter-label">Targets</span><span className="parameter-input-button-space" aria-hidden="true" /><span ref={sizingRef} className="parameter-control-wrap"><span className="field-control target-checkboxes">{[...new Set(targets)].map(target => <label key={target}><input type="checkbox" checked={selected.includes(target)} onChange={event => updateValue(path, event.target.checked ? [...selected, target] : selected.filter(item => item !== target))} />{target === 'main' ? 'Main window' : blueprint.nodes.find(node => node.data.kind === 'select_region' && `region:${node.data.config?.toolId ?? ''}` === target)?.data.label ?? target}</label>)}</span>{changed ? <button className="parameter-reset" aria-label="Reset Targets" title="Reset to default" onClick={() => resetValue(path)}><Undo2 size={13} /></button> : <span className="parameter-reset-space" aria-hidden="true" />}</span></div>
+  if (isConfigObject(value) && path.length === 1 && nodeIds.some(id => blueprint.edges.some(edge => edge.target === id && edge.targetHandle === `in:${name}`))) {
+    return <div className="parameter-field config-field"><span className="parameter-label">{label}</span><span className="parameter-control-wrap" ref={sizingRef}><span className="readonly-value input-source" aria-label={`${label} current value`} aria-disabled="true" title={`From ${parameterSources(blueprint,nodeIds,name).join(' / ')}`}>{JSON.stringify(connectedInputValue(blueprint,nodeIds[0]!,name)) ?? 'Unavailable'}</span><span className="parameter-reset-space" aria-hidden="true" /></span></div>
   }
-  if (value === undefined || !canRenderConfig(name, values)) return null
+  if (value === undefined || !canRenderConfig(values)) return null
   const multiple = values.some((item) => !sameConfigValue(item, value))
   if (Array.isArray(value) && multiple) return <div className="parameter-field config-field"><span className="parameter-label">{label}</span><span className="readonly-value">Multiple values</span></div>
   if (Array.isArray(value)) return <details className="config-group config-array" open>
     <summary><ChevronDown size={14} />{label}</summary>
     <div className="config-group-content">{value.map((item, index) => <div className="config-array-item" key={isConfigObject(item) && typeof item.id === 'string' ? item.id : index}>
-      <ConfigField name={`${label} ${index + 1}`} values={values.map((array) => (array as unknown[])[index])} path={[...path, index]} blueprint={blueprint} defaultConfigs={defaultConfigs} eventNodeSelected={eventNodeSelected} inputParameters={inputParameters} exposedInputsByNode={exposedInputsByNode} toggleInput={toggleInput} updateValue={updateValue} resetValue={resetValue} />
+      <ConfigField name={`${label} ${index + 1}`} values={values.map((array) => (array as unknown[])[index])} path={[...path, index]} blueprint={blueprint} defaultConfigs={defaultConfigs} nodeIds={nodeIds} inputParameters={inputParameters} connectedInputsByNode={connectedInputsByNode} choices={choices} updateValue={updateValue} resetValue={resetValue} />
       <button type="button" className="config-remove" aria-label={`Remove ${label} ${index + 1}`} onClick={() => updateValue(path, value.filter((_, itemIndex) => itemIndex !== index))}><X size={12} /></button>
     </div>)}
     <button type="button" className="config-add" onClick={() => updateValue(path, [...value, ''])}><Plus size={12} />Add item</button></div>
   </details>
   if (isConfigObject(value)) {
-    const keys = Object.keys(value).filter((key) => canRenderConfig(key, values.map((item) => isConfigObject(item) ? item[key] : undefined)))
+    const keys = Object.keys(value).filter((key) => canRenderConfig(values.map((item) => isConfigObject(item) ? item[key] : undefined)))
     if (keys.length === 0) return null
     return <details className="config-group" open>
       <summary><ChevronDown size={14} />{label}</summary>
-      <div className="config-group-content">{keys.map((key) => <ConfigField key={`${path.join('.')}.${key}`} name={key} values={values.map((item) => (item as Record<string, unknown>)[key])} path={[...path, key]} blueprint={blueprint} defaultConfigs={defaultConfigs} eventNodeSelected={eventNodeSelected} inputParameters={inputParameters} exposedInputsByNode={exposedInputsByNode} toggleInput={toggleInput} updateValue={updateValue} resetValue={resetValue} />)}</div>
+      <div className="config-group-content">{keys.map((key) => <ConfigField key={`${path.join('.')}.${key}`} name={key} values={values.map((item) => (item as Record<string, unknown>)[key])} path={[...path, key]} blueprint={blueprint} defaultConfigs={defaultConfigs} nodeIds={nodeIds} inputParameters={inputParameters} connectedInputsByNode={connectedInputsByNode} choices={choices} updateValue={updateValue} resetValue={resetValue} />)}</div>
     </details>
   }
 
-  const options = configOptions(name, blueprint, displays)
-  const readOnlyEventId = eventNodeSelected && name === 'eventId' && path.length === 1
+  const options = (choices[configPathId(path)] ?? choices[name])?.map(value => ({value, label: value === 'Software' ? 'Software (CPU; higher CPU usage)' : value})) ?? configOptions(name, blueprint, displays)
   const inputId = configPathId(path)
-  const canExposeInput = inputParameters.includes(inputId)
-  const inputEnabled = canExposeInput && exposedInputsByNode.length > 0 && exposedInputsByNode.every((inputs) => inputs.has(inputId))
-  const inputMixed = canExposeInput && exposedInputsByNode.some((inputs) => inputs.has(inputId)) && !inputEnabled
+  const connectableInput = inputParameters.includes(inputId)
+  const inputEnabled = connectableInput && connectedInputsByNode.length > 0 && connectedInputsByNode.every((inputs) => inputs.has(inputId))
+  const inputMixed = connectableInput && connectedInputsByNode.some((inputs) => inputs.has(inputId)) && !inputEnabled
   const inputLocked = inputEnabled || inputMixed
+  const currentValues = nodeIds.map((id, index) => connectedInputsByNode[index]?.has(inputId) ? connectedInputValue(blueprint, id, inputId) : values[index])
+  const currentValue = currentValues.some(item => !sameConfigValue(item, currentValues[0])) ? 'Multiple values' : currentValues[0]
+  const sources = inputLocked ? parameterSources(blueprint,nodeIds,inputId).join(', ') : ''
   const defaultValues = defaultConfigs.map((config) => readConfigPath(config, path))
-  const showReset = !readOnlyEventId && !inputLocked && values.some((item, index) => defaultValues[index]?.found ? !sameConfigValue(item, defaultValues[index].value) : item !== undefined)
+  const showReset = !inputLocked && values.some((item, index) => defaultValues[index]?.found ? !sameConfigValue(item, defaultValues[index].value) : item !== undefined)
   return <div className={`parameter-field config-field${inputLocked ? ' input-bound' : ''}${inputMixed ? ' input-mixed' : ''}`}><span className="parameter-label">{label}</span>
-    {canExposeInput ? <button type="button" className={`parameter-input-button${inputEnabled ? ' active' : ''}${inputMixed ? ' mixed' : ''}`} aria-pressed={inputMixed ? 'mixed' : inputEnabled} aria-label={`${inputEnabled ? 'Disable' : 'Enable'} ${label} node input`} title={inputEnabled ? 'Node input enabled' : 'Enable node input'} onClick={() => toggleInput(path, !inputEnabled || inputMixed)}><ArrowRightToLine size={15} /></button> : <span className="parameter-input-button-space" aria-hidden="true" />}
-    <span ref={sizingRef} className={`parameter-control-wrap${inputLocked ? ' input-bound' : ''}${typeof value === 'boolean' && !multiple ? ' boolean-control' : ''}`}>
-      {typeof value === 'boolean' && multiple ? <select className="field-control" aria-label={label} value="" disabled={inputLocked} onChange={(event) => updateValue(path, event.target.value === 'true')}>
+
+    <span ref={sizingRef} className={`parameter-control-wrap${inputLocked ? ' input-bound' : ''}`}>
+      {inputLocked ? <span className="readonly-value input-source" title={`From ${sources}`} aria-label={`${label} current value`} aria-disabled="true">{currentValue === undefined ? 'Unavailable' : typeof currentValue === 'object' ? JSON.stringify(currentValue) : String(currentValue)}</span> : typeof value === 'boolean' && multiple ? <select className="field-control" aria-label={label} value="" disabled={inputLocked} onChange={(event) => updateValue(path, event.target.value === 'true')}>
         <option value="">Multiple values</option><option value="true">On</option><option value="false">Off</option>
-      </select> : typeof value === 'boolean' ? <span className="field-control checkbox-control compact"><input aria-label={label} type="checkbox" checked={value} disabled={inputLocked} onChange={(event) => updateValue(path, event.target.checked)} /><span className="toggle-track"><i /></span></span>
+      </select> : typeof value === 'boolean' ? <Toggle label={label} checked={value} onChange={checked => updateValue(path, checked)} />
         : typeof value === 'number' ? <input className="field-control" aria-label={label} type="number" step={Number.isInteger(value) ? '1' : 'any'} min={name === 'milliseconds' ? 0 : undefined} max={name === 'milliseconds' ? 60000 : undefined} value={multiple ? '' : value} placeholder={multiple ? 'Multiple values' : undefined} readOnly={inputLocked} onChange={(event) => updateValue(path, event.target.value === '' ? 0 : Number(event.target.value))} />
-          : options.length > 0 ? <select className="field-control" aria-label={label} value={multiple ? '' : String(value ?? '')} disabled={readOnlyEventId || inputLocked} onChange={(event) => updateValue(path, event.target.value)}>
+          : options.length > 0 ? <select className="field-control" aria-label={label} value={multiple ? '' : String(value ?? '')} disabled={inputLocked} onChange={(event) => updateValue(path, event.target.value)}>
             {multiple && <option value="">Multiple values</option>}
             {!multiple && !options.some((option) => option.value === String(value ?? '')) && <option value={String(value ?? '')}>{String(value ?? '')} (unresolved)</option>}
             {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
-            : <input className="field-control" aria-label={label} value={multiple ? '' : String(value ?? '')} placeholder={multiple ? 'Multiple values' : undefined} readOnly={readOnlyEventId || inputLocked} onChange={(event) => updateValue(path, event.target.value)} />}
+            : <input className="field-control" aria-label={label} value={multiple ? '' : String(value ?? '')} placeholder={multiple ? 'Multiple values' : undefined} readOnly={inputLocked} onChange={(event) => updateValue(path, event.target.value)} />}
+      {name === 'directory' && <FolderActions label={label} value={multiple ? '' : String(currentValue ?? '')} onChange={inputLocked ? undefined : value => updateValue(path, value)} />}
       {showReset ? <button type="button" className="parameter-reset" aria-label={`Reset ${label}`} title="Reset to default" onClick={(event) => { event.stopPropagation(); resetValue(path) }}><Undo2 size={13} /></button> : <span className="parameter-reset-space" aria-hidden="true" />}
     </span>
   </div>
 }
 
-function NodeConfigEditor({ nodes, blueprint, catalog, update }: { nodes: Blueprint['nodes'][number][]; blueprint: Blueprint; catalog: NodeTypeDefinition[]; update: BlueprintUpdate }) {
+function CaptureActions({ node, status, durationMs, graphId, actionsReady, locked, supported, update }: { supported:boolean;locked:boolean;actionsReady:boolean;graphId:string;node:Blueprint['nodes'][number];status:Blueprint['recordState'];durationMs:number;update:BlueprintUpdate }) {
+  const control=createNodeControl(node,'main',`node-${node.id}`,graphId)
+  const items=useMemo(()=>node.data.kind==='screen'?['record','status','elapsed']:['select'],[node.data.kind])
+  const order=useMemo(()=>[...(node.data.actionOrder??[]).filter(id=>items.includes(id)),...items.filter(id=>!node.data.actionOrder?.includes(id))],[items,node.data.actionOrder])
+  const row=useRef<HTMLDivElement>(null)
+  const [insertion,setInsertion]=useState<{id:string;after:boolean}|null>(null)
+  useEffect(()=>{
+    const receive=(event:Event)=>{
+      const {binding,x,y,phase}=(event as CustomEvent<ActionDrag>).detail
+      const element=document.elementFromPoint(x,y)
+      if(locked||phase==='cancel'||binding.graphId!==graphId||binding.nodeId!==node.id||!element||!row.current?.contains(element)){setInsertion(null);return}
+      const target=element.closest<HTMLElement>('[data-node-action]')
+      const position=target?{id:target.dataset.nodeAction!,after:x>target.getBoundingClientRect().left+target.getBoundingClientRect().width/2}:null
+      setInsertion(phase==='drop'?null:position)
+      if(phase!=='drop')return
+      const source=binding.source??binding.action
+      if(!items.includes(source)||source===position?.id)return
+      const next=order.filter(id=>id!==source), index=position?next.indexOf(position.id):-1
+      next.splice(index<0?next.length:index+Number(position?.after),0,source)
+      update(current=>({...current,nodes:current.nodes.map(item=>item.id===node.id?{...item,data:{...item.data,actionOrder:next}}:item)}))
+    }
+    window.addEventListener(actionDragEvent,receive)
+    return ()=>window.removeEventListener(actionDragEvent,receive)
+  },[graphId,node.id,locked,update,order,items])
+  return <div ref={row} className="node-actions nodrag nopan" aria-label="Node controls">{order.map(id=>{
+    const source=id==='status'||id==='elapsed'?id:undefined
+    const label=source?(source==='status'?'Recording status':'Recording time'):control.label
+    return <div key={id} data-node-action={id} onKeyDown={event=>{
+      if(!event.altKey||!['ArrowLeft','ArrowRight'].includes(event.key))return
+      event.preventDefault();event.stopPropagation()
+      const index=order.indexOf(id), nextIndex=index+(event.key==='ArrowLeft'?-1:1)
+      if(nextIndex<0||nextIndex>=order.length)return
+      const next=[...order];[next[index],next[nextIndex]]=[next[nextIndex]!,next[index]!]
+      update(current=>({...current,nodes:current.nodes.map(item=>item.id===node.id?{...item,data:{...item.data,actionOrder:next}}:item)}))
+    }} className={`node-action-control${insertion?.id===id?insertion.after?' insert-after':' insert-before':''}`}>
+      <ActionDragHandle binding={{...control.binding,...(source?{source}: {})}} label={label} disabled={locked}/>
+      {source?<RuntimeDisplay display={{id:`node-${node.id}-${source}`,binding:control.binding,source,format:source==='status'?'text':'HH:mm:ss',order:0,targets:[]}} status={status} durationMs={durationMs}/>:<ControlButton control={control} status={status} durationMs={durationMs} disabled={!supported||!actionsReady||node.data.enabled===false}/>}
+    </div>
+  })}</div>
+}
+function NodeConfigEditor({ nodes, blueprint, catalog, update, onlyInput, omitInputs = false, inline = false }: { nodes: Blueprint['nodes'][number][]; blueprint: Blueprint; catalog: NodeTypeDefinition[]; update: BlueprintUpdate; onlyInput?: string; omitInputs?: boolean; inline?: boolean }) {
+  const choices = catalog.find(definition => definition.kind === nodes[0]?.data.kind)?.choices ?? {}
   const nodeIds = new Set(nodes.map((node) => node.id))
   const defaultConfigs = nodes.map((node) => catalog.find((definition) => definition.kind === node.data.kind)?.defaultConfig ?? {})
-  const nodeConfigs: Record<string, unknown>[] = nodes.map((node, index) => ({ ...defaultConfigs[index], ...(node.data.kind === 'region' && !node.data.config?.mode ? { mode: 'Rectangle' } : {}), ...node.data.config, ...(node.data.kind === 'register_control' ? { control: { targets: ['main'], ...(node.data.config?.control as Record<string, unknown> ?? {}) } } : {}) }))
+  const nodeConfigs: Record<string, unknown>[] = nodes.map((node, index) => ({ ...defaultConfigs[index], ...node.data.config }))
   const inputParameters = nodes.length > 0 ? (catalog.find((definition) => definition.kind === nodes[0]!.data.kind)?.inputParameters ?? []).filter((id) => nodes.every((node) => catalog.find((definition) => definition.kind === node.data.kind)?.inputParameters.includes(id))) : []
-  const exposedInputsByNode = nodes.map((node) => new Set(exposedInputIds(node.data.kind, node.data.config ?? {})))
-  const updateValue = (path: ConfigPath, value: unknown) => update((current) => ({ ...current, nodes: current.nodes.map((node) => nodeIds.has(node.id) ? { ...node, data: { ...node.data, config: writeConfigPath(node.data.config ?? {}, path, value) as Record<string, unknown> } } : node) }))
-  const toggleInput = (path: ConfigPath, enabled: boolean) => {
-    const id = configPathId(path)
-    update((current) => {
-      const nextNodes = current.nodes.map((node) => {
-        if (!nodeIds.has(node.id)) return node
-        const config = { ...catalog.find((definition) => definition.kind === node.data.kind)?.defaultConfig, ...node.data.config }
-        const exposed = new Set(exposedInputIds(node.data.kind, config))
-        if (enabled) exposed.add(id); else exposed.delete(id)
-        const nextConfig = { ...config }
-        if (exposed.size || node.data.kind === 'branch') nextConfig.exposedInputs = [...exposed]
-        else delete nextConfig.exposedInputs
-        return { ...node, data: { ...node.data, config: nextConfig } }
-      })
-      const edges = enabled ? current.edges : current.edges.filter((edge) => !nodeIds.has(edge.target) || edge.targetHandle !== `in:${parameterInputPortId(current.nodes.find((node) => node.id === edge.target)?.data.kind ?? 'event', id)}`)
-      return { ...current, nodes: nextNodes, edges }
-    })
-  }
+  const connectedInputsByNode = nodes.map((node) => new Set(inputParameters.filter(id => blueprint.edges.some(edge => edge.target === node.id && edge.targetHandle === `in:${parameterInputPortId(node.data.kind, id)}`))))
+  const updateValue = (path: ConfigPath, value: unknown) => update((current) => ({ ...current, nodes: current.nodes.map((node) => nodeIds.has(node.id) ? { ...node, data: { ...node.data, config: writeConfigPath(nodeConfigs[nodes.findIndex(selected=>selected.id===node.id)] ?? node.data.config ?? {}, path, value) as Record<string, unknown> } } : node) }))
   const resetValue = (path: ConfigPath) => update((current) => ({ ...current, nodes: current.nodes.map((node) => {
     const index = nodes.findIndex((selected) => selected.id === node.id)
     if (index < 0) return node
@@ -805,42 +794,47 @@ function NodeConfigEditor({ nodes, blueprint, catalog, update }: { nodes: Bluepr
     const config = defaultValue.found ? writeConfigPath(nodeConfigs[index] ?? {}, path, defaultValue.value) : removeConfigPath(nodeConfigs[index] ?? {}, path)
     return { ...node, data: { ...node.data, config: config as Record<string, unknown> } }
   }) }))
-  const keys = Object.keys(nodeConfigs[0] ?? {}).filter((key) => canRenderConfig(key, nodeConfigs.map((config) => config[key])))
-  if (keys.length === 0) return <div className="detail-note">{nodes.length > 1 ? 'Selected nodes have no common editable parameters.' : 'This node has no configurable parameters.'}</div>
-  return <div className="visual-config">{keys.map((key) => <ConfigField key={key} name={key} values={nodeConfigs.map((config) => config[key])} path={[key]} blueprint={blueprint} defaultConfigs={defaultConfigs} eventNodeSelected={nodes.some((node) => node.data.kind === 'event')} inputParameters={inputParameters} exposedInputsByNode={exposedInputsByNode} toggleInput={toggleInput} updateValue={updateValue} resetValue={resetValue} />)}</div>
+  const keys = Object.keys(nodeConfigs[0] ?? {}).filter((key) => canRenderConfig(nodeConfigs.map((config) => config[key])) && (onlyInput ? (nodeConfigs[0]?.[key] !== null && (parameterInputPortId(nodes[0]!.data.kind,key)===onlyInput || key===onlyInput)) : !omitInputs || (!inputParameters.includes(key) && !(catalog.find(definition=>definition.kind===nodes[0]!.data.kind)?.inputs.some(port=>port.id===key) ?? false))))
+  if (nodes.every(node => node.data.kind === 'read_parameter')) {
+    const parameters = allParameters(blueprint).filter(parameter => nodes.some(node => node.data.config?.parameterId === parameter.id))
+    return <div className="visual-config">{parameters.map(parameter => <div className="parameter-field config-field" key={parameter.id}>{!inline && <span className="parameter-label">{parameter.label}</span>}<ParameterControl definition={parameter} value={blueprint.values[parameter.id] ?? parameter.initial} onChange={value => update(current => ({ ...current, values: { ...current.values, [parameter.id]: value } }))} /></div>)}</div>
+  }
+  return <div className="visual-config">{keys.map((key) => <ConfigField key={key} name={key} values={nodeConfigs.map((config) => config[key])} path={[key]} blueprint={blueprint} defaultConfigs={defaultConfigs} nodeIds={nodes.map(node => node.id)} inputParameters={inputParameters} connectedInputsByNode={connectedInputsByNode} choices={choices} updateValue={updateValue} resetValue={resetValue} />)}</div>
 }
 
-function DetailsPanel({ blueprint, update, catalog = [], compact = false, width, onWidthChange, editingNodeId = null, onEditingNodeTitleChange }: { blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; catalog?: NodeTypeDefinition[]; compact?: boolean; width?: number; onWidthChange?: (width: number) => void; editingNodeId?: string | null; onEditingNodeTitleChange?: (id: string | null) => void }) {
+function DetailsPanel({ blueprint, update, nodeErrors = [], catalog = [], compact = false, width, onWidthChange, editingNodeId = null, onEditingNodeTitleChange }: { nodeErrors?:NodeError[]; blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; catalog?: NodeTypeDefinition[]; compact?: boolean; width?: number; onWidthChange?: (width: number) => void; editingNodeId?: string | null; onEditingNodeTitleChange?: (id: string | null) => void }) {
   const resizeStart = useRef<{ x: number; width: number } | null>(null)
   const selection = blueprint.selection
   const selectedNodes = selection?.kind === 'nodes' ? selection.keys.flatMap((key) => blueprint.nodes.filter((node) => node.id === key)) : selection?.kind === 'node' ? blueprint.nodes.filter((node) => node.id === selection.key) : []
   const selectedNode = selectedNodes.length === 1 ? selectedNodes[0] : null
   const selectedParameter = selection?.kind === 'parameter' ? allParameters(blueprint).find((item) => item.id === selection.key) : null
   const selectedCard = selection?.kind === 'card' ? blueprint.cards.find((item) => item.id === selection.key) : null
-  const selectedEvent = selection?.kind === 'event' ? blueprint.events.find((item) => item.id === selection.key) : null
-  const selectedFunction = selection?.kind === 'function' ? blueprint.functions.find((item) => item.id === selection.key) : null
-  const selectedFolderName = selection?.kind === 'folder' ? [...blueprint.eventFolders, ...blueprint.functionFolders, ...blueprint.variableFolders].find((item) => item.id === selection.key)?.name ?? blueprint.cards.find((item) => item.id === selection.key)?.name ?? '' : ''
+  const selectedFolderName = selection?.kind === 'folder' ? blueprint.variableFolders.find((item) => item.id === selection.key)?.name ?? blueprint.cards.find((item) => item.id === selection.key)?.name ?? '' : ''
   const nodeKinds = new Set(selectedNodes.map((node) => node.data.kind))
-  const title = selectedNodes.length > 1 ? `${selectedNodes.length} nodes selected` : selectedParameter?.label ?? selectedNode?.data.label ?? selectedCard?.name ?? selectedEvent?.name ?? selectedFunction?.name ?? 'Details'
+  const title = selectedNodes.length > 1 ? `${selectedNodes.length} nodes selected` : selectedParameter?.label ?? (selectedNode?.data.kind === 'read_parameter' ? allParameters(blueprint).find(parameter => parameter.id === selectedNode.data.config?.parameterId)?.label : undefined) ?? selectedNode?.data.label ?? selectedCard?.name ?? 'Details'
   const updateName = (name: string) => update((current) => {
     if (!selection) return current
     if (selection.kind === 'card') return { ...current, cards: current.cards.map((card) => card.id === selection.key ? { ...card, name } : card) }
-    if (selection.kind === 'event') return { ...current, events: current.events.map((item) => item.id === selection.key ? { ...item, name } : item), nodes: current.nodes.map((node) => node.data.kind === 'event' && node.data.config?.eventId === selection.key ? { ...node, data: { ...node.data, label: name } } : node) }
-    if (selection.kind === 'function') return { ...current, functions: current.functions.map((item) => item.id === selection.key ? { ...item, name } : item) }
-    if (selection.kind === 'folder') return { ...current, eventFolders: current.eventFolders.map((item) => item.id === selection.key ? { ...item, name } : item), functionFolders: current.functionFolders.map((item) => item.id === selection.key ? { ...item, name } : item), variableFolders: current.variableFolders.map((item) => item.id === selection.key ? { ...item, name } : item), cards: current.cards.map((item) => item.id === selection.key ? { ...item, name } : item) }
+    if (selection.kind === 'folder') return { ...current, variableFolders: current.variableFolders.map((item) => item.id === selection.key ? { ...item, name } : item), cards: current.cards.map((item) => item.id === selection.key ? { ...item, name } : item) }
     if (selection.kind === 'parameter') return { ...current, labels: { ...current.labels, [selection.key]: name }, customParameters: current.customParameters.map((item) => item.id === selection.key ? { ...item, label: name } : item) }
+    if (selection.kind === 'node' && selectedNode?.data.kind === 'read_parameter' && typeof selectedNode.data.config?.parameterId === 'string') {
+      const id = selectedNode.data.config.parameterId
+      return { ...current, labels: { ...current.labels, [id]: name }, customParameters: current.customParameters.map(parameter => parameter.id === id ? { ...parameter, label: name } : parameter) }
+    }
     if (selection.kind === 'node') return { ...current, nodes: current.nodes.map((node) => node.id === selection.key ? { ...node, data: { ...node.data, label: name } } : node) }
     return current
   })
   const isEditingNodeTitle = selectedNode && editingNodeId === selectedNode.id
+  if (!selection) return null
   return <aside className={`details-panel${compact ? ' details-compact' : ''}`} style={width ? { width: `min(${width}px, calc(100% - 24px))` } : undefined}>
     {width && onWidthChange && <div className="blueprint-details-resizer" role="separator" aria-orientation="vertical" aria-label="Resize Details panel" aria-valuenow={width} tabIndex={0}
       onPointerDown={(event) => { event.preventDefault(); resizeStart.current = { x: event.clientX, width }; event.currentTarget.setPointerCapture(event.pointerId) }}
       onPointerMove={(event) => { if (!resizeStart.current || !onWidthChange) return; const maximum = Math.max(220, Math.min(640, window.innerWidth - 260)); onWidthChange(Math.max(220, Math.min(maximum, resizeStart.current.width + resizeStart.current.x - event.clientX))) }}
       onPointerUp={() => { resizeStart.current = null }} onPointerCancel={() => { resizeStart.current = null }}
       onKeyDown={(event) => { if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return; event.preventDefault(); onWidthChange(Math.max(220, Math.min(640, width + (event.key === 'ArrowLeft' ? 16 : -16)))) }} />}
-    <div className="details-title"><div className="details-title-content"><span className="eyebrow">DETAILS</span>{isEditingNodeTitle ? <input autoFocus className="details-title-input" aria-label="Node title" value={selectedNode.data.label} onChange={(event) => updateName(event.target.value)} onBlur={() => onEditingNodeTitleChange?.(null)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Escape') event.currentTarget.blur() }} /> : <h2 className={selectedNode ? 'editable-node-title' : undefined} role={selectedNode ? 'button' : undefined} tabIndex={selectedNode ? 0 : undefined} onClick={selectedNode ? () => onEditingNodeTitleChange?.(selectedNode.id) : undefined} onKeyDown={selectedNode ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onEditingNodeTitleChange?.(selectedNode.id) } } : undefined}>{title}</h2>}</div><div className="details-title-meta">{selectedNodes.length > 0 && <span className="details-node-type">{nodeKinds.size === 1 ? selectedNodes[0]?.data.kind : 'multiple types'}</span>}<Ellipsis size={16} /></div></div>
-    {!selection ? <div className="details-empty">Select a node, variable, event, function or card to edit its details.</div> : selectedNodes.length > 1 ? <div className="details-form">
+    <div className="details-title"><div className="details-title-content"><span className="eyebrow">DETAILS</span>{isEditingNodeTitle ? <input autoFocus className="details-title-input" aria-label="Node title" value={title} onChange={(event) => updateName(event.target.value)} onBlur={() => onEditingNodeTitleChange?.(null)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Escape') event.currentTarget.blur() }} /> : <h2 className={selectedNode ? 'editable-node-title' : undefined} role={selectedNode ? 'button' : undefined} tabIndex={selectedNode ? 0 : undefined} onClick={selectedNode ? () => onEditingNodeTitleChange?.(selectedNode.id) : undefined} onKeyDown={selectedNode ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onEditingNodeTitleChange?.(selectedNode.id) } } : undefined}>{title}</h2>}</div><div className="details-title-meta">{selectedNodes.length > 0 && <span className="details-node-type">{nodeKinds.size === 1 ? selectedNodes[0]?.data.kind : 'multiple types'}</span>}<Ellipsis size={16} /></div></div>
+    {nodeErrors.filter(error=>error.graphId===blueprint.graphId&&selectedNodes.some(node=>node.id===error.nodeId)).map(error=><span key={error.nodeId} className="node-error" role="alert">{error.message}</span>)}
+    {!selection ? <div className="details-empty">Select a node, parameter or card to edit its details.</div> : selectedNodes.length > 1 ? <div className="details-form">
       <NodeConfigEditor key={selectedNodes.map((node) => node.id).join(':')} nodes={selectedNodes} blueprint={blueprint} catalog={catalog} update={update} />
       <div className="detail-note">Edits apply to all selected nodes.</div>
     </div> : selectedNode ? <div className="details-form">
@@ -856,9 +850,6 @@ function DetailsPanel({ blueprint, update, catalog = [], compact = false, width,
       <label className="parameter-field"><span className="parameter-label">Card name</span><input className="field-control" value={selectedCard.name} onChange={(event) => updateName(event.target.value)} /></label>
       <div className="detail-block"><span className="detail-label">Parameters</span><div className="detail-value">{selectedCard.parameters.length} exposed</div></div>
       <div className="detail-note">Double-click the folder to open its card layout.</div>
-    </div> : selectedEvent || selectedFunction ? <div className="details-form">
-      <label className="parameter-field"><span className="parameter-label">Name</span><input className="field-control" value={(selectedEvent ?? selectedFunction)!.name} onChange={(event) => updateName(event.target.value)} /></label>
-      <div className="detail-note">{selectedEvent ? 'Connect this event node to execution nodes to define its behavior.' : 'Functions are listed here for future subgraph support.'}</div>
     </div> : selection.kind === 'folder' ? <div className="details-form"><label className="parameter-field"><span className="parameter-label">Folder name</span><input className="field-control" value={selectedFolderName} onChange={(event) => updateName(event.target.value)} /></label></div> : <div className="details-empty">Select an item to edit its details.</div>}
   </aside>
 }
@@ -874,33 +865,11 @@ function CardDetailsPreview({ blueprint, update }: { blueprint: Blueprint; updat
   }} /> : null
 }
 
-const emptyGraph: Pick<Blueprint, 'nodes' | 'edges'> = { nodes: [], edges: [] }
 
-function BlueprintContent({ blueprint, update, openCard, catalog, locked }: { blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; openCard: (id: string) => void; catalog: NodeTypeDefinition[]; locked: boolean }) {
-  const [focusRequest, setFocusRequest] = useState<{ id: string; sequence: number } | null>(null)
-  const editorTab = blueprint.tabs.find((tab) => tab.id === blueprint.activeTab) ?? blueprint.tabs[0]!
-  const functionId = editorTab.kind === 'function' ? editorTab.functionId : undefined
-  const activeFunction = functionId ? blueprint.functions.find((item) => item.id === functionId) : undefined
-  const graphBlueprint = activeFunction ? { ...blueprint, nodes: activeFunction.graph?.nodes ?? emptyGraph.nodes, edges: activeFunction.graph?.edges ?? emptyGraph.edges } : blueprint
-  const updateGraph: typeof update = useCallback((value) => update((current) => {
-    if (!functionId) return typeof value === 'function' ? value(current) : value
-    const item = current.functions.find((item) => item.id === functionId)
-    if (!item) return current
-    const scoped = { ...current, nodes: item.graph?.nodes ?? emptyGraph.nodes, edges: item.graph?.edges ?? emptyGraph.edges }
-    const next = typeof value === 'function' ? value(scoped) : value
-    if (next === scoped) return current
-    return { ...next, nodes: current.nodes, edges: current.edges, functions: next.functions.map((item) => item.id === functionId ? { ...item, graph: { nodes: next.nodes, edges: next.edges } } : item) }
-  }), [functionId, update])
-  const openEvent = (id: string) => {
-    const node = blueprint.nodes.find((node) => node.data.kind === 'event' && node.data.config?.eventId === id)
-    if (!node) return
-    update((current) => ({ ...current, activeTab: 'blueprint', tabs: current.tabs.some((tab) => tab.id === 'blueprint') ? current.tabs : [...current.tabs, { id: 'blueprint', kind: 'blueprint' }], selection: { kind: 'event', key: id }, selectedNode: node.id, nodes: current.nodes.map((item) => ({ ...item, selected: item.id === node.id })) }))
-    setFocusRequest((previous) => ({ id: node.id, sequence: (previous?.sequence ?? 0) + 1 }))
-  }
-  const openFunction = (id: string) => update((current) => {
-    const tabId = `function:${id}`
-    return { ...current, tabs: current.tabs.some((tab) => tab.id === tabId) ? current.tabs : [...current.tabs, { id: tabId, kind: 'function', functionId: id }], activeTab: tabId, selectedNode: null, selection: { kind: 'function', key: id } }
-  })
+function BlueprintContent({ blueprint, update, openCard, catalog, locked, durationMs, actionsReady, nodeErrors }: { nodeErrors:NodeError[]; actionsReady: boolean; blueprint: Blueprint; update: (value: Blueprint | ((current: Blueprint) => Blueprint)) => void; openCard: (id: string) => void; catalog: NodeTypeDefinition[]; locked: boolean; durationMs: number }) {
+  const editorTab:EditorTab = blueprint.activeTab==='blueprint' ? {id:'blueprint',kind:'blueprint'} : blueprint.tabs.find(tab=>tab.id===blueprint.activeTab&&tab.kind==='card') ?? {id:'overview',kind:'overview'}
+  const graphBlueprint = blueprint
+  const updateGraph = update
   const [detailsWidth, setDetailsWidth] = useState(380)
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
   const selectGraphNodes = useCallback((ids: string[]) => {
@@ -920,12 +889,12 @@ function BlueprintContent({ blueprint, update, openCard, catalog, locked }: { bl
     setEditingNodeId(id)
   }, [locked, selectGraphNode])
   if (editorTab.kind === 'card' && editorTab.cardId) return <CardLayoutEditor key={`${blueprint.id}:${editorTab.cardId}`} blueprint={blueprint} cardId={editorTab.cardId} update={update} />
-  if (editorTab.kind === 'blueprint' || activeFunction) return <div className="blueprint-workbench">
-    <LibraryEditor blueprint={blueprint} update={update} openCard={openCard} openEvent={openEvent} openFunction={openFunction} />
-    <GraphEditor key={`${blueprint.id}:${editorTab.id}`} graphName={activeFunction?.name} focusRequest={activeFunction ? null : focusRequest} blueprint={graphBlueprint} update={updateGraph} selectNode={selectGraphNode} selectNodes={selectGraphNodes} editNodeTitle={editGraphNodeTitle} catalog={catalog} locked={locked} />
-    <DetailsPanel blueprint={graphBlueprint} update={updateGraph} catalog={catalog} width={detailsWidth} onWidthChange={setDetailsWidth} editingNodeId={editingNodeId} onEditingNodeTitleChange={setEditingNodeId} />
+  if (editorTab.kind === 'blueprint') return <div className="blueprint-workbench">
+    <LibraryEditor blueprint={blueprint} update={update} openCard={openCard} />
+    <GraphEditor renderNodeInput={(node,port) => <fieldset disabled={locked} className="node-config-fieldset nodrag nopan"><NodeConfigEditor onlyInput={port.id} nodes={[node]} blueprint={graphBlueprint} catalog={catalog} update={updateGraph}/></fieldset>} renderNodeActions={node => ['screen','select_region'].includes(node.data.kind)?<CaptureActions update={updateGraph} locked={locked} supported={blueprint.supported} actionsReady={actionsReady} graphId={blueprint.graphId} node={node} status={blueprint.recordState} durationMs={durationMs}/>:null} renderNodeConfig={node => <>{nodeErrors.filter(error=>error.graphId===blueprint.graphId&&error.nodeId===node.id).map(error=><span key={error.nodeId} className="node-error" role="alert">{error.message}</span>)}<fieldset disabled={locked} className="node-config-fieldset"><NodeConfigEditor inline omitInputs nodes={[node]} blueprint={graphBlueprint} catalog={catalog} update={updateGraph} /></fieldset></>} key={`${blueprint.id}:${editorTab.id}:${blueprint.graphId}`} blueprint={graphBlueprint} update={updateGraph} selectNode={selectGraphNode} selectNodes={selectGraphNodes} editNodeTitle={editGraphNodeTitle} catalog={catalog} locked={locked} />
+    <DetailsPanel nodeErrors={nodeErrors} blueprint={graphBlueprint} update={updateGraph} catalog={catalog} width={detailsWidth} onWidthChange={setDetailsWidth} editingNodeId={editingNodeId} onEditingNodeTitleChange={setEditingNodeId} />
   </div>
-  return <main className="overview-page"><OverviewCards blueprint={blueprint} update={update} /></main>
+  return <main className="overview-page"><fieldset className="node-config-fieldset" disabled={locked}><OverviewCards blueprint={blueprint} update={update} /></fieldset></main>
 }
 
 function EmptyPage() {
@@ -953,21 +922,22 @@ export default function App() {
   const [dialog, setDialog] = useState<NameDialog>(null)
   const [menuBlueprint, setMenuBlueprint] = useState<{ id: string; top: number; left: number } | null>(null)
   const [undoBlueprint, setUndoBlueprint] = useState<RemovedBlueprint | null>(null)
+  const [nodeErrors,setNodeErrors] = useState<NodeError[]>([])
   const [catalog, setCatalog] = useState<NodeTypeDefinition[]>([])
   const [savedDocuments, setSavedDocuments] = useState<Record<string, string>>({})
   const [savingBlueprints, setSavingBlueprints] = useState<Set<string>>(() => new Set())
   const [updating, setUpdating] = useState(false)
   const [diagnostics, setDiagnostics] = useState<string[]>([])
-  const [notice, setNotice] = useState<string | null>(() => isTauriWindow() ? null : 'Blueprint files are loaded by the Nodrec desktop app.')
-  const [loading, setLoading] = useState(isTauriWindow)
+  const [notice, setNotice] = useState<string | null>(() => isTauri() ? null : 'Blueprint files are loaded by the Nodrec desktop app.')
+  const [loading, setLoading] = useState(isTauri)
   const [controls, setControls] = useState<RegisteredControl[]>([])
   const [registeredDisplays, setRegisteredDisplays] = useState<RegisteredDisplay[]>([])
   const [status, setStatus] = useState<Blueprint['recordState']>('ready')
-  const [frameCount, setFrameCount] = useState(0)
+  const [, setFrameCount] = useState(0)
   const [recording, setRecording] = useState<RecordingStats | null>(null)
   const [displays, setDisplays] = useState<DisplayInfo[]>([])
   useEffect(() => {
-    if (!isTauriWindow()) return
+    if (!isTauri()) return
     const refresh = () => { void invoke<DisplayInfo[]>('list_displays').then(setDisplays).catch((error) => setNotice(`Cannot enumerate displays: ${String(error)}`)) }
     refresh()
     window.addEventListener('focus', refresh)
@@ -979,21 +949,23 @@ export default function App() {
   const activeBlueprint = blueprints.find((blueprint) => blueprint.id === activeBlueprintId)
   const activeBlueprintIdRef = useRef(activeBlueprintId)
   const sidebarResizeRef = useRef<{ x: number; width: number } | null>(null)
-  const activatedDocumentRef = useRef('')
+  const [activatedDocumentKey,setActivatedDocumentKey] = useState('')
   const activeDocument = useMemo(() => activeBlueprint ? serializeBlueprint(activeBlueprint) : null, [activeBlueprint])
   const activeDocumentJson = activeDocument ? JSON.stringify(activeDocument) : ''
   const activeBlueprintDirty = !!activeBlueprint && savedDocuments[activeBlueprint.id] !== activeDocumentJson
   const activationKey = activeBlueprintId && activeDocumentJson ? `${activeBlueprintId}:${activeDocumentJson}` : ''
   const runtimeLocked = ['starting', 'recording', 'paused', 'stopping'].includes(status)
+  const actionsReady = runtimeLocked || activationKey === activatedDocumentKey
   const updateBlueprint = useCallback((value: Blueprint | ((current: Blueprint) => Blueprint)) => {
     if (!activeBlueprintId) return
     setBlueprints((current) => current.map((blueprint) => {
       if (blueprint.id !== activeBlueprintId) return blueprint
-      return syncBlueprintEvents(typeof value === 'function' ? value(blueprint) : value)
+      const next = reconcileNodeShortcuts(typeof value === 'function' ? value(blueprint) : value)
+      return acceptBlueprintEdit(blueprint, next, runtimeLocked)
     }))
-  }, [activeBlueprintId])
+  }, [activeBlueprintId, runtimeLocked])
 
-  useEffect(() => { activeBlueprintIdRef.current = activeBlueprintId }, [activeBlueprintId])
+  useEffect(() => { activeBlueprintIdRef.current = activeBlueprintId }, [activeBlueprintId, runtimeLocked])
   useLayoutEffect(() => {
     if (logsOpen) logsPanelRef.current?.expand()
     else logsPanelRef.current?.collapse()
@@ -1032,7 +1004,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!isTauriWindow()) return
+    if (!isTauri()) return
     let live = true
     startupLog('App mounted; requesting blueprint index and node catalog')
     void Promise.all([
@@ -1062,13 +1034,13 @@ export default function App() {
           const snapshot = await invoke<RuntimeSnapshot>('runtime_snapshot')
           startupLog('initial runtime snapshot received')
           if (!live) return
-          activatedDocumentRef.current = `${initial.id}:${JSON.stringify(document)}`
+          setActivatedDocumentKey(`${initial.id}:${JSON.stringify(document)}`)
           setControls(activation.controls)
           setStatus(snapshot.status)
-          setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
+          setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setNodeErrors(snapshot.nodeErrors ?? [])
           setLogs(snapshot.logs)
           if (activation.diagnostics.length) setNotice(activation.diagnostics.join(' · '))
-          else if (initial.supported && activation.controls.length === 0) setNotice('This blueprint has no controls registered by On Initialize.')
+          else if (initial.supported && activation.controls.length === 0) setNotice('This blueprint has no node action controls.')
         } catch (error) { startupLog(`initialization failed: ${String(error)}`); if (live) setNotice(`Cannot initialize blueprint controls: ${String(error)}`) }
       }
       setActiveBlueprintId(initial?.id ?? null)
@@ -1081,20 +1053,25 @@ export default function App() {
   }, [loading])
 
   useEffect(() => {
-    if (!isTauriWindow()) return
+    if (!isTauri()) return
     let disposed = false
     let unlisten: (() => void)[] = []
     const apply = (snapshot: RuntimeSnapshot) => {
       if (snapshot.blueprintId !== activeBlueprintIdRef.current) return
       setStatus(snapshot.status)
       setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? [])
-      setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
+      setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setNodeErrors(snapshot.nodeErrors ?? [])
       setLogs(snapshot.logs)
       setBlueprints((current) => current.map((blueprint) => blueprint.id === snapshot.blueprintId ? { ...blueprint, recordState: snapshot.status } : blueprint))
       if (snapshot.error) setNotice(snapshot.error)
     }
     void Promise.all([
       listen<RuntimeSnapshot>('workflow-status', (event) => apply(event.payload)),
+      listen<{blueprintId:string;display:{id:string};rect:{x:number;y:number;width:number;height:number}|null}>('region-confirmed', ({payload}) => {
+        if (!payload.rect || payload.blueprintId !== activeBlueprintIdRef.current) return
+        const {x,y,width,height}=payload.rect
+        setBlueprints(current=>current.map(blueprint=>blueprint.id===payload.blueprintId && !['starting','recording','paused','stopping'].includes(blueprint.recordState) ? {...blueprint,values:{...blueprint.values,display:payload.display.id,regionMode:'Selected Region',x,y,width,height}} : blueprint))
+      }),
       listen<RuntimeLog>('workflow-log', (event) => {
         setLogs((current) => current.some((log) => log.sequence === event.payload.sequence) ? current : [...current, event.payload].slice(-300))
       }),
@@ -1103,10 +1080,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!runtimeLocked || !activeBlueprintId || !isTauriWindow()) return
+    if (!runtimeLocked || !activeBlueprintId || !isTauri()) return
     const poll = () => void invoke<RuntimeSnapshot>('runtime_snapshot').then((snapshot) => {
       if (snapshot.blueprintId !== activeBlueprintIdRef.current) return
-      setStatus(snapshot.status); setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? []); setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
+      setStatus(snapshot.status); setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? []); setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setNodeErrors(snapshot.nodeErrors ?? [])
       setLogs(snapshot.logs)
     }).catch((error) => setNotice(String(error)))
     poll()
@@ -1115,40 +1092,29 @@ export default function App() {
   }, [runtimeLocked, activeBlueprintId])
 
   useEffect(() => {
-    if (!activationKey || !activeDocumentJson || !isTauriWindow() || activationKey === activatedDocumentRef.current) return
+    if (runtimeLocked || !activationKey || !activeDocumentJson || !isTauri() || activationKey === activatedDocumentKey) return
     let live = true
     const supported = (JSON.parse(activeDocumentJson) as BlueprintDocument).supported
     const timer = window.setTimeout(() => {
       void invoke<Activation>('activate_blueprint', { document: JSON.parse(activeDocumentJson) as BlueprintDocument }).then((activation) => {
         if (!live) return
-        activatedDocumentRef.current = activationKey
         setControls(activation.controls)
         setStatus('ready')
         if (activation.diagnostics.length) setNotice(activation.diagnostics.join(' · '))
-        else if (supported && activation.controls.length === 0) setNotice('This blueprint has no controls registered by On Initialize.')
+        else if (supported && activation.controls.length === 0) setNotice('This blueprint has no node action controls.')
+        else setNotice(null)
         return invoke<RuntimeSnapshot>('runtime_snapshot').then((snapshot) => { if (live) {
-          setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setLogs(snapshot.logs); setStatus(snapshot.status); setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? [])
+          setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setNodeErrors(snapshot.nodeErrors ?? []); setLogs(snapshot.logs); setStatus(snapshot.status); setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? [])
+          setActivatedDocumentKey(activationKey)
         } })
       }).catch((error) => { if (live) setNotice(`Cannot initialize blueprint controls: ${String(error)}`) })
     }, 120)
     return () => { live = false; window.clearTimeout(timer) }
-  }, [activationKey, activeBlueprintId, activeDocumentJson])
-
-  const dispatchEvent = (eventId: string) => {
-    setNotice(null)
-    void invoke('dispatch_blueprint_event', { eventId })
-      .then(() => invoke<RuntimeSnapshot>('runtime_snapshot'))
-      .then((snapshot) => {
-        if (snapshot.blueprintId !== activeBlueprintIdRef.current) return
-        setStatus(snapshot.status); setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? []); setFrameCount(snapshot.frameCount); setRecording(snapshot.recording)
-        setLogs(snapshot.logs)
-      })
-      .catch((error) => setNotice(String(error)))
-  }
+  }, [activationKey, activeBlueprintId, activeDocumentJson, activatedDocumentKey, runtimeLocked])
 
   const saveBlueprint = useCallback(async (id: string) => {
     const blueprint = blueprints.find((item) => item.id === id)
-    if (!blueprint || !isTauriWindow() || runtimeLocked && id === activeBlueprintId || savingBlueprints.has(id)) return false
+    if (!blueprint || !isTauri() || runtimeLocked && id === activeBlueprintId || savingBlueprints.has(id)) return false
     const document = serializeBlueprint(blueprint)
     const serialized = JSON.stringify(document)
     if (savedDocuments[id] === serialized) return true
@@ -1174,7 +1140,7 @@ export default function App() {
     } finally { setUpdating(false) }
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const save = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 's') return
       event.preventDefault()
@@ -1195,6 +1161,7 @@ export default function App() {
   }
   const selectTab = (tabId: string) => updateBlueprint((current) => ({ ...current, activeTab: tabId }))
   const closeTab = (tabId: string) => updateBlueprint((current) => {
+    if (current.tabs.find(tab=>tab.id===tabId)?.kind !== 'card') return current
     const tabs = current.tabs.filter((tab) => tab.id !== tabId)
     return { ...current, tabs, activeTab: current.activeTab === tabId ? tabs[Math.max(0, current.tabs.findIndex((tab) => tab.id === tabId) - 1)]?.id ?? 'overview' : current.activeTab }
   })
@@ -1251,9 +1218,11 @@ export default function App() {
     setActiveBlueprintId(id); setPage('workspace'); setMenuBlueprint(null)
   }
   const showLogs = () => { setLogsOpen(true); logsPanelRef.current?.expand() }
+  const workspaceTabs:EditorTab[] = activeBlueprint ? [{id:'overview',kind:'overview'},{id:'blueprint',kind:'blueprint'},...activeBlueprint.tabs.filter(tab=>tab.kind==='card')] : []
+  const selectedTabId=workspaceTabs.some(tab=>tab.id===activeBlueprint?.activeTab)?activeBlueprint?.activeTab:'overview'
   const contextBlueprint = menuBlueprint ? blueprints.find((blueprint) => blueprint.id === menuBlueprint.id) : null
   return <DisplayContext.Provider value={displays}><div className="desktop-window" inert={updating}>
-    <TitleBar displays={registeredDisplays} durationMs={recording?.durationMs ?? 0} controls={controls} status={status} hasBlueprint={Boolean(activeBlueprint)} controlsDisabled={!activeBlueprint?.supported} onControlEvent={dispatchEvent} sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((current) => !current)} navigate={selectPage} showLogs={showLogs} />
+    <TitleBar shortcutBlueprint={activeBlueprint??null} editingShortcuts={page==='workspace'&&activeBlueprint?.activeTab==='blueprint'&&!runtimeLocked} updateShortcuts={updateBlueprint} displays={registeredDisplays} durationMs={recording?.durationMs ?? 0} controls={controls} status={status} controlsDisabled={!activeBlueprint?.supported || !actionsReady} sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((current) => !current)} navigate={selectPage} showLogs={showLogs} />
     <Group className="desktop-panels" orientation="vertical" defaultLayout={{ workspace: 78, logs: 22 }} resizeTargetMinimumSize={{ fine: 8, coarse: 12 }}>
     <Panel id="workspace" minSize="35%" className="desktop-main-panel">
     <div className={`app-layout${sidebarOpen ? '' : ' sidebar-collapsed'}`} style={{ gridTemplateColumns: sidebarOpen ? `${sidebarWidth}px 6px minmax(0, 1fr)` : '0px 0px minmax(0, 1fr)' }}>
@@ -1277,19 +1246,19 @@ export default function App() {
         if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); setSidebarWidth((width) => Math.max(sidebarMinWidth, Math.min(getSidebarMaxWidth(), width + (event.key === 'ArrowRight' ? 12 : -12)))) }
       }} />
       <section className="work-area">
+        {page === 'workspace' && recording?.outputs?.length ? <details className="recording-outputs" open={recording.outputs.some(output => output.error) || undefined}><summary>Recording outputs · {recording.outputs.filter(output => output.finished && !output.error).length} saved / {recording.outputs.length}</summary><ul>{recording.outputs.map(output => <li key={output.path}><strong>{outputStatusText(output)}</strong><span>{output.path}</span>{output.error && <><p role="alert">{output.error}</p><span>Partial file: {output.partialPath}</span></>}</li>)}</ul></details> : null}
         {notice && <div className="app-notice" role="status">{notice}<button aria-label="Dismiss message" onClick={() => setNotice(null)}><X size={13} /></button></div>}
         {diagnostics.length > 0 && <div className="app-diagnostics">{diagnostics.map((item, index) => <div key={`${index}:${item}`}>{item}</div>)}</div>}
         <SettingsPanel visible={page === 'settings'} locked={runtimeLocked || savingBlueprints.size > 0} onUpdate={installUpdate} />
         {page === 'settings' ? null : page !== 'workspace' ? <EmptyPage /> : !activeBlueprint ? <main className="empty-blueprints"><div className="empty-icon"><Workflow size={24} /></div><span className="eyebrow">BLUEPRINTS</span><h1>{loading ? 'Loading blueprints' : 'No blueprints found'}</h1><p>{loading ? 'Reading files beside the application.' : 'Create a blueprint to start building a workflow.'}</p><button className="button primary" disabled={loading} onClick={() => setDialog({ kind: 'new' })}><Plus size={14} />New blueprint</button></main>
-          : runtimeLocked ? <main className="runtime-locked"><div className="empty-icon"><Video size={24} /></div><span className="eyebrow">{activeBlueprint.name}</span><h1>{status === 'paused' ? 'Recording paused' : status === 'starting' ? 'Starting workflow' : status === 'stopping' ? 'Finalizing MP4' : 'Recording'}</h1><p>{frameCount} encoded frames. Use the blueprint controls above to continue or stop.</p>{recording && <><p>{recording.encoder} · {recording.adapter}<br />{recording.width} × {recording.height} · {recording.fps} fps · {(recording.durationMs / 1000).toFixed(1)} s<br />{recording.droppedFrames} dropped · {recording.repeatedFrames} repeated</p><p>{recording.outputPath}</p></>}</main>
             : <>
-              <div className="workspace-tabs"><div className="tabs-list">{activeBlueprint.tabs.map((tab) => <div className={`workspace-tab${tab.id === activeBlueprint.activeTab ? ' active' : ''}`} key={tab.id} title={activeBlueprintDirty ? `Unsaved changes in ${activeBlueprint.name} (Ctrl+S to save)` : undefined}>
-                <button onClick={() => selectTab(tab.id)}>{tab.kind === 'overview' ? 'Overview' : tab.kind === 'blueprint' ? 'Blueprint' : tab.kind === 'function' ? activeBlueprint.functions.find((item) => item.id === tab.functionId)?.name ?? 'Function' : activeBlueprint.cards.find((card) => card.id === tab.cardId)?.name ?? 'Card'}</button>
+              <div className="workspace-tabs"><div className="tabs-list">{workspaceTabs.map((tab) => <div className={`workspace-tab${tab.id === selectedTabId ? ' active' : ''}`} key={tab.id} title={activeBlueprintDirty ? `Unsaved changes in ${activeBlueprint.name} (Ctrl+S to save)` : undefined}>
+                <button onClick={() => selectTab(tab.id)}>{tab.kind === 'overview' ? 'Overview' : tab.kind === 'blueprint' ? 'Blueprint' : activeBlueprint.cards.find((card) => card.id === tab.cardId)?.name ?? 'Card'}</button>
                 {activeBlueprintDirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" />}
-                {tab.kind !== 'overview' && <button className="tab-close" aria-label={`Close ${tab.kind} tab`} onClick={() => closeTab(tab.id)}><X size={12} /></button>}
+                {tab.kind === 'card' && <button className="tab-close" aria-label={`Close ${tab.kind} tab`} onClick={() => closeTab(tab.id)}><X size={12} /></button>}
               </div>)}</div></div>
               <div className="workspace-content">
-                <BlueprintContent blueprint={activeBlueprint} update={updateBlueprint} openCard={(id) => openTab('card', id)} catalog={catalog} locked={runtimeLocked} />
+                <BlueprintContent nodeErrors={nodeErrors} actionsReady={actionsReady} blueprint={activeBlueprint} update={updateBlueprint} openCard={(id) => openTab('card', id)} catalog={catalog} locked={runtimeLocked} durationMs={recording?.durationMs ?? 0} />
                 <CardDetailsPreview blueprint={activeBlueprint} update={updateBlueprint} />
               </div>
             </>}

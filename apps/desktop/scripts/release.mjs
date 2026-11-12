@@ -15,6 +15,9 @@ const api = `https://api.github.com/repos/${repository}`
 const token = process.env.MOOATOON_ENGINE_TOKEN || process.env.GITHUB_TOKEN
 const key = process.env.TAURI_SIGNING_PRIVATE_KEY || path.join(homedir(), '.tauri/nodrec.key')
 const cli = path.join(desktop, 'node_modules/@tauri-apps/cli/tauri.js')
+if (JSON.parse(await readFile(path.join(desktop,'node_modules/@tauri-apps/cli/package.json'),'utf8')).version !== '2.12.2') {
+  throw new Error('Refresh installer-template.nsi from the new Tauri CLI and rerun installer backup tests before building releases.')
+}
 function run(command, args, env = process.env) {
   const result = spawnSync(command, args, { cwd: desktop, env, stdio: 'inherit', windowsHide: true })
   if (result.error) throw result.error
@@ -61,6 +64,7 @@ if (!buildOnly) {
   await writeFile(cargoPath, (await readFile(cargoPath, 'utf8')).replace(/^(version\s*=\s*")[^"]+("\s*)$/m, `$1${version}$2`))
 }
 run(process.execPath, [cli, 'build', '--bundles', 'nsis'], { ...process.env, TAURI_SIGNING_PRIVATE_KEY: key, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' })
+run(process.execPath, [path.join(desktop,'scripts/verify-installer-backup.mjs')])
 run(process.execPath, [path.join(desktop, 'scripts/stage-blueprints.mjs'), 'release'])
 const bundle = path.join(desktop, 'src-tauri/target/release/bundle/nsis')
 const installer = (await readdir(bundle)).find(name => name === `Nodrec_${version}_x64-setup.exe`)

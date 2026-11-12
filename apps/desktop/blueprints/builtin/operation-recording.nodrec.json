@@ -9,7 +9,7 @@
     "delay": "0",
     "resolution": "1920 × 1080",
     "fps": "60",
-    "encoder": "H.264",
+    "codec": "H.264",
     "bitrate": "20",
     "systemAudio": true,
     "microphone": false,
@@ -29,7 +29,7 @@
     "delay": "Start delay (s)",
     "resolution": "Resolution",
     "fps": "Frame rate",
-    "encoder": "Encoder",
+    "codec": "Encoder",
     "bitrate": "Bitrate (Mbps)",
     "systemAudio": "System audio",
     "microphone": "Microphone",
@@ -59,7 +59,7 @@
       "parameters": [
         "resolution",
         "fps",
-        "encoder",
+        "codec",
         "bitrate"
       ]
     },
@@ -160,7 +160,7 @@
         "pinned": false,
         "columns": [
           {
-            "id": "encoder",
+            "id": "codec",
             "weight": 1
           }
         ]
@@ -395,18 +395,6 @@
     ]
   },
   "customParameters": [],
-  "eventFolders": [
-    {
-      "id": "recording",
-      "name": "Recording"
-    }
-  ],
-  "functionFolders": [
-    {
-      "id": "utilities",
-      "name": "Utilities"
-    }
-  ],
   "variableFolders": [
     {
       "id": "capture",
@@ -429,112 +417,19 @@
       "name": "Input"
     }
   ],
-  "events": [
-    {
-      "id": "event-initialize",
-      "name": "On Initialize",
-      "folderId": "recording"
-    },
-    {
-      "id": "event-operation-preview",
-      "name": "On Start Operation Recording",
-      "folderId": "recording"
-    }
-  ],
-  "functions": [
-    {
-      "id": "function-path",
-      "name": "Prepare Output Path",
-      "folderId": "utilities"
-    }
-  ],
-  "nodes": [
-    {
-      "id": "initialize",
-      "type": "event",
-      "position": {
-        "x": 40,
-        "y": 40
-      },
-      "data": {
-        "kind": "event",
-        "label": "On Initialize",
-        "config": {
-          "eventId": "event-initialize"
-        }
-      }
-    },
-    {
-      "id": "register-operations",
-      "type": "register_control",
-      "position": {
-        "x": 360,
-        "y": 40
-      },
-      "data": {
-        "kind": "register_control",
-        "label": "Register Operation Control",
-        "config": {
-          "control": {
-            "id": "record-operations",
-            "label": "Record operations",
-            "icon": "mouse-pointer-2",
-            "eventId": "event-operation-preview",
-            "enabled": false,
-            "order": 0
-          }
-        }
-      }
-    },
-    {
-      "id": "event-operation-preview",
-      "type": "event",
-      "position": {
-        "x": 40,
-        "y": 260
-      },
-      "data": {
-        "kind": "event",
-        "label": "On Start Operation Recording",
-        "config": {
-          "eventId": "event-operation-preview"
-        }
-      }
-    },
-    {
-      "id": "log-operation-preview",
-      "type": "log",
-      "position": {
-        "x": 360,
-        "y": 260
-      },
-      "data": {
-        "kind": "log",
-        "label": "Log Operation Preview",
-        "config": {
-          "message": "Operation recording is not implemented yet"
-        }
-      }
-    }
-  ],
-  "edges": [
-    {
-      "id": "e-initialize-register",
-      "source": "initialize",
-      "sourceHandle": "out:flow",
-      "target": "register-operations",
-      "targetHandle": "in:flow",
-      "type": "smoothstep"
-    },
-    {
-      "id": "e-operation-log",
-      "source": "event-operation-preview",
-      "sourceHandle": "out:flow",
-      "target": "log-operation-preview",
-      "targetHandle": "in:flow",
-      "type": "smoothstep"
-    }
-  ],
   "supported": false,
-  "schemaVersion": 1
+  "schemaVersion": 2,
+  "graphs": [
+    {
+      "name": "Recording",
+      "nodes": [],
+      "id": "recording",
+      "edges": []
+    }
+  ],
+  "controls": [],
+  "displays": [],
+  "controlOrder": {
+    "main": []
+  }
 }

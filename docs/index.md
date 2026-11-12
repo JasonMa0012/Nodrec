@@ -12,6 +12,8 @@
 | [Desktop UI 规范](ui-guidelines.md) | 字体密度、Details 参数行和 Blueprint 画布交互 |
 | [节点自动整理](node-layout.md) | BA 排版研究、节点整理实现和边界 |
 | [验收场景与记录](testing.md) | 测试入口、历史证据、验证范围及尚未完成的场景 |
+| [录制重构性能对比](recording-performance.md) | 同机旧／新单路、多输出 CPU 与内存测量及边界 |
+| [蓝图 V2 验收清单](blueprint-v2-acceptance.md) | 对照原计划的证据、未完成项和完成边界 |
 | [触摸板平移异常](bugs/touchpad-axis-lock.md) | 暂停排查的现象、证据、实验分支和恢复步骤 |
 | [技术决策](decisions.md) | 仅收录用户选择并确认的方案 |
 
@@ -20,7 +22,7 @@
 | 模块 | 职责 |
 | --- | --- |
 | [Runtime](modules/runtime.md) | 会话与运行协调 |
-| [Workflow](modules/workflow.md) | 节点、事件、函数、子图与预设 |
+| [Workflow](modules/workflow.md) | V2 数据图、节点动作、命名值与预设 |
 | [Capture](modules/capture.md) | 屏幕、窗口、区域与图像帧 |
 | [Audio](modules/audio.md) | 音频采集与混合 |
 | [Media Output](modules/media-output.md) | 编码、封装与写入 |

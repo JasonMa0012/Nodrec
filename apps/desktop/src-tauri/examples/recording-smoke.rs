@@ -1,4 +1,4 @@
-//! Real-device probe: cargo run --example recording-smoke -- <path.mp4> [seconds] [software] [odd|1080|1440]
+//! Real-device probe: cargo run --example recording-smoke -- <path.mp4> [seconds] [software] [odd|1080|1440] [--copy-output path.mp4]
 use nodrec_desktop_lib::recording::{displays, RecordingPlan, RecordingSession};
 use std::{time::Duration, path::PathBuf};
 
@@ -16,7 +16,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fps: 60, bitrate: 20_000_000, software: args.get(3).is_some_and(|v| v == "software"), cursor: true,
         path: PathBuf::from(&args[1]) };
     plan.validate(display)?;
-    let session = RecordingSession::start(plan)?;
+    let mut paths = vec![plan.path.clone()];
+    if let Some(index) = args.iter().position(|argument| argument == "--copy-output") {
+        paths.push(PathBuf::from(args.get(index + 1).ok_or("--copy-output requires an MP4 path")?));
+    }
+    let blocked = if args.iter().any(|argument| argument == "--block-publish") {
+        Some(paths.get(1).ok_or("--block-publish requires --copy-output")?.clone())
+    } else { None };
+    let session = if args.iter().any(|argument| argument == "--second-encoder") {
+        let second_path = paths.get(1).ok_or("--second-encoder requires --copy-output")?.clone();
+        let mut second = plan.clone();
+        second.output_width = 640; second.output_height = 360; second.path = second_path.clone();
+        RecordingSession::start_graph(plan.clone(),vec![(plan,vec![paths[0].clone()]),(second,vec![second_path])])?
+    } else { RecordingSession::start_outputs(plan, paths.clone())? };
+    if let Some(path) = &blocked {
+        use std::io::Write;
+        std::fs::OpenOptions::new().write(true).create_new(true).open(path)?.write_all(b"publication-conflict-sentinel")?;
+    }
     for second in 0..args.get(2).map_or(Ok(3), |s| s.parse::<u32>())? {
         std::thread::sleep(Duration::from_secs(1));
         if args.iter().any(|a| a == "pause") && second == 1 { session.pause(true); std::thread::sleep(Duration::from_secs(2)); session.pause(false); }
@@ -24,8 +40,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", serde_json::to_string(&stats)?);
         if stats.finished { return Err(stats.error.unwrap_or("Recorder exited early".into()).into()); }
     }
-    let stats = session.stop()?;
+    let stats = if let Some(path) = &blocked {
+        session.request_stop();
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        while !session.stats().finished && std::time::Instant::now() < deadline { std::thread::sleep(Duration::from_millis(10)); }
+        let stats = session.stats();
+        assert!(stats.finished,"Faulted recording did not finish");
+        assert!(session.stop().is_err(),"Publication conflict must be reported");
+        assert_eq!(std::fs::read(path)?,b"publication-conflict-sentinel","Existing destination must never be overwritten");
+        let failed = stats.outputs.iter().find(|output| PathBuf::from(&output.path) == *path).ok_or("Missing failed output statistics")?;
+        assert!(failed.error.is_some() && std::fs::metadata(&failed.partial_path)?.len() > 0);
+        assert!(stats.outputs.iter().filter(|output| PathBuf::from(&output.path) != *path).all(|output| output.finished && output.error.is_none()));
+        stats
+    } else { session.stop()? };
     assert!(stats.encoded_frames > 0);
+    for path in paths { assert!(std::fs::metadata(&path)?.len() > 0, "Output was not published: {}",path.display()); }
     println!("{}", serde_json::to_string_pretty(&stats)?);
     Ok(())
 }

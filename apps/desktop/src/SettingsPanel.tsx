@@ -1,3 +1,4 @@
+import brandIcon from '../src-tauri/icons/icon.svg'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
@@ -87,7 +88,7 @@ export default function SettingsPanel({ visible, locked, onUpdate }: {
       {section === 'network' && <><h2>Network</h2><label className="settings-option"><span>Proxy</span><select value={preferences.proxyMode} disabled={!ready || busy} onChange={event => setPreferences({ ...preferences, proxyMode: event.target.value as Preferences['proxyMode'] })}><option value="direct">Direct connection</option><option value="system">System proxy (default)</option><option value="custom">Custom</option></select></label>
         {preferences.proxyMode === 'custom' && <label className="settings-proxy">Proxy URL<input value={preferences.proxyUrl} disabled={busy} placeholder="http://127.0.0.1:7890" onChange={event => setPreferences({ ...preferences, proxyUrl: event.target.value })} /><small>HTTP, HTTPS or SOCKS5 · include the host/IP and port.</small></label>}
         <p>Applies to update checks and downloads. Mainland China connections use GitHub acceleration with automatic fallback.</p></>}
-      {section === 'about' && <><div className="settings-about"><span className="brand-mark"><span>N</span></span><div><h2>Nodrec</h2><span>Version {version || '—'}</span></div></div><button className="button" onClick={() => { void invoke('open_project').catch(error => setMessage(String(error))) }}><ExternalLink size={14} />GitHub · JasonMa0012/Nodrec</button>
+      {section === 'about' && <><div className="settings-about"><span className="brand-mark"><img src={brandIcon} alt="" /></span><div><h2>Nodrec</h2><span>Version {version || '—'}</span></div></div><button className="button" onClick={() => { void invoke('open_project').catch(error => setMessage(String(error))) }}><ExternalLink size={14} />GitHub · JasonMa0012/Nodrec</button>
         <div className="settings-updates"><h3>Updates</h3><button className="button" disabled={!ready || busy || dirty} onClick={() => { void check() }}>Check for updates</button>
           {update?.version && <><h3>Nodrec {update.version}</h3>{update.notes && <p className="release-notes">{update.notes}</p>}<button className="button primary" disabled={busy || locked || dirty} onClick={() => { void install() }}><Download size={14} />Update and restart</button><p>All blueprint changes are saved before downloading. Built-in blueprints are replaced by the update; duplicate them to keep customizations.</p></>}
           {locked && <p>Stop recording and wait for saves to finish before updating.</p>}

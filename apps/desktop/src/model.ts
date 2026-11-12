@@ -16,20 +16,47 @@ export type ParameterDropPlacement = 'above' | 'below' | 'left' | 'right' | 'end
 export type OverviewLayouts = ResponsiveLayouts<'wide' | 'narrow'>
 export type ParameterCard = { id: string; name: string; parameters: string[] }
 export type TreeFolder = { id: string; name: string }
-export type TreeItem = { id: string; name: string; folderId: string; graph?: { nodes: BlueprintNode[]; edges: Edge[] } }
-export type BlueprintSelection = { kind: 'nodes'; keys: string[] } | { kind: 'node' | 'parameter' | 'card' | 'event' | 'function' | 'folder'; key: string } | null
-export type NodeKind = 'select_region' | 'get_selected_region' | 'register_display' | 'event' | 'register_control' | 'register_menu' | 'update_control' | 'log' | 'delay' | 'branch' | 'read_parameter' | 'constant' | 'make_boolean' | 'make_byte' | 'make_integer' | 'make_integer64' | 'make_float' | 'make_double' | 'make_name' | 'make_string' | 'make_text' | 'compare' | 'start_pipeline' | 'pause_pipeline' | 'resume_pipeline' | 'stop_pipeline' | 'region' | 'path' | 'screen' | 'audio' | 'encode' | 'write'
-export type BlueprintNodeData = { label: string; kind: NodeKind; note?: string; config?: Record<string, unknown> }
+export type BlueprintSelection = { kind: 'nodes'; keys: string[] } | { kind: 'node' | 'parameter' | 'card' | 'folder'; key: string } | null
+export type NodeKind = 'define_value' | 'read_value' | 'select_region' | 'get_selected_region' | 'read_parameter' | 'constant' | 'make_boolean' | 'make_byte' | 'make_integer' | 'make_integer64' | 'make_float' | 'make_double' | 'make_name' | 'make_string' | 'make_text' | 'compare' | 'region' | 'path' | 'screen' | 'audio' | 'encode_media_foundation' | 'write'
+export type BlueprintNodeData = { label: string; kind: NodeKind; enabled?: boolean; actionOrder?: string[]; note?: string; config?: Record<string, unknown> }
 export type BlueprintNode = Node<BlueprintNodeData>
+
+export function createNodeControl(node: BlueprintNode, target: string, id: string, graphId = 'recording'): RegisteredControl {
+  if (node.data.kind !== 'screen' && node.data.kind !== 'select_region') throw new Error('Node has no control action')
+  return { id, label:node.data.kind === 'screen' ? 'Record' : 'Select region', icon:node.data.kind === 'screen' ? 'play' : 'crop', enabled:true, targets:[target], binding:{graphId,nodeId:node.id,action:node.data.kind === 'screen' ? 'record' : 'select'} }
+}
+
+export function copyNamedValues(nodes: BlueprintNode[], existing: readonly BlueprintNode[], ids: ReadonlyMap<string, string>): BlueprintNode[] {
+  const names = new Set(existing.filter(node => node.data.kind === 'define_value').map(node => String(node.data.config?.name ?? '').trim()))
+  return nodes.map(node => {
+    const config = { ...node.data.config }
+    if (node.data.kind === 'read_value' && typeof config.definitionId === 'string') config.definitionId = ids.get(config.definitionId) ?? config.definitionId
+    if (node.data.kind === 'define_value') {
+      const base = String(config.name ?? 'Value').trim() || 'Value'
+      let name = base
+      for (let suffix = 2; names.has(name); suffix++) name = `${base} ${suffix}`
+      names.add(name)
+      config.name = name
+    }
+    return { ...node, data: { ...node.data, config } }
+  })
+}
 export type BlueprintScope = 'builtin' | 'user'
-export type PinValueType = 'flow' | 'value' | 'boolean' | 'byte' | 'integer' | 'integer64' | 'float' | 'double' | 'name' | 'string' | 'text' | 'object' | 'soft_object' | 'class' | 'soft_class' | 'interface' | 'delegate' | 'struct' | 'vector' | 'rotator' | 'transform' | 'region' | 'path' | 'video_frames' | 'audio_samples' | 'encoded_video'
+export type PinValueType = 'value' | 'boolean' | 'byte' | 'integer' | 'integer64' | 'float' | 'double' | 'name' | 'string' | 'text' | 'object' | 'soft_object' | 'class' | 'soft_class' | 'interface' | 'delegate' | 'struct' | 'vector' | 'rotator' | 'transform' | 'region' | 'path' | 'video_frames' | 'audio_samples' | 'encoded_video'
 export type NodePortDefinition = { id: string; label: string; valueType: PinValueType }
-export type NodeTypeDefinition = { kind: NodeKind; label: string; category: string; inputs: NodePortDefinition[]; outputs: NodePortDefinition[]; inputParameters: string[]; defaultConfig: Record<string, unknown> }
-export type ControlMenuItem = { id: string; label: string; icon: string; eventId: string; children?: ControlMenuItem[] }
-export type RegisteredDisplay = { id: string; targets: string[]; order: number; source: 'status' | 'elapsed'; format: 'text' | 'HH:mm:ss' }
-export type RegisteredControl = { id: string; label: string; icon: string; eventId: string; order: number; enabled: boolean; menu: ControlMenuItem[]; targets?: string[] }
-export type EditorTab = { id: string; kind: 'overview' | 'blueprint' | 'card' | 'function'; cardId?: string; functionId?: string }
+export type NodeTypeDefinition = { provider?: string | null; actions?: string[]; choices?: Record<string, string[]>; kind: NodeKind; label: string; category: string; inputs: NodePortDefinition[]; outputs: NodePortDefinition[]; inputParameters: string[]; defaultConfig: Record<string, unknown> }
+export type RegisteredDisplay = { binding?:RegisteredControl['binding']; targetOrder?: Record<string, number>; id: string; targets: string[]; order: number; source: 'status' | 'elapsed'; format: 'text' | 'HH:mm:ss' }
+export type RegisteredControl = { error?: string; binding: { graphId: string; nodeId: string; action: 'record' | 'select' }; targetOrder?: Record<string, number>; id: string; label: string; icon: string; order?: number; enabled: boolean; targets?: string[] }
+export type EditorTab = { id: string; kind: 'overview' | 'blueprint' | 'card'; cardId?: string }
+export type BlueprintGraph = { id: string; name: string; nodes: BlueprintNode[]; edges: Edge[] }
 export type Blueprint = {
+  graphOrder: string[]
+  graphId: string
+  graphName: string
+  additionalGraphs: BlueprintGraph[]
+  displays: RegisteredDisplay[]
+  controls: RegisteredControl[]
+  controlOrder: Record<string, string[]>
   id: string
   name: string
   replay: boolean
@@ -38,11 +65,7 @@ export type Blueprint = {
   cards: ParameterCard[]
   customParameters: ParameterDefinition[]
   overviewLayouts: OverviewLayouts
-  eventFolders: TreeFolder[]
-  functionFolders: TreeFolder[]
   variableFolders: TreeFolder[]
-  events: TreeItem[]
-  functions: TreeItem[]
   layouts: Record<string, ParameterRow[]>
   tabs: EditorTab[]
   activeTab: string
@@ -61,7 +84,7 @@ export type Blueprint = {
 
 // Unreal GraphEditorSettings defaults converted from linear color to CSS sRGB.
 const uePinColors: Record<string, string> = {
-  flow: '#FFFFFF', boolean: '#950000', byte: '#006F65', class: '#5900BC', integer: '#1FE3AF', integer64: '#ACE3AF',
+  boolean: '#950000', byte: '#006F65', class: '#5900BC', integer: '#1FE3AF', integer64: '#ACE3AF',
   float: '#A1FF45', double: '#38D500', name: '#CD82FF', delegate: '#FF3838', object: '#00AAF5', soft_object: '#95FFFF',
   soft_class: '#FF95FF', interface: '#F1FFAA', string: '#FF00D4', text: '#E77CAA', struct: '#0059CB', wildcard: '#817A7A',
   vector: '#FFCA23', rotator: '#A0B4FF', transform: '#FF7300', default: '#E1CBAA',
@@ -79,33 +102,49 @@ export function configPathId(path: readonly (string | number)[]): string {
   return path.map(String).join('.')
 }
 
-export function parameterInputPortId(kind: NodeKind, pathId: string): string {
-  return kind === 'branch' && pathId === 'condition' ? pathId : `param:${pathId}`
+export function parameterInputPortId(_kind: NodeKind, pathId: string): string {
+  return `param:${pathId}`
 }
 
-export function exposedInputIds(kind: NodeKind, config: Record<string, unknown>): string[] {
-  if (Array.isArray(config.exposedInputs)) return [...new Set(config.exposedInputs.filter((item): item is string => typeof item === 'string'))]
-  return kind === 'branch' ? ['condition'] : []
+export function parameterSources(blueprint: Pick<Blueprint,'nodes' | 'edges'>, nodeIds: string[], path: string): string[] {
+  return [...new Set(nodeIds.map(id => {
+    const edge = blueprint.edges.find(edge => edge.target === id && (edge.targetHandle === `in:param:${path}` || edge.targetHandle === `in:${path}`))
+    if (!edge) return 'Local value'
+    const source = blueprint.nodes.find(node => node.id === edge.source)
+    return `${source?.data.label ?? `Missing node (${edge.source})`} · ${edge.sourceHandle?.replace(/^out:/,'') ?? 'output'}`
+  }))]
+}
+
+export function connectedInputValue(blueprint: Blueprint, nodeId: string, path: string, visiting = new Set<string>()): unknown {
+  const edge = blueprint.edges.find(edge => edge.target === nodeId && (edge.targetHandle === 'in:param:' + path || edge.targetHandle === 'in:' + path))
+  if (!edge) return undefined
+  const source = blueprint.nodes.find(node => node.id === edge.source)
+  if (!source || source.data.enabled === false || visiting.has(source.id) || visiting.size >= 128) return undefined
+  const next = new Set(visiting).add(source.id)
+  const config = source.data.config ?? {}
+  const input = (key: string) => connectedInputValue(blueprint, source.id, key, next)
+  if (source.data.kind === 'read_parameter') {
+    const parameter = allParameters(blueprint).find(parameter => parameter.id === config.parameterId)
+    return parameter ? blueprint.values[parameter.id] ?? parameter.initial : undefined
+  }
+  if (source.data.kind === 'constant' || source.data.kind.startsWith('make_')) return blueprint.edges.some(edge => edge.target === source.id && edge.targetHandle === 'in:param:value') ? input('value') : config.value
+  if (source.data.kind === 'define_value') return input('value')
+  if (source.data.kind === 'read_value') return connectedInputValue(blueprint, String(config.definitionId), 'value', next)
+  if (source.data.kind === 'compare') {
+    const left = input('left'), right = input('right')
+    if (left === undefined || right === undefined) return undefined
+    if (config.operator === 'contains') return typeof left === 'string' && typeof right === 'string' && left.includes(right)
+    if (config.operator === 'not_equal') return JSON.stringify(left) !== JSON.stringify(right)
+    if (!config.operator || config.operator === 'equal') return JSON.stringify(left) === JSON.stringify(right)
+  }
+  // shortcut: runtime media and selected-region outputs have no editor snapshot, show unavailable until runtime exposes them.
+  return undefined
 }
 
 export function pinTypeForValue(value: unknown): PinValueType | null {
   if (typeof value === 'boolean') return 'boolean'
   if (typeof value === 'number') return Number.isInteger(value) ? 'integer' : 'float'
   return typeof value === 'string' ? 'string' : null
-}
-
-export function syncBlueprintEvents(blueprint: Blueprint): Blueprint {
-  const existing = new Map(blueprint.events.map((event) => [event.id, event]))
-  const folders = new Set(blueprint.eventFolders.map((folder) => folder.id))
-  const events = blueprint.nodes.flatMap((node) => {
-    if (node.data.kind !== 'event' || typeof node.data.config?.eventId !== 'string' || !node.data.config.eventId.trim()) return []
-    const id = node.data.config.eventId
-    const previous = existing.get(id)
-    return [{ id, name: node.data.label, folderId: previous && folders.has(previous.folderId) ? previous.folderId : blueprint.eventFolders[0]?.id ?? '' }]
-  })
-  const selectedEventId = blueprint.selection?.kind === 'event' ? blueprint.selection.key : null
-  const selection = selectedEventId && !events.some((event) => event.id === selectedEventId) ? null : blueprint.selection
-  return { ...blueprint, events, selection }
 }
 
 export const parameters: ParameterDefinition[] = [
@@ -120,7 +159,7 @@ export const parameters: ParameterDefinition[] = [
   { id: 'delay', label: 'Start delay (s)', kind: 'choice', initial: '0', options: ['0', '3', '5'] },
   { id: 'resolution', label: 'Resolution', kind: 'choice', initial: 'Source Size', options: ['Source Size', '1920 × 1080', '2560 × 1440'] },
   { id: 'fps', label: 'Frame rate', kind: 'choice', initial: 60, options: ['24', '30', '60', '120'] },
-  { id: 'encoder', label: 'Encoder', kind: 'choice', initial: 'H.264', options: ['H.264'] },
+  { id: 'codec', label: 'Codec', kind: 'choice', initial: 'H.264', options: ['H.264'] },
   { id: 'encodingMode', label: 'Encoding mode', kind: 'choice', initial: 'Hardware Auto', options: ['Hardware Auto', 'Software'] },
   { id: 'bitrate', label: 'Bitrate (Mbps)', kind: 'text', initial: '20' },
   { id: 'systemAudio', label: 'System audio', kind: 'readonly', initial: 'Not available yet' },
@@ -262,7 +301,7 @@ const pinMap: Record<string, string[]> = {
 
 const cardList = (replay: boolean): ParameterCard[] => [
   { id: 'recording', name: 'Recording settings', parameters: ['display', 'regionMode', 'x', 'y', 'width', 'height', 'cursor'] },
-  { id: 'video', name: 'Video', parameters: ['resolution', 'fps', 'encoder', 'encodingMode', 'bitrate'] },
+  { id: 'video', name: 'Video', parameters: ['resolution', 'fps', 'codec', 'encodingMode', 'bitrate'] },
   { id: 'audio', name: 'Audio (not available yet)', parameters: ['systemAudio', 'microphone', 'device', 'sampleRate'] },
   { id: 'output', name: 'Output', parameters: ['output', 'filename'] },
   ...(replay ? [
@@ -277,101 +316,33 @@ function graph(): { nodes: BlueprintNode[]; edges: Edge[] } {
   const add = (id: string, kind: NodeKind, label: string, x: number, y: number, config: Record<string, unknown> = {}) => nodes.push({
     id, type: kind, position: { x, y }, data: { kind, label, config },
   })
-  const flow = (source: string, target: string) => edges.push({ id: `e-${source}-${target}`, source, sourceHandle: 'out:flow', target, targetHandle: 'in:flow', type: 'smoothstep' })
   const value = (source: string, output: string, target: string, input: string) => edges.push({ id: `e-${source}-${target}-${input}`, source, sourceHandle: `out:${output}`, target, targetHandle: `in:${input}`, type: 'smoothstep' })
-  const control = (id: string, label: string, icon: string, eventId: string, enabled: boolean, order: number) => ({ id, label, icon, eventId, order, enabled, targets: id === 'select-region' ? ['main'] : ['main', 'region:capture-region'] })
-
-  add('initialize', 'event', 'On Initialize', 0, 40, { eventId: 'event-initialize' })
-  add('register-select', 'register_control', 'Register Region Picker', 330, 0, { control: control('select-region', 'Select region', 'crop', 'event-select-region', true, 0) })
-  add('register-start', 'register_control', 'Register Start', 620, 0, { control: control('start-recording', 'Start recording', 'play', 'event-start', true, 1) })
-  add('register-pause', 'register_control', 'Register Pause', 910, 0, { control: control('pause-recording', 'Pause', 'pause', 'event-pause', false, 2) })
-  add('register-stop', 'register_control', 'Register Stop', 1200, 0, { control: control('stop-recording', 'Stop', 'stop-circle', 'event-stop', false, 3) })
-  add('menu-capture-target', 'register_menu', 'Register Capture Target Menu', 1490, 1800, { controlId: 'select-region', path: 'Capture Target', icon: 'monitor', eventId: 'event-select-display' })
-  add('menu-display-1', 'register_menu', 'Register Display 1 Menu', 1780, 1800, { controlId: 'select-region', path: 'Capture Target/Display 1', icon: 'monitor', eventId: 'event-select-display-1' })
-  add('menu-active-window', 'register_menu', 'Register Active Window Menu', 2070, 1800, { controlId: 'select-region', path: 'Capture Target/Active Window', icon: 'mouse-pointer-2', eventId: 'event-select-window' })
-  add('menu-start', 'register_menu', 'Register Start Menu', 2360, 1800, { controlId: 'start-recording', path: 'Start', icon: 'play', eventId: 'event-start' })
-  add('menu-delayed-start', 'register_menu', 'Register Delayed Start Menu', 2650, 1800, { controlId: 'start-recording', path: 'Start/Start after 3 seconds', icon: 'clock-3', eventId: 'event-start-delayed' })
-  flow('initialize', 'register-select'); flow('register-select', 'register-start'); flow('register-start', 'register-pause'); flow('register-pause', 'register-status'); flow('register-status', 'register-time'); flow('register-time', 'register-stop')
-  add('register-status', 'register_display', 'Register Status Display', 910, -230, { display: { id: 'recording-status', targets: ['main', 'region:capture-region'], order: 4, source: 'status', format: 'text' } })
-  add('register-time', 'register_display', 'Register Time Display', 1200, -230, { display: { id: 'recording-time', targets: ['main', 'region:capture-region'], order: 5, source: 'elapsed', format: 'HH:mm:ss' } })
-  flow('register-stop', 'menu-capture-target'); flow('menu-capture-target', 'menu-display-1'); flow('menu-display-1', 'menu-active-window'); flow('menu-active-window', 'menu-start'); flow('menu-start', 'menu-delayed-start')
-
-  add('event-select-region', 'event', 'On Select Region', 0, 230, { eventId: 'event-select-region' })
-  add('log-select-region', 'select_region', 'Select Region', 330, 230, { toolId: 'capture-region', display: 'Display 1', initialRegion: null, exposedInputs: ['display'] })
-  add('picker-display', 'read_parameter', 'Read Display', 0, 320, { parameterId: 'display' })
+  add('log-select-region', 'select_region', 'Select Region', -400, 900, { toolId: 'capture-region', display: 'Display 1', initialRegion: null })
+  add('picker-display', 'read_parameter', 'Read Display', -920, 900, { parameterId: 'display' })
   value('picker-display', 'value', 'log-select-region', 'param:display')
-  flow('event-select-region', 'log-select-region')
-  for (const [id, label, message, y] of [
-    ['event-select-display', 'On Select Display', 'Select a display in Overview', 370],
-    ['event-select-display-1', 'On Select Display 1', 'Select a display in Overview', 510],
-    ['event-select-window', 'On Select Window', 'Window capture is not implemented yet', 650],
-  ] as const) {
-    add(id, 'event', label, 0, y, { eventId: id })
-    const logId = `log-${id}`
-    add(logId, 'log', `Log ${label.replace('On ', '')}`, 330, y, { message })
-    flow(id, logId)
-  }
 
-  add('event-start', 'event', 'On Start Recording', 0, 850, { eventId: 'event-start' })
-  add('log-start', 'log', 'Log Start', 330, 850, { message: 'Starting recording' })
-  add('control-starting', 'update_control', 'Disable Start During Startup', 610, 850, { controlId: 'start-recording', patch: { label: 'Starting…', icon: 'clock-3', enabled: false } })
-  add('control-stop-starting', 'update_control', 'Enable Stop During Startup', 910, 850, { controlId: 'stop-recording', patch: { enabled: true } })
-  add('pipeline-start', 'start_pipeline', 'Start Media Pipeline', 1210, 850, { outputNodeId: 'write' })
-  add('control-start-recording', 'update_control', 'Update Start Control', 1530, 850, { controlId: 'start-recording', patch: { label: 'Recording', icon: 'square', enabled: false } })
-  add('control-enable-pause', 'update_control', 'Enable Pause Control', 1830, 850, { controlId: 'pause-recording', patch: { label: 'Pause', icon: 'pause', eventId: 'event-pause', enabled: true } })
-  add('control-enable-stop', 'update_control', 'Enable Stop Control', 2130, 850, { controlId: 'stop-recording', patch: { enabled: true } })
-  flow('event-start', 'log-start'); flow('log-start', 'control-starting'); flow('control-starting', 'control-stop-starting'); flow('control-stop-starting', 'pipeline-start'); flow('pipeline-start', 'control-start-recording'); flow('control-start-recording', 'control-enable-pause'); flow('control-enable-pause', 'control-enable-stop')
-
-  add('event-start-delayed', 'event', 'On Start After Delay', 0, 1030, { eventId: 'event-start-delayed' })
-  add('log-delayed', 'log', 'Log Delayed Start', 330, 1030, { message: 'Recording will start after 3 seconds' })
-  add('control-starting-delayed', 'update_control', 'Disable Start During Delay', 610, 1030, { controlId: 'start-recording', patch: { label: 'Starting…', icon: 'clock-3', enabled: false } })
-  add('control-enable-stop-delayed', 'update_control', 'Enable Stop During Delay', 910, 1030, { controlId: 'stop-recording', patch: { enabled: true } })
-  add('delay-start', 'delay', 'Wait 3 Seconds', 1200, 1030, { milliseconds: 3000 })
-  add('pipeline-start-delayed', 'start_pipeline', 'Start Media Pipeline', 1490, 1030, { outputNodeId: 'write' })
-  add('control-start-delayed', 'update_control', 'Update Start Control', 1780, 1030, { controlId: 'start-recording', patch: { label: 'Recording', icon: 'square', enabled: false } })
-  add('control-pause-delayed', 'update_control', 'Enable Pause Control', 2070, 1030, { controlId: 'pause-recording', patch: { label: 'Pause', icon: 'pause', eventId: 'event-pause', enabled: true } })
-  add('control-stop-delayed', 'update_control', 'Enable Stop Control', 2360, 1030, { controlId: 'stop-recording', patch: { enabled: true } })
-  flow('event-start-delayed', 'log-delayed'); flow('log-delayed', 'control-starting-delayed'); flow('control-starting-delayed', 'control-enable-stop-delayed'); flow('control-enable-stop-delayed', 'delay-start'); flow('delay-start', 'pipeline-start-delayed'); flow('pipeline-start-delayed', 'control-start-delayed'); flow('control-start-delayed', 'control-pause-delayed'); flow('control-pause-delayed', 'control-stop-delayed')
-
-  add('event-pause', 'event', 'On Pause Recording', 0, 1260, { eventId: 'event-pause' })
-  add('pipeline-pause', 'pause_pipeline', 'Pause Media Pipeline', 330, 1260)
-  add('control-resume', 'update_control', 'Show Resume Control', 610, 1260, { controlId: 'pause-recording', patch: { label: 'Resume', icon: 'play', eventId: 'event-resume', enabled: true } })
-  flow('event-pause', 'pipeline-pause'); flow('pipeline-pause', 'control-resume')
-  add('event-resume', 'event', 'On Resume Recording', 0, 1430, { eventId: 'event-resume' })
-  add('pipeline-resume', 'resume_pipeline', 'Resume Media Pipeline', 330, 1430)
-  add('control-pause', 'update_control', 'Show Pause Control', 610, 1430, { controlId: 'pause-recording', patch: { label: 'Pause', icon: 'pause', eventId: 'event-pause', enabled: true } })
-  flow('event-resume', 'pipeline-resume'); flow('pipeline-resume', 'control-pause')
-
-  add('event-stop', 'event', 'On Stop Recording', 0, 1600, { eventId: 'event-stop' })
-  add('pipeline-stop', 'stop_pipeline', 'Stop Media Pipeline', 330, 1600)
-  add('control-reset-start', 'update_control', 'Reset Start Control', 610, 1600, { controlId: 'start-recording', patch: { label: 'Start recording', icon: 'play', enabled: true } })
-  add('control-reset-pause', 'update_control', 'Disable Pause Control', 910, 1600, { controlId: 'pause-recording', patch: { label: 'Pause', icon: 'pause', eventId: 'event-pause', enabled: false } })
-  add('control-reset-stop', 'update_control', 'Disable Stop Control', 1200, 1600, { controlId: 'stop-recording', patch: { enabled: false } })
-  flow('event-stop', 'pipeline-stop'); flow('pipeline-stop', 'control-reset-start'); flow('control-reset-start', 'control-reset-pause'); flow('control-reset-pause', 'control-reset-stop')
-
-  add('region', 'region', 'Screen Region', 1940, 30, { display: 'Display 1', mode: 'Rectangle', x: 0, y: 0, width: 897, height: 360 })
-  add('screen', 'screen', 'Capture Screen', 1940, 230, { cursor: true })
-  add('encode', 'encode', 'Encode H.264', 2250, 280, { encoder: 'H.264', fps: 60, resolution: 'Source Size', bitrate: '20', encodingMode: 'Hardware Auto' })
-  add('path', 'path', 'Output Path', 2250, 500, { directory: 'C:/Recordings', filename: '{blueprint}_{timestamp}.mp4' })
-  add('write', 'write', 'Write MP4', 2560, 370)
-  add('selected-region', 'get_selected_region', 'Get Selected Region', 1610, 230, { toolId: 'capture-region', mode: 'Selected Region' })
+  add('region', 'region', 'Screen Region', -920, 120, { display: 'Display 1', mode: 'Rectangle', x: 0, y: 0, width: 897, height: 360 })
+  add('screen', 'screen', 'Capture Screen', 120, 120, { cursor: true, fps:60, startDelaySeconds:0 })
+  add('encode_media_foundation', 'encode_media_foundation', 'Media Foundation Encode', 640, 120, { codec: 'H.264', resolution: 'Source Size', bitrate: '20', encodingMode: 'Hardware Auto' })
+  add('path', 'path', 'Output Path', 1160, 900, { directory: 'C:/Recordings', filename: '{blueprint}_{timestamp}.mp4' })
+  add('write', 'write', 'Write MP4', 1160, 120)
+  add('selected-region', 'get_selected_region', 'Get Selected Region', -400, 120, { toolId: 'capture-region', mode: 'Selected Region' })
+  value('log-select-region', 'region', 'selected-region', 'selected')
   value('region', 'region', 'selected-region', 'fallback')
   value('selected-region', 'region', 'screen', 'region')
-  value('screen', 'frames', 'encode', 'frames')
-  value('encode', 'video', 'write', 'video')
+  value('screen', 'frames', 'encode_media_foundation', 'frames')
+  value('encode_media_foundation', 'video', 'write', 'video')
   value('path', 'path', 'write', 'path')
   for (const [target, input, parameterId] of [
     ['region', 'display', 'display'], ['selected-region', 'mode', 'regionMode'],
     ['region', 'x', 'x'], ['region', 'y', 'y'], ['region', 'width', 'width'], ['region', 'height', 'height'],
-    ['screen', 'cursor', 'cursor'], ['encode', 'fps', 'fps'], ['encode', 'resolution', 'resolution'],
-    ['encode', 'bitrate', 'bitrate'], ['encode', 'encodingMode', 'encodingMode'],
+    ['screen', 'cursor', 'cursor'], ['screen', 'fps', 'fps'], ['encode_media_foundation', 'resolution', 'resolution'],
+    ['encode_media_foundation', 'bitrate', 'bitrate'], ['encode_media_foundation', 'encodingMode', 'encodingMode'],
     ['path', 'directory', 'output'], ['path', 'filename', 'filename'],
   ] as const) {
     const targetNode = nodes.find((node) => node.id === target)!
-    const config = targetNode.data.config!
-    config.exposedInputs = [...(config.exposedInputs as string[] ?? []), input]
     const id = `parameter-${parameterId}`
-    add(id, 'read_parameter', `Read ${parameterId}`, 1550, 2000 + nodes.filter((node) => node.data.kind === 'read_parameter').length * 100, { parameterId })
+    add(id, 'read_parameter', `Read ${parameterId}`, targetNode.position.x, targetNode.position.y + 900 + edges.filter(edge => edge.target === target && edge.targetHandle?.startsWith('in:param:')).length * 260, { parameterId })
     value(id, 'value', target!, `param:${input}`)
   }
   return { nodes, edges }
@@ -406,93 +377,54 @@ export function createBlueprint(id: string, name: string, replay = false): Bluep
   const overviewLayouts: OverviewLayouts = { wide, narrow }
   const flow = graph()
   const blueprint: Blueprint = {
+    displays: [{id:'recording-status',targets:['main','region:capture-region'],order:2,source:'status',format:'text',binding:{graphId:'recording',nodeId:'screen',action:'record'}},{id:'recording-time',targets:['main','region:capture-region'],order:3,source:'elapsed',format:'HH:mm:ss',binding:{graphId:'recording',nodeId:'screen',action:'record'}}],
+    controls: [createNodeControl(flow.nodes.find(node => node.data.kind === 'select_region')!,'main','select-region'),{...createNodeControl(flow.nodes.find(node => node.data.kind === 'screen')!,'main','start-recording'),targets:['main','region:capture-region']}],
+    controlOrder: {main:['select-region','start-recording','recording-status','recording-time'],'region:capture-region':['start-recording','recording-status','recording-time']},
     id, name, replay, values, labels: Object.fromEntries(parameters.map((item) => [item.id, item.label])), cards, layouts, overviewLayouts, customParameters: [],
-    eventFolders: [{ id: 'recording', name: 'Recording' }],
-    functionFolders: [{ id: 'utilities', name: 'Utilities' }],
     variableFolders: [{ id: 'capture', name: 'Capture' }, { id: 'video', name: 'Video' }, { id: 'audio', name: 'Audio' }, { id: 'output', name: 'Output' }, ...(replay ? [{ id: 'input', name: 'Input' }] : [])],
-    events: [],
-    functions: [{ id: 'function-path', name: 'Prepare Output Path', folderId: 'utilities' }],
     tabs: [{ id: 'overview', kind: 'overview' }, { id: 'blueprint', kind: 'blueprint' }], activeTab: 'overview',
-    nodes: flow.nodes, edges: flow.edges, recordState: 'ready', supported: !replay, scope: 'user', revision: null, selectedParameter: null, selectedNode: null, detailCard: null,
+    graphOrder: ['recording'], graphId: 'recording', graphName: 'Recording', additionalGraphs: [], nodes: flow.nodes, edges: flow.edges, recordState: 'ready', supported: !replay, scope: 'user', revision: null, selectedParameter: null, selectedNode: null, detailCard: null,
     selection: null, openFolders: { recording: true, utilities: true, capture: true, video: true, audio: true, output: true, input: true },
   }
-  return syncBlueprintEvents(blueprint)
+  return blueprint
 }
 
-export type BlueprintDocument = Omit<Blueprint, 'recordState' | 'selectedParameter' | 'selectedNode' | 'detailCard' | 'selection' | 'openFolders' | 'tabs' | 'activeTab' | 'scope' | 'revision'> & { schemaVersion: 1 }
+export type BlueprintDocument = Omit<Blueprint, 'recordState' | 'selectedParameter' | 'selectedNode' | 'detailCard' | 'selection' | 'openFolders' | 'tabs' | 'activeTab' | 'scope' | 'revision' | 'nodes' | 'edges' | 'graphId' | 'graphName' | 'additionalGraphs' | 'graphOrder'> & { schemaVersion: 2; graphs: { id: string; name: string; nodes: BlueprintNode[]; edges: Edge[] }[] }
 
 export function serializeBlueprint(blueprint: Blueprint): BlueprintDocument {
-  const { recordState: _recordState, selectedParameter: _selectedParameter, selectedNode: _selectedNode, detailCard: _detailCard, selection: _selection, openFolders: _openFolders, tabs: _tabs, activeTab: _activeTab, scope: _scope, revision: _revision, ...document } = blueprint
+  const { recordState: _recordState, selectedParameter: _selectedParameter, selectedNode: _selectedNode, detailCard: _detailCard, selection: _selection, openFolders: _openFolders, tabs: _tabs, activeTab: _activeTab, scope: _scope, revision: _revision, nodes: _nodes, edges: _edges, graphId: _graphId, graphName: _graphName, additionalGraphs: _additionalGraphs, graphOrder: _graphOrder, ...document } = blueprint
   const cleanNodes = (nodes: BlueprintNode[]) => nodes.map(({ selected: _selected, dragging: _dragging, resizing: _resizing, measured: _measured, width: _width, height: _height, ...node }) => node)
-  const functions = blueprint.functions.map((item) => item.graph ? { ...item, graph: { ...item.graph, nodes: cleanNodes(item.graph.nodes) } } : item)
-  return { ...document, nodes: cleanNodes(blueprint.nodes), functions, events: syncBlueprintEvents(blueprint).events, schemaVersion: 1 }
+  return { ...document, controls:blueprint.controls.map(({order: _order,error: _error,...control}) => control), graphs: blueprintGraphs(blueprint).map(graph => ({...graph,nodes:cleanNodes(graph.nodes)})), schemaVersion: 2 }
+}
+
+export function blueprintGraphs(blueprint: Blueprint): BlueprintGraph[] {
+  return [{id:blueprint.graphId,name:blueprint.graphName,nodes:blueprint.nodes,edges:blueprint.edges},...blueprint.additionalGraphs]
+    .sort((a,b)=>blueprint.graphOrder.indexOf(a.id)-blueprint.graphOrder.indexOf(b.id))
+}
+
+export function selectBlueprintGraph(blueprint: Blueprint, id: string): Blueprint {
+  if (id === blueprint.graphId) return blueprint
+  const graphs = blueprintGraphs(blueprint)
+  const graph = graphs.find(graph=>graph.id===id)
+  if (!graph) return blueprint
+  return {...blueprint,graphId:graph.id,graphName:graph.name,nodes:graph.nodes,edges:graph.edges,additionalGraphs:graphs.filter(item=>item.id!==id),selectedNode:null,selection:null}
+}
+
+export function acceptBlueprintEdit(current: Blueprint, next: Blueprint, locked: boolean): Blueprint {
+  return locked && JSON.stringify(serializeBlueprint(next)) !== JSON.stringify(serializeBlueprint(current)) ? current : next
 }
 
 export function hydrateBlueprint(document: BlueprintDocument, scope: BlueprintScope, revision: string): Blueprint {
-  const { schemaVersion: _schemaVersion, ...blueprint } = document
-  const migrated = migrateLegacyMenus(blueprint.nodes, blueprint.edges)
-  let registrationOrder = 0
-  const nodes = migrated.nodes.map((node) => {
-    if (node.data.kind !== 'register_control') return node
-    const order = registrationOrder++
-    const control = node.data.config?.control
-    if (!control || typeof control !== 'object' || Array.isArray(control) || 'order' in control) return node
-    return { ...node, data: { ...node.data, config: { ...node.data.config, control: { ...control, order } } } }
-  })
-  return syncBlueprintEvents({ ...blueprint, nodes, edges: migrated.edges, scope, revision, recordState: 'ready', selectedParameter: null, selectedNode: null, detailCard: null, selection: null, tabs: [{ id: 'overview', kind: 'overview' }, { id: 'blueprint', kind: 'blueprint' }], activeTab: 'overview', openFolders: { recording: true, utilities: true, capture: true, video: true, audio: true, output: true, input: true } })
-}
-
-function migrateLegacyMenus(nodes: BlueprintNode[], edges: Edge[]): { nodes: BlueprintNode[]; edges: Edge[] } {
-  const registrations: Array<{ controlId: string; path: string; icon: string; eventId: string; nodeId: string }> = []
-  const nextNodes = nodes.map((node) => {
-    if (node.data.kind !== 'register_control') return node
-    const value = node.data.config?.control
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return node
-    const control = value as Record<string, unknown>
-    if (!Array.isArray(control.menu)) return node
-    const id = typeof control.id === 'string' ? control.id : ''
-    const migrated: typeof registrations = []
-    const visit = (items: unknown[], parents: string[], indexes: number[]): boolean => {
-      for (const [index, item] of items.entries()) {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) return false
-        const menu = item as Record<string, unknown>
-        if (typeof menu.label !== 'string' || !menu.label || menu.label.includes('/') || typeof menu.icon !== 'string' || typeof menu.eventId !== 'string' || ('children' in menu && !Array.isArray(menu.children))) return false
-        const segments = [...parents, menu.label]
-        migrated.push({ controlId: id, path: segments.join('/'), icon: menu.icon, eventId: menu.eventId, nodeId: `register-menu-${node.id}-${[...indexes, index].join('-')}` })
-        if (Array.isArray(menu.children) && !visit(menu.children, segments, [...indexes, index])) return false
-      }
-      return true
-    }
-    if (!visit(control.menu, [], [])) return node
-    registrations.push(...migrated)
-    const { menu: _menu, ...nextControl } = control
-    return { ...node, data: { ...node.data, config: { ...node.data.config, control: nextControl } } }
-  })
-  if (registrations.length === 0) return { nodes: nextNodes, edges }
-
-  const usedIds = new Set(nextNodes.map((node) => node.id))
-  for (const registration of registrations) {
-    const baseId = registration.nodeId
-    let suffix = 2
-    while (usedIds.has(registration.nodeId)) registration.nodeId = `${baseId}-${suffix++}`
-    usedIds.add(registration.nodeId)
-  }
-  const initId = nextNodes.find((node) => node.data.kind === 'event' && node.data.config?.eventId === 'event-initialize')?.id
-  let tail = initId
-  const visited = new Set<string>()
-  while (tail && !visited.has(tail)) {
-    visited.add(tail)
-    const edge = edges.find((item) => item.source === tail && item.sourceHandle === 'out:flow')
-    if (!edge) break
-    tail = edge.target
-  }
-  const nextEdges = [...edges]
-  for (const [index, registration] of registrations.entries()) {
-    nextNodes.push({ id: registration.nodeId, type: 'register_menu', position: { x: (index % 4) * 290, y: 1800 + Math.floor(index / 4) * 150 }, data: { kind: 'register_menu', label: `Register ${registration.path} Menu`, config: { controlId: registration.controlId, path: registration.path, icon: registration.icon, eventId: registration.eventId } } })
-    if (tail) nextEdges.push({ id: `e-${tail}-${registration.nodeId}`, source: tail, sourceHandle: 'out:flow', target: registration.nodeId, targetHandle: 'in:flow', type: 'smoothstep' })
-    tail = registration.nodeId
-  }
-  return { nodes: nextNodes, edges: nextEdges }
+  if (document.schemaVersion !== 2 || !Array.isArray(document.graphs) || document.graphs.length === 0 || ['eventFolders','events','functionFolders','functions'].some(key => key in document)) throw new Error('Unsupported blueprint schema: expected V2 graphs')
+  const { schemaVersion: _schemaVersion, graphs, ...blueprint } = document
+  const migrated = graphs[0] ?? { nodes: [], edges: [] }
+  const nodes = migrated.nodes
+  const ownerGraph=graphs.find(graph=>graph.nodes.some(node=>node.data.kind==='screen'))
+  const owner=ownerGraph?.nodes.find(node=>node.data.kind==='screen')
+  const displays=blueprint.displays.map(display=>display.binding||!owner||!ownerGraph?display:{...display,binding:{graphId:ownerGraph.id,nodeId:owner.id,action:'record' as const}})
+  const controlOrder={...blueprint.controlOrder}
+  for(const display of displays)for(const target of display.targets)if(!controlOrder[target]?.includes(display.id))controlOrder[target]=[...(controlOrder[target]??[]),display.id]
+  return { ...blueprint, displays, controlOrder, graphOrder: graphs.map(graph=>graph.id), graphId: migrated.id, graphName: migrated.name, additionalGraphs: graphs.slice(1), nodes, edges: migrated.edges, scope, revision, recordState: 'ready', selectedParameter: null, selectedNode: null, detailCard: null, selection: null, tabs: [{ id: 'overview', kind: 'overview' }, { id: 'blueprint', kind: 'blueprint' }], activeTab: 'overview', openFolders: { recording: true, utilities: true, capture: true, video: true, audio: true, output: true, input: true } }
 }
 
 export function exposedParameters(blueprint: Blueprint, cardId: string): string[] {

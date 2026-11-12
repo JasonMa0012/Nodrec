@@ -20,6 +20,8 @@ pub struct NodePort {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeType {
+    pub provider: Option<&'static str>,
+    pub actions: Vec<&'static str>,
     pub kind: &'static str,
     pub label: &'static str,
     pub category: &'static str,
@@ -27,6 +29,7 @@ pub struct NodeType {
     pub outputs: Vec<NodePort>,
     pub input_parameters: Vec<&'static str>,
     pub default_config: Value,
+    pub choices: Value,
 }
 
 fn port(id: &'static str, label: &'static str, value_type: &'static str) -> NodePort {
@@ -34,21 +37,21 @@ fn port(id: &'static str, label: &'static str, value_type: &'static str) -> Node
 }
 
 fn node_type(kind: &'static str, label: &'static str, category: &'static str, inputs: Vec<NodePort>, outputs: Vec<NodePort>, input_parameters: Vec<&'static str>, default_config: Value) -> NodeType {
-    NodeType { kind, label, category, inputs, outputs, input_parameters, default_config }
+    NodeType { kind, label, category, inputs, outputs, input_parameters, default_config,
+        provider: if kind == "encode_media_foundation" { Some("media_foundation") } else { None },
+        actions: match kind { "screen" => vec!["record"], "select_region" => vec!["select"], _ => vec![] },
+        choices: if kind == "encode_media_foundation" {
+            json!({"codec":["H.264"],"resolution":["Source Size","1920 × 1080","2560 × 1440"],"encodingMode":["Hardware Auto","Software"]})
+        } else if kind == "screen" { json!({"region.mode":["Full Display","Rectangle"]}) } else if kind == "region" { json!({"mode":["Full Display","Rectangle"]}) } else { json!({}) },
+    }
 }
 
 pub fn node_catalog() -> Vec<NodeType> {
     vec![
-        node_type("event", "Event", "Events", vec![], vec![port("flow", "Then", "flow")], vec![], json!({"eventId":"new-event"})),
-        node_type("register_control", "Register Control", "Controls", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec!["control.enabled", "control.label", "control.order"], json!({"control":{"id":"new-control","label":"New Control","icon":"circle-help","eventId":"new-event","order":0,"enabled":true,"targets":["main"]}})),
-        node_type("select_region", "Select Region", "Capture", vec![port("flow", "Execute", "flow"), port("initialRegion", "Initial Region", "region")], vec![port("selected", "Selected", "flow"), port("cancelled", "Cancelled", "flow"), port("region", "Region", "region")], vec!["display"], json!({"toolId":"capture-region","display":"Display 1","initialRegion":null})),
-        node_type("get_selected_region", "Get Selected Region", "Values", vec![port("fallback", "Manual / Full Display", "region")], vec![port("region", "Region", "region")], vec!["mode"], json!({"toolId":"capture-region","mode":"Selected Region"})),
-        node_type("register_display", "Register Display", "Controls", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec![], json!({"display":{"id":"recording-time","targets":["region:capture-region"],"order":0,"source":"elapsed","format":"HH:mm:ss"}})),
-        node_type("register_menu", "Register Control Menu", "Controls", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec![], json!({"controlId":"new-control","path":"Start","icon":"circle-help","eventId":"new-event"})),
-        node_type("update_control", "Update Control", "Controls", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec!["patch.label"], json!({"controlId":"new-control","patch":{"label":"New Control"}})),
-        node_type("log", "Log", "Flow", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec!["message"], json!({"message":"Workflow action"})),
-        node_type("delay", "Delay", "Flow", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec!["milliseconds"], json!({"milliseconds":0})),
-        node_type("branch", "Branch", "Flow", vec![port("flow", "Execute", "flow"), port("condition", "Condition", "boolean")], vec![port("true", "True", "flow"), port("false", "False", "flow")], vec!["condition"], json!({"condition":false,"exposedInputs":["condition"]})),
+        node_type("define_value", "Define Value", "Values", vec![port("value", "Value", "value")], vec![port("value", "Value", "value")], vec![], json!({"name":"Value"})),
+        node_type("read_value", "Read Value", "Values", vec![], vec![port("value", "Value", "value")], vec![], json!({"definitionId":""})),
+        node_type("select_region", "Select Region", "Capture", vec![port("initialRegion", "Initial Region", "region")], vec![port("region", "Region", "region")], vec!["display"], json!({"toolId":"capture-region","display":"Display 1","initialRegion":null})),
+        node_type("get_selected_region", "Get Selected Region", "Values", vec![port("selected", "Selected Region", "region"), port("fallback", "Manual / Full Display", "region")], vec![port("region", "Region", "region")], vec!["mode"], json!({"toolId":"capture-region","mode":"Selected Region"})),
         node_type("read_parameter", "Read Parameter", "Values", vec![], vec![port("value", "Value", "value")], vec![], json!({"parameterId":"fps"})),
         node_type("constant", "Constant", "Values", vec![], vec![port("value", "Value", "value")], vec!["value"], json!({"value":""})),
         node_type("make_boolean", "Make Boolean", "Values", vec![], vec![port("value", "Value", "boolean")], vec!["value"], json!({"value":false})),
@@ -61,16 +64,12 @@ pub fn node_catalog() -> Vec<NodeType> {
         node_type("make_string", "Make String", "Values", vec![], vec![port("value", "Value", "string")], vec!["value"], json!({"value":""})),
         node_type("make_text", "Make Text", "Values", vec![], vec![port("value", "Value", "text")], vec!["value"], json!({"value":""})),
         node_type("compare", "Compare Values", "Values", vec![port("left", "Left", "value"), port("right", "Right", "value")], vec![port("condition", "Condition", "boolean")], vec![], json!({"operator":"equal"})),
-        node_type("start_pipeline", "Start Pipeline", "Media", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec![], json!({"outputNodeId":"write"})),
-        node_type("pause_pipeline", "Pause Pipeline", "Media", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec![], json!({})),
-        node_type("resume_pipeline", "Resume Pipeline", "Media", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec![], json!({})),
-        node_type("stop_pipeline", "Stop Pipeline", "Media", vec![port("flow", "Execute", "flow")], vec![port("flow", "Then", "flow")], vec![], json!({})),
         node_type("region", "Screen Region", "Values", vec![], vec![port("region", "Region", "region")], vec!["display", "mode", "x", "y", "width", "height"], json!({"display":"Display 1","mode":"Full Display","x":0,"y":0,"width":897,"height":360})),
         node_type("path", "Output Path", "Values", vec![], vec![port("path", "Path", "path")], vec!["directory", "filename"], json!({"directory":"C:/Recordings","filename":"{blueprint}_{timestamp}.mp4"})),
-        node_type("screen", "Capture Screen", "Streams", vec![port("region", "Region", "region")], vec![port("frames", "Frames", "video_frames")], vec!["cursor"], json!({"cursor":true})),
+        node_type("screen", "Capture Screen", "Streams", vec![port("region", "Region", "region")], vec![port("frames", "Frames", "video_frames")], vec!["cursor", "fps", "startDelaySeconds"], json!({"cursor":true,"fps":60,"startDelaySeconds":0,"region":{"display":"Display 1","mode":"Full Display","x":0,"y":0,"width":897,"height":360}})),
         node_type("audio", "Capture Audio", "Streams", vec![], vec![port("audio", "Audio", "audio_samples")], vec![], json!({})),
-        node_type("encode", "Encode H.264", "Streams", vec![port("frames", "Frames", "video_frames"), port("audio", "Audio (not supported yet)", "audio_samples")], vec![port("video", "Video", "encoded_video")], vec!["encoder", "fps", "resolution", "bitrate", "encodingMode"], json!({"encoder":"H.264","fps":60,"resolution":"Source Size","bitrate":"20","encodingMode":"Hardware Auto"})),
-        node_type("write", "Write MP4", "Streams", vec![port("video", "Video", "encoded_video"), port("path", "Path", "path")], vec![], vec![], json!({})),
+        node_type("encode_media_foundation", "Media Foundation Encode", "Streams", vec![port("frames", "Frames", "video_frames"), port("audio", "Audio (not supported yet)", "audio_samples")], vec![port("video", "Video", "encoded_video")], vec!["codec", "resolution", "bitrate", "encodingMode"], json!({"codec":"H.264","resolution":"Source Size","bitrate":"20","encodingMode":"Hardware Auto"})),
+        node_type("write", "Write MP4", "Streams", vec![port("video", "Video", "encoded_video"), port("path", "Path", "path")], vec![], vec![], json!({"path":{"directory":"C:/Recordings","filename":"{blueprint}_{timestamp}.mp4"}})),
     ]
 }
 
@@ -86,6 +85,7 @@ pub struct RuntimeLog {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSnapshot {
+    pub node_errors: Vec<NodeError>,
     pub blueprint_id: Option<String>,
     pub run_id: Option<String>,
     pub status: String,
@@ -99,6 +99,14 @@ pub struct RuntimeSnapshot {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct NodeError {
+    pub graph_id: String,
+    pub node_id: String,
+    pub message: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Activation {
     pub controls: Vec<Value>,
     pub diagnostics: Vec<String>,
@@ -106,6 +114,9 @@ pub struct Activation {
 
 #[derive(Default)]
 struct RuntimeState {
+    run_graph: String,
+    run_source: String,
+    output_nodes: HashMap<String, (String, String)>,
     document: Option<Value>,
     blueprint_id: Option<String>,
     run_id: Option<String>,
@@ -130,10 +141,18 @@ pub struct WorkflowRuntime {
 impl WorkflowRuntime {
     pub fn tool_definitions(&self) -> HashMap<String, Value> {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.document.as_ref().map(|document| nodes(document).iter().filter(|n| node_kind(n) == "select_region").filter_map(|node| {
-            let config = resolved_node_config(document, node).ok()?;
-            Some((config["toolId"].as_str()?.to_string(), config.clone()))
-        }).collect()).unwrap_or_default()
+        let mut definitions = HashMap::new();
+        if let Some(document) = &state.document {
+            for graph in document["graphs"].as_array().into_iter().flatten() {
+                let Ok(scoped) = action_document(document, graph["id"].as_str().unwrap_or_default()) else { continue; };
+                for node in nodes(&scoped).iter().filter(|node| node_kind(node) == "select_region") {
+                    if let Ok(config) = resolved_node_config(&scoped, node) {
+                        if let Some(id) = config["toolId"].as_str() { definitions.insert(id.to_string(), config.clone()); }
+                    }
+                }
+            }
+        }
+        definitions
     }
     pub fn activate(&self, document: Value) -> Result<Activation, String> {
         let diagnostics = validate_document(&document, false);
@@ -156,9 +175,14 @@ impl WorkflowRuntime {
         state.frame_count = 0;
         state.error = None;
         state.recording = None;
+        state.output_nodes.clear();
+        state.run_graph.clear();
+        state.run_source.clear();
         state.status = "ready";
         state.controls.clear();
-        if diagnostics.is_empty() {
+        let mut registry_errors = Vec::new();
+        validate_control_registry(&document, &mut registry_errors);
+        if registry_errors.is_empty() && document["schemaVersion"] == 2 {
             state.controls = execute_initialization(&document)?;
         }
         Ok(Activation { controls: state.controls.iter().filter(|c| c["kind"] != "display").cloned().collect(), diagnostics })
@@ -183,69 +207,89 @@ impl WorkflowRuntime {
             }
             state.recording = Some(stats);
         }
+        let node_errors = recording_node_errors(&state);
         RuntimeSnapshot {
+            node_errors: node_errors.clone(),
             blueprint_id: state.blueprint_id.clone(),
             run_id: state.run_id.clone(),
             status: state.status.to_string(),
             frame_count: state.frame_count,
             displays: state.controls.iter().filter(|c| c["kind"] == "display").cloned().collect(),
-            controls: state.controls.iter().filter(|c| c["kind"] != "display").cloned().collect(),
+            controls: state.controls.iter().filter(|c| c["kind"] != "display").cloned().map(|mut control| {
+                if let Some(error) = node_errors.iter().find(|error| control["binding"]["graphId"] == error.graph_id && control["binding"]["nodeId"] == error.node_id) { control["error"] = json!(error.message); }
+                control
+            }).collect(),
             logs: state.logs.iter().cloned().collect(),
             error: state.error.clone(),
             recording: state.recording.clone(),
         }
     }
 
-    pub fn dispatch(&self, app: AppHandle, event_id: String) -> Result<RuntimeSnapshot, String> {
-        let generation = {
+    pub fn dispatch_node(&self, app: AppHandle, graph_id: String, id: String, action: String) -> Result<RuntimeSnapshot, String> {
+        let (document, generation) = {
             let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
-            let document = state.document.clone().ok_or_else(|| "No blueprint is active".to_string())?;
-            if document["supported"] == false { return Err("This blueprint is a preview and cannot run yet".into()); }
-            let diagnostics = validate_document(&document, false);
-            if let Some(error) = diagnostics.first() { return Err(error.clone()); }
-            if state.busy_generation.is_some() {
-                if state.status == "starting" && event_pipeline_kind(&self.evaluation_document(&document), &event_id).as_deref() == Some("stop_pipeline") {
-                    state.generation = state.generation.wrapping_add(1);
-                } else {
-                    return Err("Another workflow event is still running".into());
-                }
+            let mut document = action_document(state.document.as_ref().ok_or("No blueprint is active")?, &graph_id)?;
+            if action == "start" { document["_runTimestamp"] = json!(now_nanos().to_string()); }
+            if document["supported"] == false { return Err("This blueprint is a preview".into()); }
+            let node = nodes(&document).iter().find(|node| node_id(node) == id).ok_or("Action node was not found")?;
+            if node["data"]["enabled"] == false { return Err("Action node is disabled".into()); }
+            if node_kind(node) == "select_region" && action == "select" {
+                if !matches!(state.status, "ready" | "failed") || state.busy_generation.is_some() { return Err("Stop recording before selecting a region".into()); }
+                let config = resolved_node_config(&self.evaluation_document(&document), node)?;
+                let blueprint = document["id"].as_str().unwrap_or_default().to_string();
+                drop(state);
+                self.tools.open(&app, &blueprint, &config)?;
+                return Ok(self.snapshot());
             }
-            let action = event_pipeline_kind(&self.evaluation_document(&document), &event_id);
-            if matches!(state.status, "starting" | "recording" | "paused" | "stopping") {
-                for node in execution_path(&document, &event_id)?.iter().filter(|n| node_kind(n) == "select_region") {
-                    if !self.tools.snapshot().is_some_and(|t| t.tool_id == node_config(node)["toolId"].as_str().unwrap_or_default() && t.rect.is_some() && !t.picking) {
-                        return Err("Stop recording before selecting a new region".into());
-                    }
-                }
+            if !node_action_allowed(node_kind(node), &action, state.status) {
+                return Err("Action is not supported by this node".into());
             }
-            if action.as_deref() == Some("start_pipeline") && matches!(state.status, "ready" | "failed") {
-                for node in execution_path(&document, &event_id)?.into_iter().filter(|n| node_kind(n) == "start_pipeline") {
-                    recording_plan(&self.evaluation_document(&document), node_config(node)["outputNodeId"].as_str())?;
-                }
-            }
-            match (action.as_deref(), state.status) {
-                (Some("start_pipeline"), "ready" | "failed") => {
+            if state.busy_generation.is_some() && !(action == "stop" && state.status == "starting") { return Err("Another action is still running".into()); }
+            match (action.as_str(), state.status) {
+                ("start", "ready" | "failed") => {
+                    let outputs = match compile_recording_outputs(&self.evaluation_document(&document), &id) {
+                        Ok(outputs) => outputs,
+                        Err(error) => {
+                            state.run_graph = graph_id.clone(); state.run_source = id.clone(); state.output_nodes.clear();
+                            state.recording = None; state.error = Some(error.clone()); state.status = "failed";
+                            drop(state);
+                            self.emit_status(&app);
+                            return Err(error);
+                        }
+                    };
+                    state.run_graph = graph_id.clone();
+                    state.run_source = id.clone();
+                    state.output_nodes = outputs.iter().map(|output| (output.plan.path.to_string_lossy().into_owned(),(output.node_id.clone(),output.encoder_id.clone()))).collect();
                     state.status = "starting";
                     state.run_id = Some(format!("run-{}", now_nanos()));
-                    state.frame_count = 0;
                     state.error = None;
                     state.recording = None;
+                    state.frame_count = 0;
                 }
-                (Some("pause_pipeline"), "recording") | (Some("resume_pipeline"), "paused") => {}
-                (Some("stop_pipeline"), "starting" | "recording" | "paused" | "failed") => state.status = "stopping",
-                (Some("start_pipeline"), _) => return Err("Workflow is already active".into()),
-                (Some("pause_pipeline"), _) => return Err("Workflow is not recording".into()),
-                (Some("resume_pipeline"), _) => return Err("Workflow is not paused".into()),
-                (Some("stop_pipeline"), "ready" | "stopping") => return Err("Workflow is already stopped".into()),
-                _ => {}
+                ("pause", "recording") | ("resume", "paused") => {}
+                ("stop", "starting" | "recording" | "paused" | "failed") => state.status = "stopping",
+                _ => return Err("Action is not available in the current recording state".into()),
             }
             state.generation = state.generation.wrapping_add(1);
             state.busy_generation = Some(state.generation);
-            state.generation
+            (document, state.generation)
         };
         self.emit_status(&app);
         let runtime = self.clone();
-        thread::spawn(move || runtime.run_event(app, event_id, generation));
+        thread::spawn(move || {
+            let result = match action.as_str() {
+                "start" => runtime.start_pipeline(&app, &document, &id, generation),
+                "pause" => runtime.set_pipeline_state(&app, generation, "recording", "paused", "Recording paused"),
+                "resume" => runtime.set_pipeline_state(&app, generation, "paused", "recording", "Recording resumed"),
+                "stop" => runtime.stop_pipeline(&app, generation),
+                _ => unreachable!(),
+            };
+            if let Err(error) = result { runtime.fail(&app, generation, error); return; }
+            let mut state = runtime.state.lock().unwrap_or_else(|error| error.into_inner());
+            if state.generation == generation { state.busy_generation = None; if state.status == "stopping" { state.status = "ready"; state.run_id = None; } }
+            drop(state);
+            runtime.emit_status(&app);
+        });
         Ok(self.snapshot())
     }
 
@@ -260,86 +304,23 @@ impl WorkflowRuntime {
         if let Some(session) = session { let _ = session.stop(); }
     }
 
-    fn run_event(&self, app: AppHandle, event_id: String, generation: u64) {
-        let document = {
-            let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-            match state.document.clone() { Some(document) => document, None => return }
+    fn start_pipeline(&self, app: &AppHandle, document: &Value, source: &str, generation: u64) -> Result<(), String> {
+        let evaluated = self.evaluation_document(document);
+        let (plan, groups) = {
+            let outputs = compile_recording_outputs(&evaluated, source)?;
+            let plan = outputs[0].plan.clone();
+            let mut groups: Vec<(String,RecordingPlan,Vec<std::path::PathBuf>)> = Vec::new();
+            for output in outputs {
+                if let Some((_,_,paths)) = groups.iter_mut().find(|(id,_,_)| id == &output.encoder_id) { paths.push(output.plan.path); }
+                else { groups.push((output.encoder_id,output.plan.clone(),vec![output.plan.path])); }
+            }
+            (plan, groups.into_iter().map(|(_,plan,paths)|(plan,paths)).collect())
         };
-        let entry = match nodes(&document).iter().find(|node| node_kind(node) == "event" && node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("eventId")).and_then(Value::as_str) == Some(&event_id)) {
-            Some(node) => node,
-            None => { self.fail(&app, generation, format!("Event '{event_id}' was not found")); return; }
-        };
-        let mut current = node_id(entry).to_string();
-        let mut completed = false;
-        for _ in 0..512 {
-            if !self.is_current(generation) { return; }
-            let Some(node) = nodes(&document).iter().find(|node| node_id(node) == current) else {
-                self.fail(&app, generation, format!("Execution path references missing node '{current}'")); return;
-            };
-            let kind = node.get("data").and_then(|data| data.get("kind")).and_then(Value::as_str).unwrap_or_default();
-            let config = match resolved_node_config(&self.evaluation_document(&document), node) {
-                Ok(config) => config,
-                Err(error) => { self.fail(&app, generation, error); return; }
-            };
-            let output_handle = if kind == "select_region" {
-                let blueprint_id = document["id"].as_str().unwrap_or_default();
-                if let Err(error) = self.tools.open(&app, blueprint_id, &config) { self.fail(&app, generation, error); return; }
-                loop {
-                    if !self.is_current(generation) { return; }
-                    match self.tools.snapshot() {
-                        Some(tool) if tool.blueprint_id == blueprint_id => {
-                            if let Some(selected) = tool.outcome { break if selected { "out:selected" } else { "out:cancelled" }; }
-                        }
-                        _ => { self.fail(&app, generation, "Region tool closed before selection".into()); return; }
-                    }
-                    thread::sleep(Duration::from_millis(25));
-                }
-            } else if kind == "branch" {
-                match branch_output(&self.evaluation_document(&document), node) {
-                    Ok(handle) => handle,
-                    Err(error) => { self.fail(&app, generation, error); return; }
-                }
-            } else {
-                let result = match kind {
-                    "event" | "register_control" | "register_menu" | "register_display" => Ok(()),
-                    "log" => self.log(&app, config.get("message").and_then(Value::as_str).unwrap_or("Workflow action")),
-                    "delay" => {
-                        let millis = config.get("milliseconds").and_then(Value::as_u64).unwrap_or(0).min(60_000);
-                        for _ in 0..millis {
-                            if !self.is_current(generation) { return; }
-                            thread::sleep(Duration::from_millis(1));
-                        }
-                        Ok(())
-                    }
-                    "update_control" => self.update_control(&app, &config),
-                    "start_pipeline" => self.start_pipeline(&app, &document, &config, generation),
-                    "pause_pipeline" => self.set_pipeline_state(&app, generation, "recording", "paused", "Pipeline paused"),
-                    "resume_pipeline" => self.set_pipeline_state(&app, generation, "paused", "recording", "Pipeline resumed"),
-                    "stop_pipeline" => self.stop_pipeline(&app, generation),
-                    _ => Err(format!("Node '{kind}' cannot run in an execution chain")),
-                };
-                if let Err(error) = result { self.fail(&app, generation, error); return; }
-                "out:flow"
-            };
-            let next = edges(&document).iter().find(|edge| edge.get("source").and_then(Value::as_str) == Some(&current) && edge.get("sourceHandle").and_then(Value::as_str) == Some(output_handle));
-            let Some(target) = next.and_then(|edge| edge.get("target")).and_then(Value::as_str) else { completed = true; break; };
-            current = target.to_string();
+        let deadline = std::time::Instant::now() + recording_delay(&evaluated, source)?;
+        while std::time::Instant::now() < deadline {
+            if !self.is_current(generation) { return Ok(()); }
+            thread::sleep(Duration::from_millis(10));
         }
-        if !self.is_current(generation) { return; }
-        if !completed {
-            self.fail(&app, generation, "Execution path exceeds 512 nodes".into()); return;
-        }
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.generation == generation {
-            if state.status == "stopping" { state.status = "ready"; state.run_id = None; }
-            state.busy_generation = None;
-        }
-        drop(state);
-        self.emit_status(&app);
-    }
-
-    fn start_pipeline(&self, app: &AppHandle, document: &Value, config: &Value, generation: u64) -> Result<(), String> {
-        let plan = recording_plan(&self.evaluation_document(document), config.get("outputNodeId").and_then(Value::as_str))?;
         self.tools.enforce_capture_exclusion(app, true);
         let ready = {
             let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
@@ -352,7 +333,7 @@ impl WorkflowRuntime {
                 state.error = None;
             }
             if state.status != "starting" { return Err("Workflow is already active".into()); }
-            let session = RecordingSession::launch(plan);
+            let session = RecordingSession::launch_graph(plan, groups);
             let ready = session.ready.clone();
             state.session = Some(session);
             ready
@@ -402,32 +383,19 @@ impl WorkflowRuntime {
             state.session.take()
         };
         self.emit_status(app);
-        if let Some(session) = session {
-            let stats = session.stop()?;
+        if let Some(mut session) = session {
+            let result = session.finish();
+            let stats = session.stats();
             let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
             state.frame_count = stats.encoded_frames;
             state.recording = Some(stats);
+            result?;
         }
         let result = self.snapshot().recording.map(|stats| format!("MP4 finalized and closed: {} ({} ms)", stats.output_path, stats.stop_ms.unwrap_or(0)))
             .unwrap_or_else(|| "MP4 finalized: no active recording; pending start cancelled".into());
         self.log(app, &result)?;
         Ok(())
     }
-    fn update_control(&self, app: &AppHandle, config: &Value) -> Result<(), String> {
-        let id = config.get("controlId").and_then(Value::as_str).ok_or_else(|| "Update Control needs a controlId".to_string())?;
-        let patch = config.get("patch").and_then(Value::as_object).ok_or_else(|| "Update Control needs a patch object".to_string())?;
-        let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
-        {
-            let control = state.controls.iter_mut().find(|control| control.get("id").and_then(Value::as_str) == Some(id)).ok_or_else(|| format!("Control '{id}' is not registered"))?;
-            let control = control.as_object_mut().ok_or_else(|| "Registered control is invalid".to_string())?;
-            for (key, value) in patch { if matches!(key.as_str(), "label" | "icon" | "enabled" | "eventId" | "order") { control.insert(key.clone(), value.clone()); } }
-        }
-        state.controls.sort_by_key(|item| item.get("order").and_then(Value::as_i64).unwrap_or(0));
-        drop(state);
-        self.emit_status(app);
-        Ok(())
-    }
-
     fn log(&self, app: &AppHandle, message: &str) -> Result<(), String> {
         let mut state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
         let log = self.push_log(&mut state, message.to_string());
@@ -482,16 +450,22 @@ fn node_kind(node: &Value) -> &str {
     node.get("data").and_then(|data| data.get("kind")).and_then(Value::as_str).unwrap_or_default()
 }
 
+fn node_action_allowed(kind: &str, action: &str, status: &str) -> bool {
+    kind == "screen" && matches!((action, status),
+        ("start", "ready" | "failed") | ("pause", "recording") | ("resume", "paused") |
+        ("stop", "starting" | "recording" | "paused" | "failed"))
+}
+
 fn node_id(node: &Value) -> &str {
     node.get("id").and_then(Value::as_str).unwrap_or_default()
 }
 
 fn edges(document: &Value) -> &[Value] {
-    document.get("edges").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default()
+    document["graphs"][0].get("edges").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default()
 }
 
 fn nodes(document: &Value) -> &[Value] {
-    document.get("nodes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default()
+    document["graphs"][0].get("nodes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default()
 }
 
 fn find_port<'a>(catalog: &'a [NodeType], kind: &str, handle: &str, direction: &str) -> Option<&'a NodePort> {
@@ -527,27 +501,11 @@ fn make_value_type(kind: &str) -> Option<&'static str> {
     }
 }
 
-fn exposed_parameter_ids(node: &Value, node_type: &NodeType) -> HashSet<String> {
-    match node_config(node).get("exposedInputs").and_then(Value::as_array) {
-        Some(inputs) => inputs.iter().filter_map(Value::as_str)
-            .filter(|id| node_type.input_parameters.contains(id))
-            .map(str::to_string).collect(),
-        None if node_type.kind == "branch" => HashSet::from(["condition".to_string()]),
-        None => HashSet::new(),
-    }
-}
-
-fn config_input_port_id(kind: &str, path: &str) -> String {
-    if kind == "branch" && path == "condition" { path.to_string() } else { format!("param:{path}") }
-}
+fn config_input_port_id(_kind: &str, path: &str) -> String { format!("param:{path}") }
 
 fn node_port_type(document: &Value, catalog: &[NodeType], node: &Value, handle: &str, direction: &str) -> Option<&'static str> {
     let kind = node_kind(node);
     if let Some(port) = find_port(catalog, kind, handle, direction) {
-        if direction == "in" && kind == "branch" && port.id == "condition" {
-            let node_type = catalog.iter().find(|item| item.kind == kind)?;
-            if !exposed_parameter_ids(node, node_type).contains("condition") { return None; }
-        }
         if direction == "out" && port.value_type == "value" {
             let value = if kind == "constant" {
                 node_config(node).get("value")
@@ -562,8 +520,7 @@ fn node_port_type(document: &Value, catalog: &[NodeType], node: &Value, handle: 
     if direction != "in" { return None; }
     let path = handle.strip_prefix("in:param:")?;
     let node_type = catalog.iter().find(|item| item.kind == kind)?;
-    if !node_type.input_parameters.contains(&path) || !exposed_parameter_ids(node, node_type).contains(path) { return None; }
-    config_path_value(node_config(node), path)?;
+    if !node_type.input_parameters.contains(&path) { return None; }
     if path == "value" {
         if let Some(value_type) = make_value_type(kind) { return Some(value_type); }
     }
@@ -572,7 +529,7 @@ fn node_port_type(document: &Value, catalog: &[NodeType], node: &Value, handle: 
 }
 
 fn compatible_port_types(source: &str, target: &str) -> bool {
-    source == target || (source != "flow" && target != "flow" && (source == "value" || target == "value"))
+    source == target || source == "value" || target == "value"
 }
 
 fn set_config_path(config: &mut Value, path: &str, value: Value) -> Result<(), String> {
@@ -595,18 +552,22 @@ fn resolved_node_config(document: &Value, node: &Value) -> Result<Value, String>
     let catalog = node_catalog();
     let node_type = catalog.iter().find(|item| item.kind == kind).ok_or_else(|| format!("Unknown node type '{kind}'"))?;
     let mut config = node_config(node).clone();
-    if matches!(kind, "region" | "screen" | "encode" | "path") {
+    if matches!(kind, "region" | "screen" | "encode_media_foundation" | "path" | "write") {
         let supplied = config.as_object().cloned().unwrap_or_default();
         config = node_type.default_config.clone();
-        // Legacy regions described a rectangle before the mode field existed.
-        if kind == "region" && !supplied.contains_key("mode") { config["mode"] = json!("Rectangle"); }
-        config.as_object_mut().unwrap().extend(supplied);
+        config.as_object_mut().unwrap().extend(supplied.clone());
+        for field in ["region", "path"] {
+            if let (Some(default), Some(local)) = (node_type.default_config[field].as_object(), supplied.get(field).and_then(Value::as_object)) {
+                let mut value = default.clone();
+                value.extend(local.clone());
+                config[field] = Value::Object(value);
+            }
+        }
     }
     if kind == "select_region" {
         if let Some(region) = input_value(document, node_id(node), "initialRegion", &mut HashSet::new(), 0)? { config["initialRegion"] = region; }
     }
-    let exposed = exposed_parameter_ids(node, node_type);
-    for path in exposed {
+    for path in &node_type.input_parameters {
         let input = config_input_port_id(kind, &path);
         if let Some(value) = input_value(document, node_id(node), &input, &mut HashSet::new(), 0)? {
             set_config_path(&mut config, &path, value)?;
@@ -615,19 +576,73 @@ fn resolved_node_config(document: &Value, node: &Value) -> Result<Value, String>
     Ok(config)
 }
 
+fn recording_node_errors(state: &RuntimeState) -> Vec<NodeError> {
+    let mut messages: HashMap<String, String> = HashMap::new();
+    let mut output_errors = Vec::new();
+    if let Some(stats) = &state.recording {
+        for output in &stats.outputs {
+            if let Some(error) = &output.error {
+                output_errors.push(format!("{}: {error}", output.path));
+                if let Some((writer, encoder)) = state.output_nodes.get(&output.path) {
+                    messages.insert(writer.clone(), error.clone());
+                    if let Some(error) = &output.encoder_error { messages.insert(encoder.clone(), error.clone()); }
+                }
+            }
+        }
+    }
+    if !state.run_source.is_empty() {
+        if let Some(error) = state.error.clone().or_else(|| (!output_errors.is_empty()).then(|| output_errors.join("; "))) {
+            messages.insert(state.run_source.clone(), error);
+        }
+    }
+    let mut errors: Vec<_> = messages.into_iter().map(|(node_id,message)| NodeError{graph_id:state.run_graph.clone(),node_id,message}).collect();
+    errors.sort_by(|a,b| a.node_id.cmp(&b.node_id));
+    errors
+}
+
+fn action_document(document: &Value, graph_id: &str) -> Result<Value, String> {
+    let mut scoped = document.clone();
+    let graphs = scoped["graphs"].as_array_mut().ok_or("Blueprint graphs must be an array")?;
+    let index = graphs.iter().position(|graph| graph["id"] == graph_id).ok_or("Recording graph was not found")?;
+    graphs.swap(0, index);
+    Ok(scoped)
+}
+
 pub fn validate_document(document: &Value, for_run: bool) -> Vec<String> {
+    let Some(graphs) = document["graphs"].as_array().filter(|graphs| !graphs.is_empty()) else {
+        return vec!["Blueprint graphs must be a nonempty array".into()];
+    };
+    let mut ids = HashSet::new();
     let mut errors = Vec::new();
+    for graph in graphs {
+        let id = graph["id"].as_str().unwrap_or_default();
+        if id.is_empty() || !ids.insert(id) {
+            errors.push(format!("Graph ID '{id}' is empty or duplicated"));
+            continue;
+        }
+        if let Ok(scoped) = action_document(document, id) {
+            errors.extend(validate_graph_document(&scoped, for_run, true));
+        }
+    }
+    errors.sort();
+    errors.dedup();
+    errors
+}
+
+fn validate_graph_document(document: &Value, for_run: bool, check_ui: bool) -> Vec<String> {
+    let mut errors = Vec::new();
+    if ["eventFolders","events","functionFolders","functions"].iter().any(|key| document.get(key).is_some()) { errors.push("Unsupported blueprint schema: legacy execution library fields".into()); }
     if document.get("schemaVersion").and_then(Value::as_u64) != Some(crate::storage::SCHEMA_VERSION) {
         errors.push("Unsupported blueprint schema version".into());
     }
     if for_run && document.get("supported").and_then(Value::as_bool) == Some(false) {
         errors.push("This blueprint is a preview and cannot run yet".into());
     }
-    let Some(node_values) = document.get("nodes").and_then(Value::as_array) else {
+    let Some(node_values) = document["graphs"][0].get("nodes").and_then(Value::as_array) else {
         errors.push("Blueprint nodes must be an array".into());
         return errors;
     };
-    let Some(edge_values) = document.get("edges").and_then(Value::as_array) else {
+    let Some(edge_values) = document["graphs"][0].get("edges").and_then(Value::as_array) else {
         errors.push("Blueprint edges must be an array".into());
         return errors;
     };
@@ -637,36 +652,19 @@ pub fn validate_document(document: &Value, for_run: bool) -> Vec<String> {
     }
     let catalog = node_catalog();
     let mut by_id = HashMap::new();
-    let mut event_ids = HashSet::new();
     let mut edge_ids = HashSet::new();
     for node in node_values {
         let id = node_id(node);
         if id.is_empty() || by_id.insert(id, node).is_some() { errors.push(format!("Node ID '{id}' is empty or duplicated")); continue; }
         let kind = node_kind(node);
+        if node["data"].get("enabled").is_some_and(|enabled| !enabled.is_boolean()) {
+            errors.push(format!("Node '{id}' enabled must be a boolean"));
+        }
         let node_type = catalog.iter().find(|item| item.kind == kind);
         if node_type.is_none() { errors.push(format!("Unknown node type '{kind}'")); }
         if node.get("type").and_then(Value::as_str) != Some(kind) { errors.push(format!("Node '{id}' visual type does not match its registered kind")); }
-        if let Some(inputs) = node_config(node).get("exposedInputs") {
-            if let Some(inputs) = inputs.as_array() {
-                let mut seen = HashSet::new();
-                for input in inputs {
-                    let Some(path) = input.as_str() else { errors.push(format!("Node '{id}' has an invalid exposed input")); continue; };
-                    if !seen.insert(path) { errors.push(format!("Node '{id}' exposes input '{path}' more than once")); }
-                    let Some(node_type) = node_type else { continue; };
-                    if !node_type.input_parameters.contains(&path) { errors.push(format!("Node '{id}' cannot expose parameter '{path}' as an input")); continue; }
-                    let input_type = if path == "value" { make_value_type(kind) } else { None }
-                        .or_else(|| config_path_value(&node_type.default_config, path).and_then(config_value_type));
-                    if config_path_value(node_config(node), path).is_none() || input_type.is_none() { errors.push(format!("Node '{id}' input parameter '{path}' must be a boolean, number, or string")); }
-                }
-            } else { errors.push(format!("Node '{id}' exposedInputs must be an array")); }
-        }
-        if kind == "event" {
-            let event_id = node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("eventId")).and_then(Value::as_str).unwrap_or_default();
-            if event_id.is_empty() || !event_ids.insert(event_id) { errors.push(format!("Event ID '{event_id}' is empty or duplicated")); }
-        }
     }
     let mut incoming = HashSet::new();
-    let mut outgoing_flow = HashSet::new();
     let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
     for edge in edge_values {
         let edge_id = edge.get("id").and_then(Value::as_str).unwrap_or_default();
@@ -690,65 +688,28 @@ pub fn validate_document(document: &Value, for_run: bool) -> Vec<String> {
         };
         if !compatible_port_types(from_type, to_type) { errors.push(format!("Connection '{source}' to '{target}' has incompatible types")); }
         if !incoming.insert((target, target_handle)) { errors.push(format!("Input '{target}.{target_handle}' has multiple connections")); }
-        if from_type == "flow" && !outgoing_flow.insert((source, source_handle)) { errors.push(format!("Execution output '{source}.{source_handle}' has multiple successors")); }
         adjacency.entry(source).or_default().push(target);
     }
+    let mut value_names = HashSet::new();
+    for node in node_values.iter().filter(|node| node_kind(node) == "define_value") {
+        let name = node_config(node)["name"].as_str().unwrap_or_default().trim();
+        if name.is_empty() || !value_names.insert(name) { errors.push(format!("Named value '{name}' is empty or defined more than once")); }
+    }
+    for node in node_values.iter().filter(|node| node_kind(node) == "read_value") {
+        let definition = node_config(node)["definitionId"].as_str().unwrap_or_default();
+        if by_id.get(definition).is_none_or(|value| node_kind(value) != "define_value") {
+            errors.push(format!("Read Value '{}' references missing definition '{definition}'", node_id(node)));
+        } else {
+            adjacency.entry(definition).or_default().push(node_id(node));
+        }
+    }
     if has_cycle(&by_id, &adjacency) { errors.push("Workflow graph contains a cycle".into()); }
-    validate_tools(document, &mut errors);
-    let mut registered = HashSet::new();
-    for node in node_values.iter().filter(|node| node_kind(node) == "register_control") {
-        let config = node.get("data").and_then(|data| data.get("config"));
-        let Some(control) = config.and_then(|config| config.get("control")) else { errors.push(format!("Register Control '{}' needs a control definition", node_id(node))); continue; };
-        let id = control.get("id").and_then(Value::as_str).unwrap_or_default();
-        let event_id = control.get("eventId").and_then(Value::as_str).unwrap_or_default();
-        if id.is_empty() || !registered.insert(id) { errors.push(format!("Control ID '{id}' is empty or duplicated")); }
-        if control.get("label").and_then(Value::as_str).is_none_or(str::is_empty) { errors.push(format!("Control '{id}' needs a label")); }
-        if control.get("order").is_some_and(|order| order.as_i64().is_none()) { errors.push(format!("Control '{id}' order must be an integer")); }
-        if !event_ids.contains(event_id) { errors.push(format!("Control '{id}' references missing Event '{event_id}'")); }
-        if !valid_icon(control.get("icon").and_then(Value::as_str).unwrap_or_default()) { errors.push(format!("Control '{id}' uses an unsupported icon")); }
-        if control.get("enabled").is_some_and(|enabled| !enabled.is_boolean()) { errors.push(format!("Control '{id}' enabled must be a boolean")); }
-        if control.get("menu").is_some() { errors.push(format!("Control '{id}' menus must use Register Control Menu nodes")); }
-    }
-    let mut menu_paths: HashMap<&str, HashSet<String>> = HashMap::new();
-    for node in node_values.iter().filter(|node| node_kind(node) == "register_menu") {
-        let config = node.get("data").and_then(|data| data.get("config"));
-        let control_id = config.and_then(|config| config.get("controlId")).and_then(Value::as_str).unwrap_or_default();
-        let path = config.and_then(|config| config.get("path")).and_then(Value::as_str).unwrap_or_default();
-        let event_id = config.and_then(|config| config.get("eventId")).and_then(Value::as_str).unwrap_or_default();
-        let Some(segments) = menu_path_segments(path) else { errors.push(format!("Register Control Menu '{}' needs a valid slash-separated path", node_id(node))); continue; };
-        if !registered.contains(control_id) { errors.push(format!("Register Control Menu '{}' references unregistered control '{control_id}'", node_id(node))); }
-        if !event_ids.contains(event_id) { errors.push(format!("Register Control Menu '{}' references missing Event '{event_id}'", node_id(node))); }
-        if !valid_icon(config.and_then(|config| config.get("icon")).and_then(Value::as_str).unwrap_or_default()) { errors.push(format!("Register Control Menu '{}' uses an unsupported icon", node_id(node))); }
-        let normalized_path = segments.join("/");
-        let paths = menu_paths.entry(control_id).or_default();
-        if paths.len() >= 128 || !paths.insert(normalized_path.clone()) { errors.push(format!("Control '{control_id}' has too many or duplicate menu paths")); }
-    }
-    for (control_id, paths) in &menu_paths {
-        for path in paths {
-            let segments = path.split('/').collect::<Vec<_>>();
-            for depth in 1..segments.len() {
-                let parent = segments[..depth].join("/");
-                if !paths.contains(&parent) { errors.push(format!("Control '{control_id}' menu path '{path}' is missing parent '{parent}'")); }
-            }
-        }
-    }
-    for node in node_values.iter().filter(|node| node_kind(node) == "update_control") {
-        let config = node.get("data").and_then(|data| data.get("config"));
-        let id = config.and_then(|config| config.get("controlId")).and_then(Value::as_str).unwrap_or_default();
-        if !registered.contains(id) { errors.push(format!("Update Control '{}' references unregistered control '{id}'", node_id(node))); }
-        if let Some(patch) = config.and_then(|config| config.get("patch")).and_then(Value::as_object) {
-            if patch.get("eventId").and_then(Value::as_str).is_some_and(|event_id| !event_ids.contains(event_id)) { errors.push(format!("Update Control '{}' references a missing Event", node_id(node))); }
-            if patch.get("icon").and_then(Value::as_str).is_some_and(|icon| !valid_icon(icon)) { errors.push(format!("Update Control '{}' uses an unsupported icon", node_id(node))); }
-            if patch.get("label").and_then(Value::as_str).is_some_and(str::is_empty) { errors.push(format!("Update Control '{}' has an empty label", node_id(node))); }
-            if patch.get("order").is_some_and(|order| order.as_i64().is_none()) { errors.push(format!("Update Control '{}' order must be an integer", node_id(node))); }
-        }
-    }
-    for node in node_values.iter().filter(|node| node_kind(node) == "delay") {
-        let millis = node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("milliseconds")).and_then(Value::as_u64).unwrap_or(0);
-        if millis > 60_000 { errors.push(format!("Delay '{}' exceeds the 60 second limit", node_id(node))); }
-    }
-    if node_values.iter().any(|node| matches!(node_kind(node), "register_control" | "register_menu" | "register_display")) && !event_ids.contains("event-initialize") {
-        errors.push("Control registration nodes require an Event with ID 'event-initialize'".into());
+    if check_ui { validate_control_registry(document, &mut errors); }
+    for node in node_values.iter().filter(|node| node_kind(node) == "get_selected_region") {
+        let tool = node_config(node)["toolId"].as_str().unwrap_or_default();
+        let exists = document["graphs"].as_array().into_iter().flatten().flat_map(|graph| graph["nodes"].as_array().into_iter().flatten()).any(|node| node_kind(node) == "select_region" && node_config(node)["toolId"] == tool);
+        let wired = edges(document).iter().any(|edge| edge["target"] == node_id(node) && edge["targetHandle"] == "in:selected");
+        if check_ui && !wired && !exists { errors.push("Get Selected Region references a missing tool".into()); }
     }
     for node in node_values.iter().filter(|node| node_kind(node) == "read_parameter") {
         let id = node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("parameterId")).and_then(Value::as_str).unwrap_or_default();
@@ -774,24 +735,10 @@ pub fn validate_document(document: &Value, for_run: bool) -> Vec<String> {
         if !matches!(operator, "equal" | "not_equal" | "contains") { errors.push(format!("Compare Values '{}' has an unsupported operator", node_id(node))); }
     }
     if for_run && errors.is_empty() {
-        if !errors.is_empty() { return errors; }
-        let start_events: Vec<_> = node_values.iter().filter(|node| node_kind(node) == "event" && node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("eventId")).and_then(Value::as_str) == Some("event-start")).collect();
-        if start_events.is_empty() { errors.push("Blueprint has no Event with ID 'event-start'".into()); }
-        for start in start_events {
-            let event_id = start.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("eventId")).and_then(Value::as_str).unwrap_or_default();
-            match reachable_flow_nodes(document, event_id) {
-                Ok(reachable) => {
-                    let pipelines: Vec<_> = reachable.into_iter().filter(|node| node_kind(node) == "start_pipeline").collect();
-                    if pipelines.is_empty() { errors.push("Event 'event-start' has no Start Pipeline action".into()); }
-                    for start_node in pipelines {
-                        let output = start_node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("outputNodeId")).and_then(Value::as_str);
-                        let mut validation_document = document.clone();
-                        validation_document["_validateRegionStructure"] = json!(true);
-                        if let Err(error) = recording_plan(&validation_document, output) { errors.push(error); }
-                    }
-                }
-                Err(error) => errors.push(error),
-            }
+        let mut validation = document.clone();
+        validation["_validateRegionStructure"] = json!(true);
+        for source in node_values.iter().filter(|node| node_kind(node) == "screen" && node["data"]["enabled"] != false) {
+            if let Err(error) = compile_recording_outputs(&validation, node_id(source)) { errors.push(error); }
         }
     }
     errors
@@ -805,6 +752,9 @@ fn selected_region(document: &Value, node: &Value) -> Result<Value, String> {
         region["mode"] = config["mode"].clone();
         return Ok(region);
     }
+    if node_kind(node) == "get_selected_region" {
+        if let Some(region) = input_value(document, node_id(node), "selected", &mut HashSet::new(), 0)? { return Ok(region); }
+    }
     let tool = config["toolId"].as_str().unwrap_or_default();
     if let Some(region) = document.get("_selectedRegions").and_then(|r| r.get(tool)) { return Ok(region.clone()); }
     if document["_validateRegionStructure"] == true {
@@ -813,53 +763,83 @@ fn selected_region(document: &Value, node: &Value) -> Result<Value, String> {
     Err(format!("Select a region with tool '{tool}' before starting"))
 }
 
+fn validate_control_registry(document: &Value, errors: &mut Vec<String>) {
+    let mut graph_ids = HashSet::new();
+    if document["graphs"].as_array().is_none_or(|graphs| graphs.is_empty() || graphs.iter().any(|graph| graph["id"].as_str().is_none_or(|id| id.is_empty() || !graph_ids.insert(id)))) {
+        errors.push("Blueprint graph IDs must be present and unique".into());
+    }
+    if ["eventFolders","events","functionFolders","functions"].iter().any(|key| document.get(key).is_some()) { errors.push("Unsupported legacy execution library fields".into()); }
+    validate_tools(document, errors);
+    if let Some(controls) = document.get("controls") {
+        if let Some(controls) = controls.as_array() {
+            let mut ids = HashSet::new();
+            for control in controls {
+                let id = control["id"].as_str().unwrap_or_default();
+                if id.is_empty() || !ids.insert(id) { errors.push(format!("Control ID '{id}' is empty or duplicated")); }
+                if control["label"].as_str().is_none_or(str::is_empty) { errors.push(format!("Control '{id}' needs a label")); }
+                if let Some(binding) = control.get("binding") {
+                    let graph = document["graphs"].as_array().and_then(|graphs| graphs.iter().find(|graph| graph["id"] == binding["graphId"]));
+                    let target = graph.and_then(|graph| graph["nodes"].as_array()).and_then(|nodes| nodes.iter().find(|node| node["id"] == binding["nodeId"]));
+                    if !target.is_some_and(|node| matches!((node_kind(node), binding["action"].as_str()), ("screen", Some("record")) | ("select_region", Some("select")))) {
+                        errors.push(format!("Control '{id}' has an invalid node action binding"));
+                    }
+                } else { errors.push(format!("Control '{id}' needs a node action binding")); }
+                if !valid_icon(control["icon"].as_str().unwrap_or_default()) { errors.push(format!("Control '{id}' uses an unsupported icon")); }
+                if !control["enabled"].is_boolean() { errors.push(format!("Control '{id}' needs boolean enabled")); }
+            }
+        } else { errors.push("Blueprint controls must be an array".into()); }
+    }
+}
+
 fn validate_tools(document: &Value, errors: &mut Vec<String>) {
     let mut tools = HashSet::new();
-    for node in nodes(document).iter().filter(|n| node_kind(n) == "select_region") {
+    let all_nodes: Vec<_> = document["graphs"].as_array().into_iter().flatten().flat_map(|graph| graph["nodes"].as_array().into_iter().flatten()).collect();
+    for node in all_nodes.iter().filter(|n| node_kind(n) == "select_region") {
         let id = node_config(node)["toolId"].as_str().unwrap_or_default();
         if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') || !tools.insert(id) {
             errors.push(format!("Tool ID '{id}' is invalid or duplicated"));
         }
     }
     let mut ids = HashSet::new();
-    for node in nodes(document) {
-        let config = node_config(node);
-        if node_kind(node) == "get_selected_region" && !tools.contains(config["toolId"].as_str().unwrap_or_default()) { errors.push("Get Selected Region references a missing tool".into()); }
-        let item = match node_kind(node) { "register_control" => &config["control"], "register_display" => &config["display"], _ => continue };
-        let id = item["id"].as_str().unwrap_or_default();
-        if id.is_empty() || !ids.insert(id) { errors.push(format!("UI item ID '{id}' is empty or duplicated")); }
-        if node_kind(node) == "register_display" {
-            if !matches!(item["source"].as_str(), Some("status" | "elapsed")) { errors.push(format!("Display '{id}' has an invalid data source")); }
-            let expected = if item["source"] == "elapsed" { "HH:mm:ss" } else { "text" };
-            if item["format"].as_str() != Some(expected) { errors.push(format!("Display '{id}' requires format '{expected}'")); }
-            if item["order"].as_i64().is_none() { errors.push(format!("Display '{id}' needs integer Order")); }
-        }
-        if let Some(targets) = item.get("targets") {
-            match targets.as_array() {
-                Some(targets) if !targets.is_empty() => {
-                    let mut seen = HashSet::new();
-                    for target in targets {
-                        let target = target.as_str().unwrap_or_default();
-                        if !seen.insert(target) || !(target == "main" || target.strip_prefix("region:").is_some_and(|id| tools.contains(id))) {
-                            errors.push(format!("UI item '{id}' references invalid or duplicate target '{target}'"));
-                        }
-                    }
+    for (kind, items) in [("controls", document.get("controls")), ("displays", document.get("displays"))] {
+        if items.is_none_or(|items| !items.is_array()) { errors.push(format!("Blueprint {kind} must be an array")); }
+        for item in items.and_then(Value::as_array).into_iter().flatten() {
+            let id = item["id"].as_str().unwrap_or_default();
+            if id.is_empty() || !ids.insert(id) { errors.push(format!("UI item ID '{id}' is empty or duplicated")); }
+            if kind == "displays" && !matches!(item["source"].as_str(), Some("status" | "elapsed")) { errors.push(format!("Display '{id}' has an invalid source")); }
+            if kind == "displays" {
+                if let Some(binding) = item.get("binding") {
+                    let node = document["graphs"].as_array().and_then(|graphs| graphs.iter().find(|graph| graph["id"] == binding["graphId"]))
+                        .and_then(|graph| graph["nodes"].as_array()).and_then(|nodes| nodes.iter().find(|node| node["id"] == binding["nodeId"]));
+                    if binding["action"] != "record" || node.is_none_or(|node| node_kind(node) != "screen") { errors.push(format!("Display '{id}' must bind to a screen recording node")); }
                 }
-                _ => errors.push(format!("UI item '{id}' needs at least one target")),
+            }
+            if item["targets"].as_array().is_none_or(|targets| targets.iter().any(|target| target.as_str().is_none_or(|target| target != "main" && !target.strip_prefix("region:").is_some_and(|id| tools.contains(id))))) {
+                errors.push(format!("UI item '{id}' has invalid targets"));
             }
         }
     }
+    if let Some(orders) = document["controlOrder"].as_object() {
+        let mut controls: Vec<&Value> = document["controls"].as_array().into_iter().flatten().collect();
+        controls.extend(document["displays"].as_array().into_iter().flatten().filter(|display| display.get("binding").is_some()));
+        for (target, order) in orders {
+            if target != "main" && !target.strip_prefix("region:").is_some_and(|id| tools.contains(id)) { errors.push(format!("Control order references invalid target '{target}'")); }
+            let expected: HashSet<_> = controls.iter().filter(|control| control["targets"].as_array().is_some_and(|targets| targets.iter().any(|item| item == target))).filter_map(|control| control["id"].as_str()).collect();
+            let Some(order) = order.as_array() else { errors.push(format!("Control order for '{target}' must be an array")); continue; };
+            let actual: HashSet<_> = order.iter().filter_map(Value::as_str).collect();
+            if actual != expected || actual.len() != order.len() { errors.push(format!("Control order for '{target}' must contain each visible control exactly once")); }
+        }
+        for control in &controls {
+            for target in control["targets"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                if !orders.contains_key(target) { errors.push(format!("Missing control order for '{target}'")); }
+            }
+        }
+    } else { errors.push("Blueprint controlOrder must be an object".into()); }
+
 }
 
 fn valid_icon(icon: &str) -> bool {
     matches!(icon, "circle-help" | "crop" | "monitor" | "play" | "pause" | "square" | "stop-circle" | "settings" | "video" | "folder" | "mouse-pointer-2" | "audio-lines" | "clock-3")
-}
-
-fn menu_path_segments(path: &str) -> Option<Vec<String>> {
-    if path.trim().is_empty() || path.len() > 512 { return None; }
-    let segments = path.split('/').map(str::trim).collect::<Vec<_>>();
-    if segments.is_empty() || segments.len() > 8 || segments.iter().any(|segment| segment.is_empty() || segment.len() > 80) { return None; }
-    Some(segments.into_iter().map(str::to_string).collect())
 }
 
 fn has_cycle<'a>(nodes: &HashMap<&'a str, &Value>, adjacency: &HashMap<&'a str, Vec<&'a str>>) -> bool {
@@ -876,66 +856,31 @@ fn has_cycle<'a>(nodes: &HashMap<&'a str, &Value>, adjacency: &HashMap<&'a str, 
     nodes.keys().any(|id| visit(id, nodes, adjacency, &mut visiting, &mut visited))
 }
 
-fn execution_path<'a>(document: &'a Value, event_id: &str) -> Result<Vec<&'a Value>, String> {
-    let entry = nodes(document).iter().find(|node| node_kind(node) == "event" && node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("eventId")).and_then(Value::as_str) == Some(event_id))
-        .ok_or_else(|| format!("Event '{event_id}' was not found"))?;
-    let mut path = vec![entry];
-    let mut current = node_id(entry);
-    for _ in 0..512 {
-        let node = path.last().copied().expect("event path has an entry");
-        let output = if node_kind(node) == "branch" { branch_output(document, node)? } else { "out:flow" };
-        let next = edges(document).iter().find(|edge| edge.get("source").and_then(Value::as_str) == Some(current) && edge.get("sourceHandle").and_then(Value::as_str) == Some(output));
-        let Some(edge) = next else { return Ok(path); };
-        let target = edge.get("target").and_then(Value::as_str).unwrap_or_default();
-        let node = nodes(document).iter().find(|node| node_id(node) == target).ok_or_else(|| format!("Execution path references missing node '{target}'"))?;
-        if !matches!(node_kind(node), "register_control" | "register_menu" | "register_display" | "select_region" | "update_control" | "log" | "delay" | "branch" | "start_pipeline" | "pause_pipeline" | "resume_pipeline" | "stop_pipeline") {
-            return Err(format!("Node '{}' cannot appear in an execution chain", node_id(node)));
-        }
-        path.push(node);
-        current = target;
-    }
-    Err("Execution path exceeds 512 nodes".into())
-}
-
-fn reachable_flow_nodes<'a>(document: &'a Value, event_id: &str) -> Result<Vec<&'a Value>, String> {
-    let entry = nodes(document).iter().find(|node| node_kind(node) == "event" && node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("eventId")).and_then(Value::as_str) == Some(event_id))
-        .ok_or_else(|| format!("Event '{event_id}' was not found"))?;
-    let catalog = node_catalog();
-    let mut queue = VecDeque::from([entry]);
-    let mut seen = HashSet::new();
-    let mut reachable = Vec::new();
-    while let Some(node) = queue.pop_front() {
-        if !seen.insert(node_id(node)) { continue; }
-        reachable.push(node);
-        if reachable.len() > 512 { return Err("Execution graph exceeds 512 reachable nodes".into()); }
-        for edge in edges(document).iter().filter(|edge| edge.get("source").and_then(Value::as_str) == Some(node_id(node))) {
-            let output = edge.get("sourceHandle").and_then(Value::as_str).unwrap_or_default();
-            if find_port(&catalog, node_kind(node), output, "out").is_some_and(|port| port.value_type == "flow") {
-                if let Some(target) = edge.get("target").and_then(Value::as_str).and_then(|id| nodes(document).iter().find(|node| node_id(node) == id)) { queue.push_back(target); }
-            }
-        }
-    }
-    Ok(reachable)
-}
-
-fn branch_output(document: &Value, node: &Value) -> Result<&'static str, String> {
-    let id = node_id(node);
-    let condition = match input_value(document, id, "condition", &mut HashSet::new(), 0)? {
-        Some(value) => value,
-        None => node.get("data").and_then(|data| data.get("config")).and_then(|config| config.get("condition")).cloned()
-            .ok_or_else(|| format!("Branch '{id}' needs a boolean condition"))?,
-    };
-    match condition.as_bool() {
-        Some(true) => Ok("out:true"),
-        Some(false) => Ok("out:false"),
-        None => Err(format!("Branch '{id}' condition did not evaluate to a boolean")),
-    }
-}
-
 fn input_value(document: &Value, target_id: &str, input: &str, visiting: &mut HashSet<String>, depth: usize) -> Result<Option<Value>, String> {
     let edge = edges(document).iter().find(|edge| edge.get("target").and_then(Value::as_str) == Some(target_id) && edge.get("targetHandle").and_then(Value::as_str) == Some(&format!("in:{input}")));
     let Some(source) = edge.and_then(|edge| edge.get("source")).and_then(Value::as_str) else { return Ok(None); };
     evaluate_value(document, source, visiting, depth + 1).map(Some)
+}
+
+fn enabled_source<'a>(document: &'a Value, id: &str, handle: &str, visiting: &mut HashSet<String>) -> Result<(&'a Value, String), String> {
+    if !visiting.insert(id.to_string()) { return Err(format!("Disabled bypass contains a cycle at '{id}'")); }
+    let result = (|| {
+        let node = nodes(document).iter().find(|node| node_id(node) == id).ok_or_else(|| format!("Source node '{id}' was not found"))?;
+        if node["data"]["enabled"] != false { return Ok((node, handle.to_string())); }
+        let catalog = node_catalog();
+        let definition = catalog.iter().find(|item| item.kind == node_kind(node)).ok_or_else(|| format!("Unknown node type '{}'", node_kind(node)))?;
+        let output_type = node_port_type(document, &catalog, node, handle, "out").ok_or_else(|| format!("Invalid output '{id}.{handle}'"))?;
+        let outputs = definition.outputs.iter().filter(|port| node_port_type(document, &catalog, node, &format!("out:{}", port.id), "out") == Some(output_type)).count();
+        let inputs: Vec<_> = definition.inputs.iter().map(|port| format!("in:{}",port.id))
+            .chain(definition.input_parameters.iter().map(|path| format!("in:{}",config_input_port_id(node_kind(node),path))))
+            .filter(|input| node_port_type(document, &catalog, node, input, "in") == Some(output_type)).collect();
+        if outputs != 1 || inputs.len() != 1 { return Err(format!("Node disabled: '{id}' blocks this path: no unique same-type bypass")); }
+        let incoming: Vec<_> = edges(document).iter().filter(|edge| edge["target"] == id && edge["targetHandle"] == inputs[0]).collect();
+        if incoming.len() != 1 { return Err(format!("Node disabled: '{id}' blocks this path: bypass input needs one connection")); }
+        enabled_source(document, incoming[0]["source"].as_str().unwrap_or_default(), incoming[0]["sourceHandle"].as_str().unwrap_or_default(), visiting)
+    })();
+    visiting.remove(id);
+    result
 }
 
 fn evaluate_value(document: &Value, id: &str, visiting: &mut HashSet<String>, depth: usize) -> Result<Value, String> {
@@ -943,8 +888,21 @@ fn evaluate_value(document: &Value, id: &str, visiting: &mut HashSet<String>, de
     if !visiting.insert(id.to_string()) { return Err(format!("Value graph contains a cycle at '{id}'")); }
     let result = (|| {
         let node = nodes(document).iter().find(|node| node_id(node) == id).ok_or_else(|| format!("Value node '{id}' was not found"))?;
+        if node["data"]["enabled"] == false {
+            let definition = node_catalog().into_iter().find(|item| item.kind == node_kind(node)).ok_or_else(|| format!("Unknown value node '{id}'"))?;
+            if definition.outputs.len() != 1 { return Err(format!("Value node disabled: '{id}' has no unique output")); }
+            let (source, _) = enabled_source(document, id, &format!("out:{}", definition.outputs[0].id), &mut HashSet::new())?;
+            return evaluate_value(document, node_id(source), visiting, depth + 1);
+        }
         let config = resolved_node_config(document, node)?;
         match node_kind(node) {
+            "define_value" => input_value(document, id, "value", visiting, depth)?.ok_or_else(|| format!("Named value '{id}' needs one input")),
+            "read_value" => {
+                let definition = config["definitionId"].as_str().ok_or_else(|| format!("Read Value '{id}' needs a definition"))?;
+                let target = nodes(document).iter().find(|node| node_id(node) == definition && node_kind(node) == "define_value")
+                    .ok_or_else(|| format!("Named value definition '{definition}' was not found"))?;
+                evaluate_value(document, node_id(target), visiting, depth + 1)
+            }
             "region" => Ok(config.clone()),
             "select_region" | "get_selected_region" => selected_region(document, node),
             "constant" => config.get("value").cloned().filter(|value| value.is_string() || value.is_boolean() || value.is_number()).ok_or_else(|| format!("Constant '{id}' must contain a string, boolean, or number")),
@@ -980,113 +938,80 @@ fn evaluate_value(document: &Value, id: &str, visiting: &mut HashSet<String>, de
     result
 }
 
-fn event_pipeline_kind(document: &Value, event_id: &str) -> Option<String> {
-    execution_path(document, event_id).ok()?.into_iter().find_map(|node| match node_kind(node) {
-        kind @ ("start_pipeline" | "pause_pipeline" | "resume_pipeline" | "stop_pipeline") => Some(kind.to_string()),
-        _ => None,
-    })
-}
-
 fn execute_initialization(document: &Value) -> Result<Vec<Value>, String> {
-    let mut controls = Vec::new();
-    let mut menus = Vec::new();
-    for node in execution_path(document, "event-initialize")? {
-        if matches!(node_kind(node), "register_control" | "register_display") {
-            let config = resolved_node_config(document, node)?;
-            let is_display = node_kind(node) == "register_display";
-            let control = config.get(if is_display { "display" } else { "control" })
-                .ok_or_else(|| format!("Register Control '{}' has no definition", node_id(node)))?;
-            let mut control = control.clone();
-            let object = control.as_object_mut().ok_or_else(|| format!("Register Control '{}' definition must be an object", node_id(node)))?;
-            let order = object.get("order").and_then(Value::as_i64).unwrap_or(controls.len() as i64);
-            if is_display { object.insert("kind".into(), json!("display")); }
-            object.entry("targets").or_insert(json!(["main"]));
-            object.insert("menu".into(), json!([]));
-            object.insert("order".into(), json!(order));
-            controls.push((order, controls.len(), control));
-        } else if node_kind(node) == "register_menu" {
-            let config = resolved_node_config(document, node)?;
-            let path = config.get("path").and_then(Value::as_str).unwrap_or_default();
-            menus.push((
-                config.get("controlId").and_then(Value::as_str).unwrap_or_default().to_string(),
-                menu_path_segments(path).ok_or_else(|| format!("Register Control Menu '{}' has an invalid path", node_id(node)))?,
-                config.get("icon").and_then(Value::as_str).unwrap_or_default().to_string(),
-                config.get("eventId").and_then(Value::as_str).unwrap_or_default().to_string(),
-                menus.len(),
-            ));
+    if let Some(definitions) = document.get("controls").and_then(Value::as_array) {
+        let mut controls = definitions.clone();
+        if let Some(displays) = document.get("displays").and_then(Value::as_array) {
+            controls.extend(displays.iter().cloned().map(|mut display| { display["kind"] = json!("display"); display }));
         }
+        for (index, control) in controls.iter_mut().enumerate() {
+            control["order"] = json!(index);
+            let mut orders = serde_json::Map::new();
+            if let Some(targets) = document.get("controlOrder").and_then(Value::as_object) {
+                for (target, ids) in targets {
+                    if let Some(index) = ids.as_array().and_then(|ids| ids.iter().position(|id| id == &control["id"])) { orders.insert(target.clone(), json!(index)); }
+                }
+            }
+            control["targetOrder"] = Value::Object(orders);
+        }
+        return Ok(controls);
     }
-    menus.sort_by_key(|(_, segments, _, _, order)| (segments.len(), *order));
-    for (control_id, segments, icon, event_id, _) in menus {
-        let (_, _, control) = controls.iter_mut().find(|(_, _, control)| control.get("id").and_then(Value::as_str) == Some(control_id.as_str()))
-            .ok_or_else(|| format!("Register Control Menu references unregistered control '{control_id}'"))?;
-        let menu = control.as_object_mut().and_then(|object| object.get_mut("menu")).and_then(Value::as_array_mut).expect("menu initialized");
-        insert_menu_path(menu, &segments, 0, &icon, &event_id)?;
-    }
-    controls.sort_by_key(|(order, registration_index, _)| (*order, *registration_index));
-    Ok(controls.into_iter().map(|(_, _, control)| control).collect())
-}
-
-fn insert_menu_path(items: &mut Vec<Value>, segments: &[String], depth: usize, icon: &str, event_id: &str) -> Result<(), String> {
-    let path = segments[..=depth].join("/");
-    if depth + 1 == segments.len() {
-        if items.iter().any(|item| item.get("id").and_then(Value::as_str) == Some(path.as_str())) { return Err(format!("Menu path '{path}' is registered more than once")); }
-        items.push(json!({"id":path,"label":segments[depth],"icon":icon,"eventId":event_id,"children":[]}));
-        return Ok(());
-    }
-    let parent = items.iter_mut().find(|item| item.get("id").and_then(Value::as_str) == Some(path.as_str()))
-        .ok_or_else(|| format!("Menu path '{}' is missing registered parent '{path}'", segments.join("/")))?;
-    let children = parent.get_mut("children").and_then(Value::as_array_mut).ok_or_else(|| format!("Menu path '{path}' has invalid children"))?;
-    insert_menu_path(children, segments, depth + 1, icon, event_id)
+    Err("Blueprint controls must be an array".into())
 }
 
 fn pipeline_source<'a>(document: &'a Value, target: &str, input: &str, kind: &str, output: &str) -> Result<&'a Value, String> {
     let incoming: Vec<_> = edges(document).iter().filter(|edge| edge["target"] == target && edge["targetHandle"] == format!("in:{input}")).collect();
     if incoming.len() != 1 { return Err(format!("Connect exactly one {kind} source to {target}.{input}")); }
     let edge = incoming[0];
-    let source = nodes(document).iter().find(|node| node["id"] == edge["source"])
-        .ok_or_else(|| format!("Missing source for {target}.{input}"))?;
-    if (node_kind(source) != kind && !(kind == "region" && matches!(node_kind(source), "select_region" | "get_selected_region"))) || edge["sourceHandle"] != format!("out:{output}") { return Err(format!("{target}.{input} requires {kind}.{output}")); }
-    if matches!(kind, "screen" | "encode") && edges(document).iter().filter(|edge| edge["source"] == node_id(source) && edge["sourceHandle"] == format!("out:{output}")).count() != 1 {
-        return Err("Recording supports one source, one encoder and one output per run".into());
-    }
+    let (source, handle) = enabled_source(document, edge["source"].as_str().unwrap_or_default(), edge["sourceHandle"].as_str().unwrap_or_default(), &mut HashSet::new())?;
+    if (node_kind(source) != kind && !(kind == "region" && matches!(node_kind(source), "select_region" | "get_selected_region"))) || handle != format!("out:{output}") { return Err(format!("{target}.{input} requires {kind}.{output}")); }
     Ok(source)
 }
 
 fn recording_plan(document: &Value, output_id: Option<&str>) -> Result<RecordingPlan, String> {
     let output = nodes(document).iter().find(|node| Some(node_id(node)) == output_id && node_kind(node) == "write")
         .ok_or_else(|| "Start Pipeline must reference a Write MP4 node".to_string())?;
-    let encoder = pipeline_source(document, node_id(output), "video", "encode", "video")?;
+    if output["data"]["enabled"] == false { return Err("The selected output is disabled".into()); }
+    let encoder = pipeline_source(document, node_id(output), "video", "encode_media_foundation", "video")?;
     if edges(document).iter().any(|edge| edge["target"] == node_id(encoder) && edge["targetHandle"] == "in:audio") {
         return Err("Audio recording is not implemented yet; disconnect the audio input".into());
     }
     let screen = pipeline_source(document, node_id(encoder), "frames", "screen", "frames")?;
-    let region = pipeline_source(document, node_id(screen), "region", "region", "region")?;
-    let path = pipeline_source(document, node_id(output), "path", "path", "path")?;
     let e = resolved_node_config(document, encoder)?;
-    let r = if node_kind(region) == "region" { resolved_node_config(document, region)? } else { selected_region(document, region)? };
     let s = resolved_node_config(document, screen)?;
-    let p = resolved_node_config(document, path)?;
+    let r = if edges(document).iter().any(|edge| edge["target"] == node_id(screen) && edge["targetHandle"] == "in:region") {
+        let region = pipeline_source(document, node_id(screen), "region", "region", "region")?;
+        if node_kind(region) == "region" { resolved_node_config(document, region)? } else { selected_region(document, region)? }
+    } else { s["region"].clone() };
+    let p = if edges(document).iter().any(|edge| edge["target"] == node_id(output) && edge["targetHandle"] == "in:path") {
+        resolved_node_config(document, pipeline_source(document, node_id(output), "path", "path", "path")?)?
+    } else { resolved_node_config(document, output)?["path"].clone() };
     let string = |value: &Value, key: &str| -> Result<String, String> { value.get(key).and_then(Value::as_str).map(str::to_string).ok_or_else(|| format!("{key} must be a string")) };
     let number = |value: &Value, key: &str| -> Result<u32, String> {
         let number = value.get(key).and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
         number.and_then(|n| u32::try_from(n).ok()).ok_or_else(|| format!("{key} must be a nonnegative integer"))
     };
-    if string(&e, "encoder")? != "H.264" { return Err("Only H.264 encoding is supported".into()); }
+    let encoder_type = node_catalog().into_iter().find(|node| node.kind == node_kind(encoder)).ok_or("Encoder Provider was not found")?;
+    for (field, options) in encoder_type.choices.as_object().unwrap() {
+        let value = string(&e, field)?;
+        if !options.as_array().unwrap().iter().any(|option| option == &value) {
+            return Err(format!("{} does not support {field}: {value}", encoder_type.label));
+        }
+    }
     let mode = string(&r, "mode")?;
     if !["Full Display", "Rectangle"].contains(&mode.as_str()) { return Err("Region mode must be Full Display or Rectangle".into()); }
     let encoding = string(&e, "encodingMode")?;
-    if !["Hardware Auto", "Software"].contains(&encoding.as_str()) { return Err("Encoding mode must be Hardware Auto or Software".into()); }
     let (ow, oh) = match string(&e, "resolution")?.as_str() {
-        "Source Size" | "Source size" => (0,0),
+        "Source Size" => (0,0),
         "1920 × 1080" => (1920,1080), "2560 × 1440" => (2560,1440),
         _ => return Err("Resolution must be Source Size, 1920 × 1080, or 2560 × 1440".into()),
     };
     let bitrate = e.get("bitrate").and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
         .filter(|n| n.is_finite() && (0.1..=200.).contains(n)).ok_or_else(|| "Bitrate must be between 0.1 and 200 Mbps".to_string())?;
-    let fps = number(&e,"fps")?;
+    let fps = number(&s,"fps")?;
     if ![24,30,60,120].contains(&fps) { return Err("Frame rate must be 24, 30, 60, or 120".into()); }
-    let mut filename = string(&p, "filename")?.replace("{blueprint}", document["id"].as_str().unwrap_or("recording")).replace("{timestamp}", &now_nanos().to_string());
+    let timestamp = document["_runTimestamp"].as_str().map(str::to_string).unwrap_or_else(|| now_nanos().to_string());
+    let mut filename = string(&p, "filename")?.replace("{blueprint}", document["id"].as_str().unwrap_or("recording")).replace("{timestamp}", &timestamp);
     if !filename.to_ascii_lowercase().ends_with(".mp4") { filename.push_str(".mp4"); }
     if filename.contains(['/', '\\', ':', '{', '}']) || filename == ".mp4" { return Err("Filename must be a filename, with only {blueprint} and {timestamp} placeholders".into()); }
     let width = number(&r,"width")?; let height = number(&r,"height")?;
@@ -1098,6 +1023,78 @@ fn recording_plan(document: &Value, output_id: Option<&str>) -> Result<Recording
         path: std::path::Path::new(&string(&p,"directory")?).join(filename),
     })
 }
+
+struct CompiledRecordingOutput {
+    node_id: String,
+    encoder_id: String,
+    plan: RecordingPlan,
+}
+
+fn recording_delay(document: &Value, source_id: &str) -> Result<Duration, String> {
+    let source = nodes(document).iter().find(|node| node_id(node) == source_id).ok_or("Recording source was not found")?;
+    let config = resolved_node_config(document, source)?;
+    let seconds = config["startDelaySeconds"].as_f64().filter(|value| value.is_finite() && (0.0..=60.0).contains(value))
+        .ok_or("Start delay must be between 0 and 60 seconds")?;
+    Ok(Duration::from_secs_f64(seconds))
+}
+
+fn execution_document(document: &Value, outputs: &[String]) -> Result<Value, String> {
+    let mut required = HashSet::new();
+    let mut queue: VecDeque<_> = outputs.iter().cloned().collect();
+    let mut connections = Vec::new();
+    while let Some(id) = queue.pop_front() {
+        if !required.insert(id.clone()) { continue; }
+        let node = nodes(document).iter().find(|node| node_id(node) == id).ok_or_else(|| format!("Missing dependency '{id}'"))?;
+        if node_kind(node) == "read_value" {
+            queue.push_back(node_config(node)["definitionId"].as_str().unwrap_or_default().to_string());
+        }
+        for edge in edges(document).iter().filter(|edge| edge["target"] == id) {
+            let (source, handle) = enabled_source(document,edge["source"].as_str().unwrap_or_default(),edge["sourceHandle"].as_str().unwrap_or_default(),&mut HashSet::new())?;
+            let mut connection = edge.clone();
+            connection["source"] = json!(node_id(source)); connection["sourceHandle"] = json!(handle);
+            queue.push_back(node_id(source).to_string());
+            connections.push(connection);
+        }
+    }
+    let mut execution = document.clone();
+    let mut graph = document["graphs"][0].clone();
+    graph["nodes"] = json!(nodes(document).iter().filter(|node| required.contains(node_id(node))).cloned().collect::<Vec<_>>());
+    graph["edges"] = json!(connections);
+    execution["graphs"] = json!([graph]);
+    execution["controls"] = json!([]); execution["displays"] = json!([]); execution["controlOrder"] = json!({});
+    let errors = validate_graph_document(&execution,false,false);
+    if !errors.is_empty() { return Err(errors.join("; ")); }
+    Ok(execution)
+}
+
+fn compile_recording_outputs(document: &Value, source_id: &str) -> Result<Vec<CompiledRecordingOutput>, String> {
+    let mut frozen = document.clone();
+    if frozen.get("_runTimestamp").is_none() { frozen["_runTimestamp"] = json!(now_nanos().to_string()); }
+    let document = &frozen;
+    let source = nodes(document).iter().find(|node| node_id(node) == source_id && node_kind(node) == "screen")
+        .ok_or("Recording source was not found")?;
+    if source["data"]["enabled"] == false { return Err("Recording source is disabled".into()); }
+    let mut output_ids = Vec::new();
+    for encoder in nodes(document).iter().filter(|node| node_kind(node) == "encode_media_foundation" && node["data"]["enabled"] != false) {
+        if !edges(document).iter().any(|edge| edge["source"] == source_id && edge["sourceHandle"] == "out:frames" && edge["target"] == node_id(encoder) && edge["targetHandle"] == "in:frames") { continue; }
+        for output in nodes(document).iter().filter(|node| node_kind(node) == "write" && node["data"]["enabled"] != false) {
+            if edges(document).iter().any(|edge| edge["source"] == node_id(encoder) && edge["sourceHandle"] == "out:video" && edge["target"] == node_id(output) && edge["targetHandle"] == "in:video") { output_ids.push(node_id(output).to_string()); }
+        }
+    }
+    if output_ids.is_empty() { return Err("Recording source has no enabled output".into()); }
+    let execution = execution_document(document, &output_ids)?;
+    let document = &execution;
+    recording_delay(document, source_id)?;
+    let mut compiled = Vec::new();
+    for output_id in output_ids {
+        let encoder = pipeline_source(document, &output_id, "video", "encode_media_foundation", "video")?;
+        let plan = recording_plan(document, Some(&output_id))?;
+        compiled.push(CompiledRecordingOutput {node_id:output_id,encoder_id:node_id(encoder).into(),plan});
+    }
+    if compiled.is_empty() { return Err("Recording source has no enabled output".into()); }
+    crate::recording::validate_output_paths(compiled.iter().map(|output| &output.plan.path))?;
+    Ok(compiled)
+}
 fn now_nanos() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos()
 }
@@ -1105,6 +1102,350 @@ fn now_nanos() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn target_orders_are_complete_unique_and_reference_only_visible_controls() {
+        let original = document();
+        assert!(validate_document(&original,false).is_empty());
+        for order in [json!(null),json!([]),json!({}),json!({"main":[]}),json!({"main":["start","start"]}),json!({"main":["missing"]}),json!({"main":["start"],"region:missing":[]})] {
+            let mut doc = original.clone();
+            doc["controlOrder"] = order;
+            assert!(validate_document(&doc,false).iter().any(|error| error.to_lowercase().contains("control order") || error.contains("controlOrder")));
+        }
+        let mut hidden = original.clone();
+        hidden["controls"][0]["targets"] = json!([]);
+        assert!(!validate_document(&hidden,false).is_empty());
+        hidden["controlOrder"]["main"] = json!([]);
+        assert!(validate_document(&hidden,false).is_empty());
+    }
+    #[test]
+    fn disabled_values_bypass_only_a_unique_same_type_input() {
+        let mut doc = json!({"graphs":[{"nodes":[
+            {"id":"source","type":"make_integer","data":{"kind":"make_integer","config":{"value":42}}},
+            {"id":"pass","type":"make_integer","data":{"kind":"make_integer","enabled":false,"config":{"value":7}}},
+            {"id":"named","type":"define_value","data":{"kind":"define_value","enabled":false,"config":{"name":"Example"}}}
+        ],"edges":[
+            {"source":"source","sourceHandle":"out:value","target":"pass","targetHandle":"in:param:value"},
+            {"source":"pass","sourceHandle":"out:value","target":"named","targetHandle":"in:value"}
+        ]}]});
+        assert_eq!(evaluate_value(&doc,"named",&mut HashSet::new(),0).unwrap(),json!(42));
+        doc["graphs"][0]["nodes"][0]["data"]["enabled"] = json!(false);
+        assert!(evaluate_value(&doc,"named",&mut HashSet::new(),0).unwrap_err().contains("needs one connection"));
+        doc["graphs"][0]["edges"][0]["source"] = json!("pass");
+        assert!(evaluate_value(&doc,"named",&mut HashSet::new(),0).unwrap_err().contains("cycle"));
+    }
+
+    #[test]
+    fn disabled_region_selector_uses_its_connected_region_without_running_selection() {
+        let mut doc = document();
+        doc["graphs"][0]["nodes"].as_array_mut().unwrap().push(json!({"id":"selector","type":"select_region","data":{"kind":"select_region","enabled":false,"config":{}}}));
+        let links = doc["graphs"][0]["edges"].as_array_mut().unwrap();
+        links.iter_mut().find(|edge| edge["target"] == "screen").unwrap()["source"] = json!("selector");
+        links.push(json!({"source":"region","sourceHandle":"out:region","target":"selector","targetHandle":"in:initialRegion"}));
+        assert!(recording_plan(&doc,Some("write")).is_ok());
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().retain(|edge| edge["target"] != "selector");
+        assert!(recording_plan(&doc,Some("write")).unwrap_err().contains("bypass input"));
+    }
+
+    #[test]
+    fn recording_delay_belongs_to_capture_and_is_bounded() {
+        let mut doc: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        assert_eq!(recording_delay(&doc,"screen").unwrap(),Duration::ZERO);
+        let source = doc["graphs"][0]["nodes"].as_array_mut().unwrap().iter_mut().find(|node|node_kind(node)=="screen").unwrap();
+        source["data"]["config"]["startDelaySeconds"] = json!(0.25);
+        assert_eq!(recording_delay(&doc,"screen").unwrap(),Duration::from_millis(250));
+        let source = doc["graphs"][0]["nodes"].as_array_mut().unwrap().iter_mut().find(|node|node_kind(node)=="screen").unwrap();
+        source["data"]["config"]["startDelaySeconds"] = json!(-1);
+        assert!(recording_delay(&doc,"screen").is_err());
+    }
+    #[test]
+    fn compiler_collects_shared_encoder_outputs_and_rejects_collisions() {
+        let mut doc: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        doc["_validateRegionStructure"] = json!(true);
+        let encoder = nodes(&doc).iter().find(|node| node_kind(node) == "encode_media_foundation").unwrap()["id"].clone();
+        let mut output = nodes(&doc).iter().find(|node| node_kind(node) == "write").unwrap().clone();
+        output["id"] = json!("second-output");
+        doc["graphs"][0]["nodes"].as_array_mut().unwrap().push(output);
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"id":"second-stream","source":encoder,"sourceHandle":"out:video","target":"second-output","targetHandle":"in:video"}));
+        let mut path = nodes(&doc).iter().find(|node| node_kind(node) == "path").unwrap().clone();
+        path["id"] = json!("second-path");
+        path["data"]["config"]["filename"] = json!("copy_{timestamp}.mp4");
+        doc["graphs"][0]["nodes"].as_array_mut().unwrap().push(path);
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"id":"second-path-link","source":"second-path","sourceHandle":"out:path","target":"second-output","targetHandle":"in:path"}));
+        let outputs = compile_recording_outputs(&doc,"screen").unwrap();
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs[0].encoder_id, outputs[1].encoder_id);
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().last_mut().unwrap()["source"] = json!("path");
+        assert!(compile_recording_outputs(&doc,"screen").err().unwrap().contains("paths conflict"));
+    }
+    #[test]
+    fn editor_catalog_contains_only_data_nodes_and_declares_actions() {
+        let catalog = node_catalog();
+        assert!(catalog.iter().all(|node| node.inputs.iter().chain(&node.outputs).all(|port| port.value_type != "flow")));
+        let encode = catalog.iter().find(|node| node.kind == "encode_media_foundation").unwrap();
+        assert_eq!(encode.provider, Some("media_foundation"));
+        assert_eq!(catalog.iter().find(|node| node.kind == "screen").unwrap().actions, vec!["record"]);
+    }
+    #[test]
+    fn controls_validate_stable_node_action_bindings() {
+        let mut doc: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        assert!(validate_document(&doc, false).is_empty());
+        for control in doc["controls"].as_array_mut().unwrap() { control.as_object_mut().unwrap().remove("eventId"); }
+        assert!(validate_document(&doc, false).is_empty());
+        doc["controls"][0]["binding"]["nodeId"] = json!("missing-node");
+        assert!(validate_document(&doc, false).iter().any(|error| error.contains("invalid node action binding")));
+    }
+    #[test]
+    fn node_actions_enforce_capture_lifecycle() {
+        assert!(node_action_allowed("screen", "start", "ready"));
+        assert!(node_action_allowed("screen", "pause", "recording"));
+        assert!(node_action_allowed("screen", "resume", "paused"));
+        assert!(node_action_allowed("screen", "stop", "starting"));
+        assert!(!node_action_allowed("screen", "start", "recording"));
+        assert!(!node_action_allowed("write", "start", "ready"));
+        assert!(!node_action_allowed("screen", "pause", "paused"));
+    }
+
+    #[test]
+    fn document_control_definitions_override_registration_labels() {
+        let mut doc: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        doc["controls"][0]["label"] = json!("Direct document control");
+        assert_eq!(execute_initialization(&doc).unwrap()[0]["label"], "Direct document control");
+        assert!(validate_document(&doc, false).is_empty());
+        doc["controls"][0]["binding"]["nodeId"] = json!("missing");
+        assert!(validate_document(&doc, false).iter().any(|error| error.contains("invalid node action binding")));
+    }
+    #[test]
+    fn named_values_resolve_and_validate_implicit_dependencies() {
+        let mut doc = document();
+        doc["graphs"][0]["nodes"].as_array_mut().unwrap().extend([
+            json!({"id":"named-source","type":"constant","data":{"kind":"constant","config":{"value":42}}}),
+            json!({"id":"named-definition","type":"define_value","data":{"kind":"define_value","config":{"name":"Answer"}}}),
+            json!({"id":"named-reader","type":"read_value","data":{"kind":"read_value","config":{"definitionId":"named-definition"}}}),
+        ]);
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"id":"named-input","source":"named-source","sourceHandle":"out:value","target":"named-definition","targetHandle":"in:value"}));
+        assert_eq!(evaluate_value(&doc, "named-reader", &mut HashSet::new(), 0).unwrap(), json!(42));
+        assert!(validate_document(&doc, false).is_empty());
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().last_mut().unwrap()["source"] = json!("named-reader");
+        assert!(validate_document(&doc, false).iter().any(|error| error.contains("cycle")));
+        assert!(evaluate_value(&doc, "named-reader", &mut HashSet::new(), 0).unwrap_err().contains("cycle"));
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().pop();
+        doc["graphs"][0]["nodes"].as_array_mut().unwrap().push(json!({"id":"duplicate-definition","type":"define_value","data":{"kind":"define_value","config":{"name":"Answer"}}}));
+        assert!(validate_document(&doc, false).iter().any(|error| error.contains("defined more than once")));
+    }
+
+    #[test]
+    fn provider_node_owns_codec_parameter() {
+        let catalog = node_catalog();
+        assert!(catalog.iter().all(|node| node.kind != "encode"));
+        let provider = catalog.iter().find(|node| node.kind == "encode_media_foundation").unwrap();
+        assert_eq!(provider.default_config["codec"], "H.264");
+        assert!(provider.default_config.get("encoder").is_none());
+        assert!(provider.input_parameters.contains(&"codec"));
+        assert_eq!(provider.choices["codec"], json!(["H.264"]));
+        for (field, options) in provider.choices.as_object().unwrap() {
+            assert!(options.as_array().unwrap().contains(&provider.default_config[field]));
+        }
+    }
+
+    #[test]
+    fn action_graph_is_selected_by_id_without_mutating_the_saved_document() {
+        let mut document: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        document["values"]["regionMode"] = json!("Rectangle");
+        let mut other = document["graphs"][0].clone();
+        other["id"] = json!("second-graph");
+        other["nodes"].as_array_mut().unwrap().iter_mut().find(|node| node_kind(node) == "screen").unwrap()["data"]["enabled"] = json!(false);
+        document["graphs"].as_array_mut().unwrap().push(other);
+        let before = document.clone();
+        let scoped = action_document(&document, "second-graph").unwrap();
+        assert_eq!(scoped["graphs"][0]["id"], "second-graph");
+        assert!(compile_recording_outputs(&scoped, "screen").is_err());
+        assert!(compile_recording_outputs(&action_document(&document, "recording").unwrap(), "screen").is_ok());
+        assert!(action_document(&document, "missing").is_err());
+        assert_eq!(document, before);
+        document["graphs"][1]["nodes"][0]["type"] = json!("invalid-visual-type");
+        assert!(validate_document(&document, false).iter().any(|error| error.contains("visual type")));
+        document["graphs"][1]["id"] = json!("recording");
+        assert!(validate_document(&document, false).iter().any(|error| error.contains("Graph ID") && error.contains("duplicated")));
+    }
+
+    #[test]
+    fn region_tool_registry_includes_every_graph() {
+        let runtime = WorkflowRuntime::default();
+        let mut document: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        let mut graph = document["graphs"][0].clone();
+        graph["id"] = json!("other");
+        for node in graph["nodes"].as_array_mut().unwrap() {
+            if node_config(node).get("toolId").is_some() { node["data"]["config"]["toolId"] = json!("other-region"); }
+        }
+        document["graphs"].as_array_mut().unwrap().push(graph);
+        assert!(runtime.activate(document).unwrap().diagnostics.is_empty());
+        let definitions = runtime.tool_definitions();
+        assert_eq!(definitions.len(), 2);
+        assert!(definitions.contains_key("capture-region"));
+        assert!(definitions.contains_key("other-region"));
+    }
+
+    #[test]
+    fn frozen_run_reuses_the_preflight_filename_for_resource_creation() {
+        let mut document: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        document["values"]["regionMode"] = json!("Rectangle");
+        document["_runTimestamp"] = json!("frozen-run");
+        let preflight = compile_recording_outputs(&document, "screen").unwrap();
+        let creation = compile_recording_outputs(&document, "screen").unwrap();
+        assert_eq!(preflight[0].plan.path, creation[0].plan.path);
+        assert!(preflight[0].plan.path.to_string_lossy().contains("frozen-run"));
+    }
+
+    #[test]
+    fn runtime_errors_map_only_failed_nodes_and_the_bound_capture_control() {
+        let runtime = WorkflowRuntime::default();
+        {
+            let mut state = runtime.state.lock().unwrap();
+            state.run_graph = "second".into(); state.run_source = "screen".into();
+            state.output_nodes.insert("failed.mp4".into(), ("writer".into(),"encoder".into()));
+            state.recording = Some(RecordingStats{outputs:vec![crate::recording::OutputStats{path:"failed.mp4".into(),partial_path:"failed.partial.mp4".into(),finished:true,error:Some("Disk failed".into()),encoder_error:None}],..Default::default()});
+            state.controls = vec![json!({"id":"active","binding":{"graphId":"second","nodeId":"screen","action":"record"}}),json!({"id":"other","binding":{"graphId":"first","nodeId":"screen","action":"record"}})];
+        }
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.node_errors.len(), 2);
+        assert!(snapshot.node_errors.iter().any(|error| error.node_id == "writer"));
+        assert!(!snapshot.node_errors.iter().any(|error| error.node_id == "encoder"));
+        assert!(snapshot.controls[0]["error"].as_str().unwrap().contains("Disk failed"));
+        assert!(snapshot.controls[1].get("error").is_none());
+        runtime.state.lock().unwrap().recording.as_mut().unwrap().outputs[0].encoder_error = Some("Encoder failed".into());
+        assert!(runtime.snapshot().node_errors.iter().any(|error| error.node_id == "encoder" && error.message == "Encoder failed"));
+    }
+
+    #[test]
+    fn execution_preflight_ignores_unused_cycles_but_rejects_participating_cycles() {
+        let mut document: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        document["values"]["regionMode"] = json!("Rectangle");
+        for id in ["unused-a","unused-b"] {
+            document["graphs"][0]["nodes"].as_array_mut().unwrap().push(json!({"id":id,"type":"make_integer","data":{"kind":"make_integer","config":{"value":30}}}));
+        }
+        for (source,target) in [("unused-a","unused-b"),("unused-b","unused-a")] {
+            document["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"id":format!("{source}-{target}"),"source":source,"sourceHandle":"out:value","target":target,"targetHandle":"in:param:value"}));
+        }
+        let runtime = WorkflowRuntime::default();
+        let activation = runtime.activate(document.clone()).unwrap();
+        assert!(activation.diagnostics.iter().any(|error| error.contains("cycle")));
+        assert!(!activation.controls.is_empty());
+        assert_eq!(compile_recording_outputs(&document,"screen").unwrap().len(), 1);
+        document["graphs"][0]["edges"].as_array_mut().unwrap().retain(|edge| !(edge["target"] == "screen" && edge["targetHandle"] == "in:param:fps"));
+        document["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"id":"cycle-fps","source":"unused-a","sourceHandle":"out:value","target":"screen","targetHandle":"in:param:fps"}));
+        assert!(compile_recording_outputs(&document,"screen").err().unwrap().contains("cycle"));
+    }
+
+    #[test]
+    fn unused_or_disabled_encoder_branches_do_not_validate_or_create_outputs() {
+        let mut document: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        document["values"]["regionMode"] = json!("Rectangle");
+        let mut encoder = nodes(&document).iter().find(|node| node_kind(node) == "encode_media_foundation").unwrap().clone();
+        encoder["id"] = json!("unused-encoder"); encoder["data"]["config"]["codec"] = json!("H.265");
+        document["graphs"][0]["nodes"].as_array_mut().unwrap().push(encoder);
+        document["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"id":"unused-frames","source":"screen","sourceHandle":"out:frames","target":"unused-encoder","targetHandle":"in:frames"}));
+        assert_eq!(compile_recording_outputs(&document,"screen").unwrap().len(), 1);
+        let mut output = nodes(&document).iter().find(|node| node_kind(node) == "write").unwrap().clone();
+        output["id"] = json!("unused-output");
+        document["graphs"][0]["nodes"].as_array_mut().unwrap().push(output);
+        document["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"id":"unused-video","source":"unused-encoder","sourceHandle":"out:video","target":"unused-output","targetHandle":"in:video"}));
+        assert!(compile_recording_outputs(&document,"screen").err().unwrap().contains("codec"));
+        document["graphs"][0]["nodes"].as_array_mut().unwrap().iter_mut().find(|node| node_id(node)=="unused-encoder").unwrap()["data"]["enabled"] = json!(false);
+        assert_eq!(compile_recording_outputs(&document,"screen").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn execution_preflight_bypasses_disabled_value_and_ignores_its_local_config() {
+        let mut document: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        document["values"]["regionMode"] = json!("Rectangle");
+        document["graphs"][0]["edges"].as_array_mut().unwrap().retain(|edge| !(edge["target"]=="screen" && edge["targetHandle"]=="in:param:fps"));
+        document["graphs"][0]["nodes"].as_array_mut().unwrap().extend([
+            json!({"id":"active-fps","type":"make_integer","data":{"kind":"make_integer","config":{"value":30}}}),
+            json!({"id":"disabled-fps","type":"make_integer","data":{"kind":"make_integer","enabled":false,"config":{"value":"ignored invalid local value"}}})
+        ]);
+        document["graphs"][0]["edges"].as_array_mut().unwrap().extend([
+            json!({"id":"fps-pass","source":"active-fps","sourceHandle":"out:value","target":"disabled-fps","targetHandle":"in:param:value"}),
+            json!({"id":"fps-capture","source":"disabled-fps","sourceHandle":"out:value","target":"screen","targetHandle":"in:param:fps"})
+        ]);
+        assert_eq!(compile_recording_outputs(&document,"screen").unwrap()[0].plan.fps,30);
+    }
+
+    #[test]
+    fn three_media_nodes_run_with_local_region_and_path_and_restore_after_disconnect() {
+        let mut document: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        document["values"]["regionMode"] = json!("Rectangle");
+        for node in document["graphs"][0]["nodes"].as_array_mut().unwrap() {
+            if node_kind(node) == "screen" { node["data"]["config"]["region"] = json!({"display":"Display 1","mode":"Rectangle","x":10,"y":20,"width":640,"height":480}); }
+            if node_kind(node) == "write" { node["data"]["config"]["path"] = json!({"directory":"C:/LocalOutput","filename":"local.mp4"}); }
+        }
+        let output = nodes(&document).iter().find(|node| node_kind(node) == "write").unwrap()["id"].as_str().unwrap().to_string();
+        let connected = recording_plan(&document, Some(&output)).unwrap();
+        assert_eq!(connected.width, 897);
+        assert!(!connected.path.to_string_lossy().contains("local.mp4"));
+        document["graphs"][0]["nodes"].as_array_mut().unwrap().retain(|node| matches!(node_kind(node), "screen" | "encode_media_foundation" | "write"));
+        document["graphs"][0]["edges"].as_array_mut().unwrap().retain(|edge| matches!(edge["targetHandle"].as_str(), Some("in:frames" | "in:video")));
+        let plan = recording_plan(&document, Some(&output)).unwrap();
+        assert_eq!((plan.x,plan.y,plan.width,plan.height), (10,20,640,480));
+        assert_eq!(plan.path, std::path::PathBuf::from("C:/LocalOutput").join("local.mp4"));
+        assert_eq!(compile_recording_outputs(&document,"screen").unwrap().len(), 1);
+        let screen = document["graphs"][0]["nodes"].as_array_mut().unwrap().iter_mut().find(|node| node_kind(node) == "screen").unwrap();
+        screen["data"]["config"]["region"] = json!({"width":642});
+        let config = resolved_node_config(&document, nodes(&document).iter().find(|node| node_kind(node) == "screen").unwrap()).unwrap();
+        assert_eq!(config["region"]["width"], 642);
+        assert_eq!(config["region"]["display"], "Display 1");
+        assert_eq!(config["region"]["mode"], "Full Display");
+    }
+
+    #[test]
+    fn provider_choices_reject_unsupported_values_after_input_resolution() {
+        let original: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        for (parameter, invalid) in [("codec", "H.265"), ("encodingMode", "FFmpeg"), ("resolution", "Unknown")] {
+            let mut document = original.clone();
+            document["values"]["regionMode"] = json!("Rectangle");
+            document["values"][parameter] = json!(invalid);
+            if parameter == "codec" {
+                document["graphs"][0]["nodes"].as_array_mut().unwrap().iter_mut()
+                    .find(|node| node_kind(node) == "encode_media_foundation").unwrap()["data"]["config"][parameter] = json!(invalid);
+            }
+            let output = nodes(&document).iter().find(|node| node_kind(node) == "write").unwrap();
+            let error = recording_plan(&document, Some(node_id(output))).unwrap_err();
+            assert!(error.contains(&format!("does not support {parameter}: {invalid}")), "{error}");
+        }
+    }
+
+    #[test]
+    fn parameter_inputs_work_without_exposure_configuration() {
+        let mut doc: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        for node in doc["graphs"][0]["nodes"].as_array_mut().unwrap() {
+            if let Some(config) = node["data"]["config"].as_object_mut() { config.remove("exposedInputs"); }
+        }
+        assert!(validate_document(&doc, false).is_empty());
+        let encoder = nodes(&doc).iter().find(|node| node_kind(node) == "screen").unwrap();
+        assert_eq!(node_port_type(&doc, &node_catalog(), encoder, "in:param:fps", "in"), Some("integer"));
+        assert_eq!(resolved_node_config(&doc, encoder).unwrap()["fps"], 60);
+    }
+
+    #[test]
+    fn disabled_media_stages_never_start() {
+        let original: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
+        let output = nodes(&original).iter().find(|node| node_kind(node) == "write").unwrap()["id"].as_str().unwrap().to_string();
+        for kind in ["screen", "encode_media_foundation", "write"] {
+            let mut doc = original.clone();
+            let stage = doc["graphs"][0]["nodes"].as_array_mut().unwrap().iter_mut().find(|node| node_kind(node) == kind).unwrap();
+            stage["data"]["enabled"] = json!(false);
+            assert!(recording_plan(&doc, Some(&output)).unwrap_err().contains("disabled"));
+        }
+    }
+
+    #[test]
+    fn controls_have_independent_target_orders() {
+        let mut doc = document();
+        let id = execute_initialization(&doc).unwrap()[0]["id"].clone();
+        doc["controlOrder"] = json!({"main":["other",id.clone()],"region:test":[id]});
+        let controls = execute_initialization(&doc).unwrap();
+        assert_eq!(controls[0]["targetOrder"]["main"], 1);
+        assert_eq!(controls[0]["targetOrder"]["region:test"], 0);
+    }
 
     #[test]
     fn region_ui_registry_and_live_values() {
@@ -1115,6 +1456,12 @@ mod tests {
         assert_eq!(ui.iter().find(|c| c["id"] == "start-recording").unwrap()["targets"], json!(["main", "region:capture-region"]));
         assert!(recording_plan(&doc, Some("write")).unwrap_err().contains("Select a region"));
         doc["_selectedRegions"] = json!({"capture-region":{"display":"test-display","mode":"Rectangle","x":23,"y":41,"width":897,"height":360}});
+        let mut legacy = doc.clone();
+        legacy["graphs"][0]["edges"].as_array_mut().unwrap().retain(|edge| edge["targetHandle"] != "in:selected");
+        assert_eq!(recording_plan(&legacy, Some("write")).unwrap().x, 23);
+        let mut linked = doc.clone();
+        linked["graphs"][0]["nodes"].as_array_mut().unwrap().iter_mut().find(|node| node_kind(node)=="get_selected_region").unwrap()["data"]["config"]["toolId"] = json!("different-tool");
+        assert_eq!(recording_plan(&linked, Some("write")).unwrap().x, 23);
         let first = recording_plan(&doc, Some("write")).unwrap();
         assert_eq!((first.x,first.y,first.width),(23,41,897));
         doc["_selectedRegions"]["capture-region"]["x"] = json!(105);
@@ -1128,45 +1475,22 @@ mod tests {
     #[test]
     fn ui_targets_and_display_sources_are_validated() {
         let doc: Value = serde_json::from_str(include_str!("../../blueprints/builtin/screen-recording.nodrec.json")).unwrap();
-        for (id, field, bad) in [("register-start", "control", json!({"targets":["region:missing"]})), ("register-status", "display", json!({"source":"unsupported"})), ("register-time", "display", json!({"id":"start-recording"}))] {
+        for (id, field, bad) in [("register-start", "control", json!({"targets":["region:missing"]})), ("register-status", "display", json!({"source":"unsupported"})), ("register-time", "display", json!({"id":"start-recording"})), ("register-status", "display", json!({"binding":{"graphId":"recording","nodeId":"write","action":"record"}})), ("register-status", "display", json!({"binding":{"graphId":"missing","nodeId":"screen","action":"record"}}))] {
             let mut bad_doc = doc.clone();
-            let node = bad_doc["nodes"].as_array_mut().unwrap().iter_mut().find(|n| n["id"] == id).unwrap();
-            node["data"]["config"][field].as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+            let items = if field == "control" { "controls" } else { "displays" };
+            let item_id = match id { "register-start" => "start-recording", "register-status" => "recording-status", _ => "recording-time" };
+            let item = bad_doc[items].as_array_mut().unwrap().iter_mut().find(|item| item["id"] == item_id).unwrap();
+            item.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
             assert!(!validate_document(&bad_doc, false).is_empty());
         }
-        let mut legacy = document();
-        legacy["nodes"][1]["data"]["config"]["control"].as_object_mut().unwrap().remove("targets");
-        assert_eq!(execute_initialization(&legacy).unwrap()[0]["targets"], json!(["main"]));
     }
 
     fn document() -> Value {
-        let mut nodes = Vec::new();
-        for (id, kind, event_id, config) in [
-            ("initialize", "event", Some("event-initialize"), json!({"eventId":"event-initialize"})),
-            ("register", "register_control", None, json!({"control":{"id":"start","label":"Start","icon":"play","eventId":"event-start"}})),
-            ("start", "event", Some("event-start"), json!({"eventId":"event-start"})),
-            ("pipeline", "start_pipeline", None, json!({"outputNodeId":"write"})),
-            ("screen", "screen", None, json!({})),
-            ("region", "region", None, json!({})),
-            ("encode", "encode", None, json!({})),
-            ("path", "path", None, json!({})),
-            ("write", "write", None, json!({})),
-        ] {
-            let mut data = json!({"kind":kind,"label":id,"config":config});
-            if event_id.is_some() { data["config"]["eventId"] = json!(event_id); }
-            nodes.push(json!({"id":id,"type":kind,"data":data,"position":{"x":0,"y":0}}));
-        }
-        let edges = [
-            ("initialize", "register", "flow", "flow"),
-            ("start", "pipeline", "flow", "flow"),
-            ("screen", "encode", "frames", "frames"),
-            ("region", "screen", "region", "region"),
-            ("encode", "write", "video", "video"),
-            ("path", "write", "path", "path"),
-        ].iter().enumerate().map(|(index, (source, target, from, to))| json!({
-            "id":format!("e{index}"),"source":source,"sourceHandle":format!("out:{from}"),"target":target,"targetHandle":format!("in:{to}")
-        })).collect::<Vec<_>>();
-        json!({"schemaVersion":1,"id":"test","name":"Test","supported":true,"nodes":nodes,"edges":edges})
+        let nodes = [("screen","screen"),("region","region"),("encode_media_foundation","encode_media_foundation"),("path","path"),("write","write")]
+            .into_iter().map(|(id,kind)| json!({"id":id,"type":kind,"data":{"kind":kind,"label":id,"config":{}},"position":{"x":0,"y":0}})).collect::<Vec<_>>();
+        let edges = [("screen","encode_media_foundation","frames","frames"),("region","screen","region","region"),("encode_media_foundation","write","video","video"),("path","write","path","path")]
+            .iter().enumerate().map(|(index,(source,target,from,to))|json!({"id":format!("e{}",index+2),"source":source,"sourceHandle":format!("out:{from}"),"target":target,"targetHandle":format!("in:{to}")})).collect::<Vec<_>>();
+        json!({"schemaVersion":2,"id":"test","name":"Test","supported":true,"controls":[{"id":"start","label":"Record","icon":"play","enabled":true,"targets":["main"],"binding":{"graphId":"recording","nodeId":"screen","action":"record"}}],"displays":[],"controlOrder":{"main":["start"]},"graphs":[{"id":"recording","name":"Recording","nodes":nodes,"edges":edges}]})
     }
 
     #[test]
@@ -1194,7 +1518,7 @@ mod tests {
             ("text", "make_text", json!("Visible text")),
         ];
         for (id, kind, value) in cases.iter().cloned() {
-            doc["nodes"].as_array_mut().unwrap().push(json!({
+            doc["graphs"][0]["nodes"].as_array_mut().unwrap().push(json!({
                 "id":id,"type":kind,"position":{"x":0,"y":0},
                 "data":{"kind":kind,"label":kind,"config":{"value":value}}
             }));
@@ -1203,21 +1527,21 @@ mod tests {
         for (id, _, expected) in &cases {
             assert_eq!(evaluate_value(&doc, id, &mut HashSet::new(), 0).unwrap(), *expected);
         }
-        doc["nodes"][10]["data"]["config"]["value"] = json!(256);
+        doc["graphs"][0]["nodes"].as_array_mut().unwrap().iter_mut().find(|node|node_id(node)=="byte").unwrap()["data"]["config"]["value"] = json!(256);
         assert!(validate_document(&doc, false).iter().any(|error| error.contains("invalid typed value")));
     }
 
     #[test]
     fn exposed_make_value_inputs_keep_their_unreal_type() {
         let mut doc = document();
-        doc["nodes"].as_array_mut().unwrap().extend([
-            json!({"id":"byte-target","type":"make_byte","position":{"x":0,"y":0},"data":{"kind":"make_byte","label":"Byte","config":{"value":0,"exposedInputs":["value"]}}}),
+        doc["graphs"][0]["nodes"].as_array_mut().unwrap().extend([
+            json!({"id":"byte-target","type":"make_byte","position":{"x":0,"y":0},"data":{"kind":"make_byte","label":"Byte","config":{"value":0}}}),
             json!({"id":"integer-source","type":"make_integer","position":{"x":0,"y":0},"data":{"kind":"make_integer","label":"Integer","config":{"value":12}}}),
         ]);
-        doc["edges"].as_array_mut().unwrap().push(json!({"id":"typed-input","source":"integer-source","sourceHandle":"out:value","target":"byte-target","targetHandle":"in:param:value"}));
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"id":"typed-input","source":"integer-source","sourceHandle":"out:value","target":"byte-target","targetHandle":"in:param:value"}));
         assert!(validate_document(&doc, false).iter().any(|error| error.contains("incompatible types")));
 
-        let source = doc["nodes"].as_array_mut().unwrap().iter_mut().find(|node| node["id"] == "integer-source").unwrap();
+        let source = doc["graphs"][0]["nodes"].as_array_mut().unwrap().iter_mut().find(|node| node["id"] == "integer-source").unwrap();
         source["type"] = json!("make_byte");
         source["data"]["kind"] = json!("make_byte");
         assert!(validate_document(&doc, false).is_empty(), "{:?}", validate_document(&doc, false));
@@ -1225,67 +1549,60 @@ mod tests {
     }
 
     #[test]
-    fn exposed_node_parameters_are_overridden_by_typed_inputs() {
+    fn node_parameters_are_overridden_by_typed_inputs_and_keep_local_values() {
         let mut doc = document();
-        doc["nodes"][1]["data"]["config"]["control"]["order"] = json!(0);
-        doc["nodes"][1]["data"]["config"]["exposedInputs"] = json!(["control.order"]);
-        doc["nodes"].as_array_mut().unwrap().push(json!({
-            "id":"make-order","type":"make_integer","position":{"x":0,"y":0},
-            "data":{"kind":"make_integer","label":"Make Integer","config":{"value":7}}
-        }));
-        doc["edges"].as_array_mut().unwrap().push(json!({
-            "id":"order-input","source":"make-order","sourceHandle":"out:value",
-            "target":"register","targetHandle":"in:param:control.order"
-        }));
-
-        assert!(validate_document(&doc, false).is_empty(), "{:?}", validate_document(&doc, false));
-        assert_eq!(execute_initialization(&doc).unwrap()[0]["order"], 7);
-
-        doc["nodes"][9]["data"]["kind"] = json!("make_string");
-        doc["nodes"][9]["type"] = json!("make_string");
-        doc["nodes"][9]["data"]["config"]["value"] = json!("wrong type");
-        assert!(validate_document(&doc, false).iter().any(|error| error.contains("incompatible types")));
+        doc["graphs"][0]["nodes"][0]["data"]["config"]["fps"] = json!(60);
+        doc["graphs"][0]["nodes"].as_array_mut().unwrap().push(json!({"id":"make-fps","type":"make_integer","data":{"kind":"make_integer","config":{"value":30}}}));
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"id":"fps-input","source":"make-fps","sourceHandle":"out:value","target":"screen","targetHandle":"in:param:fps"}));
+        assert!(validate_document(&doc,false).is_empty());
+        assert_eq!(recording_plan(&doc,Some("write")).unwrap().fps,30);
+        let source = doc["graphs"][0]["nodes"].as_array_mut().unwrap().last_mut().unwrap();
+        source["type"] = json!("make_string"); source["data"]["kind"] = json!("make_string"); source["data"]["config"]["value"] = json!("wrong type");
+        assert!(validate_document(&doc,false).iter().any(|error|error.contains("incompatible types")));
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().pop();
+        assert_eq!(recording_plan(&doc,Some("write")).unwrap().fps,60);
     }
 
     #[test]
-    fn registry_graph_is_valid_and_data_streams_are_checked_separately() {
+    fn data_graph_is_valid_and_disconnected_streams_fail_run_preflight() {
         let doc = document();
         assert!(validate_document(&doc, true).is_empty(), "{:?}", validate_document(&doc, true));
         let mut disconnected = doc.clone();
-        disconnected["edges"].as_array_mut().unwrap().retain(|edge| edge["id"] != "e2");
-        assert!(validate_document(&disconnected, true).iter().any(|error| error.contains("screen source")));
+        disconnected["graphs"][0]["edges"].as_array_mut().unwrap().retain(|edge| edge["id"] != "e2");
+        assert!(validate_document(&disconnected, true).iter().any(|error| error.contains("no enabled output")));
         assert!(validate_document(&disconnected, false).is_empty());
     }
 
     #[test]
-    fn recording_plan_rejects_audio_fanout_and_invalid_parameters() {
+    fn recording_plan_supports_fanout_and_rejects_audio_and_invalid_parameters() {
         let mut doc = document();
         let plan = recording_plan(&doc, Some("write")).unwrap();
         assert_eq!((plan.fps,plan.bitrate), (60,20_000_000));
         assert!(!plan.software);
-        doc["nodes"][6]["data"]["config"] = json!({"encodingMode":"Software","fps":30,"resolution":"1920 × 1080","bitrate":"12.5"});
+        doc["graphs"][0]["nodes"][2]["data"]["config"] = json!({"encodingMode":"Software","fps":30,"resolution":"1920 × 1080","bitrate":"12.5"});
+        doc["graphs"][0]["nodes"][0]["data"]["config"]["fps"] = json!(30);
         let plan = recording_plan(&doc, Some("write")).unwrap();
         assert!(plan.software); assert_eq!((plan.output_width,plan.fps,plan.bitrate), (1920,30,12_500_000));
-        doc["nodes"][6]["data"]["config"]["fps"] = json!(0);
+        doc["graphs"][0]["nodes"][0]["data"]["config"]["fps"] = json!(0);
         assert!(recording_plan(&doc, Some("write")).is_err());
-        doc["nodes"][6]["data"]["config"]["fps"] = json!(60);
-        doc["edges"].as_array_mut().unwrap().push(json!({"source":"region","sourceHandle":"out:audio","target":"encode","targetHandle":"in:audio"}));
+        doc["graphs"][0]["nodes"][0]["data"]["config"]["fps"] = json!(60);
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"source":"region","sourceHandle":"out:audio","target":"encode_media_foundation","targetHandle":"in:audio"}));
         assert!(recording_plan(&doc, Some("write")).unwrap_err().contains("Audio"));
-        doc["edges"].as_array_mut().unwrap().pop();
-        doc["edges"].as_array_mut().unwrap().push(json!({"source":"screen","sourceHandle":"out:frames","target":"another-encoder","targetHandle":"in:frames"}));
-        assert!(recording_plan(&doc, Some("write")).unwrap_err().contains("one source"));
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().pop();
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"source":"screen","sourceHandle":"out:frames","target":"another-encoder","targetHandle":"in:frames"}));
+        assert!(recording_plan(&doc, Some("write")).is_ok());
     }
 
     #[test]
-    fn recording_plan_resolves_exposed_parameters_and_preserves_legacy_regions() {
+    fn recording_plan_resolves_parameter_inputs_and_rejects_unsafe_filenames() {
         let mut doc = document();
-        doc["nodes"][5]["data"]["config"] = json!({"display":"Display 1","width":897,"height":360,"x":0,"y":0});
+        doc["graphs"][0]["nodes"][1]["data"]["config"] = json!({"display":"Display 1","mode":"Rectangle","width":897,"height":360,"x":0,"y":0});
         assert!(!recording_plan(&doc, Some("write")).unwrap().full_display);
-        doc["nodes"][6]["data"]["config"] = json!({"fps":60,"exposedInputs":["fps"]});
-        doc["nodes"].as_array_mut().unwrap().push(json!({"id":"custom-fps","type":"make_integer","data":{"kind":"make_integer","config":{"value":30}}}));
-        doc["edges"].as_array_mut().unwrap().push(json!({"source":"custom-fps","sourceHandle":"out:value","target":"encode","targetHandle":"in:param:fps"}));
+        doc["graphs"][0]["nodes"][2]["data"]["config"] = json!({"fps":60});
+        doc["graphs"][0]["nodes"].as_array_mut().unwrap().push(json!({"id":"custom-fps","type":"make_integer","data":{"kind":"make_integer","config":{"value":30}}}));
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"source":"custom-fps","sourceHandle":"out:value","target":"screen","targetHandle":"in:param:fps"}));
         assert_eq!(recording_plan(&doc,Some("write")).unwrap().fps,30);
-        doc["nodes"][7]["data"]["config"] = json!({"filename":"../existing.mp4","directory":"C:/Recordings"});
+        doc["graphs"][0]["nodes"][3]["data"]["config"] = json!({"filename":"../existing.mp4","directory":"C:/Recordings"});
         assert!(recording_plan(&doc,Some("write")).is_err());
     }
 
@@ -1293,91 +1610,27 @@ mod tests {
     fn invalid_cycles_are_rejected_before_resolving_media_parameters() {
         let mut doc = document();
         for id in ["a", "b"] {
-            doc["nodes"].as_array_mut().unwrap().push(json!({"id":id,"type":"make_integer","data":{"kind":"make_integer","config":{"value":60,"exposedInputs":["value"]}}}));
+            doc["graphs"][0]["nodes"].as_array_mut().unwrap().push(json!({"id":id,"type":"make_integer","data":{"kind":"make_integer","config":{"value":60}}}));
         }
-        doc["nodes"][6]["data"]["config"] = json!({"fps":60,"exposedInputs":["fps"]});
-        for (source,target,input) in [("a","b","value"),("b","a","value"),("a","encode","fps")] {
-            doc["edges"].as_array_mut().unwrap().push(json!({"id":format!("{source}-{target}"),"source":source,"sourceHandle":"out:value","target":target,"targetHandle":format!("in:param:{input}")}));
+        doc["graphs"][0]["nodes"][2]["data"]["config"] = json!({"fps":60});
+        for (source,target,input) in [("a","b","value"),("b","a","value"),("a","encode_media_foundation","fps")] {
+            doc["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"id":format!("{source}-{target}"),"source":source,"sourceHandle":"out:value","target":target,"targetHandle":format!("in:param:{input}")}));
         }
         assert!(validate_document(&doc, true).iter().any(|error| error.contains("cycle")));
     }
 
     #[test]
-    fn malformed_connections_cycles_and_control_references_are_rejected() {
+    fn removed_execution_nodes_and_missing_action_bindings_are_rejected() {
+        for kind in ["event","register_control","register_menu","register_display","update_control","start_pipeline","pause_pipeline","resume_pipeline","stop_pipeline","delay","log","branch"] {
+            let mut doc = document();
+            doc["graphs"][0]["nodes"].as_array_mut().unwrap().push(json!({"id":"obsolete","type":kind,"data":{"kind":kind,"config":{}}}));
+            assert!(validate_document(&doc,false).iter().any(|error| error.contains("Unknown node type")),"{kind}");
+        }
         let mut doc = document();
-        doc["edges"].as_array_mut().unwrap().push(json!({"id":"bad","source":"start","sourceHandle":"out:nope","target":"pipeline","targetHandle":"in:flow"}));
-        assert!(validate_document(&doc, false).iter().any(|error| error.contains("invalid output")));
-        doc["nodes"][1]["data"]["config"]["control"]["eventId"] = json!("missing");
-        assert!(validate_document(&doc, false).iter().any(|error| error.contains("references missing Event")));
-        doc["nodes"][1]["type"] = json!("log");
-        assert!(validate_document(&doc, false).iter().any(|error| error.contains("visual type")));
-        doc["nodes"][1]["data"]["config"]["control"]["order"] = json!(1.5);
-        assert!(validate_document(&doc, false).iter().any(|error| error.contains("order must be an integer")));
-    }
-
-    #[test]
-    fn initialization_sorts_controls_by_order_and_keeps_registration_order_for_ties() {
-        let mut doc = document();
-        doc["nodes"][1]["data"]["config"]["control"]["order"] = json!(2);
-        doc["nodes"].as_array_mut().unwrap().push(json!({
-            "id":"register-first","type":"register_control","position":{"x":0,"y":0},
-            "data":{"kind":"register_control","label":"Register First","config":{"control":{"id":"first","label":"First","icon":"play","eventId":"event-start","order":0,"enabled":true}}}
-        }));
-        doc["nodes"].as_array_mut().unwrap().push(json!({
-            "id":"register-tie","type":"register_control","position":{"x":0,"y":0},
-            "data":{"kind":"register_control","label":"Register Tie","config":{"control":{"id":"tie","label":"Tie","icon":"play","eventId":"event-start","order":2,"enabled":true}}}
-        }));
-        doc["edges"].as_array_mut().unwrap().push(json!({"id":"register-next","source":"register","sourceHandle":"out:flow","target":"register-first","targetHandle":"in:flow"}));
-        doc["edges"].as_array_mut().unwrap().push(json!({"id":"register-tie-next","source":"register-first","sourceHandle":"out:flow","target":"register-tie","targetHandle":"in:flow"}));
-
-        let controls = execute_initialization(&doc).unwrap();
-        assert_eq!(controls.iter().map(|control| control["id"].as_str().unwrap()).collect::<Vec<_>>(), ["first", "start", "tie"]);
-        assert_eq!(controls.iter().map(|control| control["order"].as_i64().unwrap()).collect::<Vec<_>>(), [0, 2, 2]);
-    }
-
-    #[test]
-    fn menu_registration_nodes_build_hierarchy_from_paths() {
-        let mut doc = document();
-        doc["nodes"].as_array_mut().unwrap().extend([
-            json!({"id":"menu-start","type":"register_menu","position":{"x":0,"y":0},"data":{"kind":"register_menu","label":"Register Start Menu","config":{"controlId":"start","path":"Start","icon":"play","eventId":"event-start"}}}),
-            json!({"id":"menu-delayed","type":"register_menu","position":{"x":0,"y":0},"data":{"kind":"register_menu","label":"Register Delayed Start Menu","config":{"controlId":"start","path":"Start/Start after 3s","icon":"clock-3","eventId":"event-start"}}}),
-        ]);
-        doc["edges"].as_array_mut().unwrap().extend([
-            json!({"id":"register-menu-start","source":"register","sourceHandle":"out:flow","target":"menu-start","targetHandle":"in:flow"}),
-            json!({"id":"register-menu-delayed","source":"menu-start","sourceHandle":"out:flow","target":"menu-delayed","targetHandle":"in:flow"}),
-        ]);
-
-        assert!(validate_document(&doc, false).is_empty(), "{:?}", validate_document(&doc, false));
-        let controls = execute_initialization(&doc).unwrap();
-        assert_eq!(controls[0]["menu"][0]["id"], "Start");
-        assert_eq!(controls[0]["menu"][0]["children"][0]["id"], "Start/Start after 3s");
-
-        doc["nodes"][10]["data"]["config"]["path"] = json!("Missing parent/Child");
-        assert!(validate_document(&doc, false).iter().any(|error| error.contains("missing parent")));
-    }
-
-    #[test]
-    fn branch_uses_connected_values_to_choose_an_execution_path() {
-        let mut doc = document();
-        let nodes = doc["nodes"].as_array_mut().unwrap();
-        nodes.push(json!({"id":"branch","type":"branch","data":{"kind":"branch","label":"Branch","config":{"condition":false}},"position":{"x":0,"y":0}}));
-        nodes.push(json!({"id":"left","type":"constant","data":{"kind":"constant","label":"Left","config":{"value":"screen"}},"position":{"x":0,"y":0}}));
-        nodes.push(json!({"id":"right","type":"constant","data":{"kind":"constant","label":"Right","config":{"value":"screen"}},"position":{"x":0,"y":0}}));
-        nodes.push(json!({"id":"compare","type":"compare","data":{"kind":"compare","label":"Compare","config":{"operator":"equal"}},"position":{"x":0,"y":0}}));
-        doc["edges"].as_array_mut().unwrap().iter_mut().find(|edge| edge["id"] == "e1").unwrap()["target"] = json!("branch");
-        let edges = doc["edges"].as_array_mut().unwrap();
-        edges.extend([
-            json!({"id":"branch-pipeline","source":"branch","sourceHandle":"out:true","target":"pipeline","targetHandle":"in:flow"}),
-            json!({"id":"left-compare","source":"left","sourceHandle":"out:value","target":"compare","targetHandle":"in:left"}),
-            json!({"id":"right-compare","source":"right","sourceHandle":"out:value","target":"compare","targetHandle":"in:right"}),
-            json!({"id":"compare-branch","source":"compare","sourceHandle":"out:condition","target":"branch","targetHandle":"in:condition"}),
-        ]);
-        assert!(validate_document(&doc, true).is_empty(), "{:?}", validate_document(&doc, true));
-        assert_eq!(branch_output(&doc, &doc["nodes"][9]).unwrap(), "out:true");
-        assert!(execution_path(&doc, "event-start").unwrap().iter().any(|node| node_kind(node) == "start_pipeline"));
-        doc["nodes"][11]["data"]["config"]["value"] = json!("audio");
-        assert_eq!(branch_output(&doc, &doc["nodes"][9]).unwrap(), "out:false");
-        assert!(!execution_path(&doc, "event-start").unwrap().iter().any(|node| node_kind(node) == "start_pipeline"));
+        doc["controls"][0].as_object_mut().unwrap().remove("binding");
+        assert!(validate_document(&doc,false).iter().any(|error|error.contains("needs a node action binding")));
+        doc["graphs"][0]["nodes"][0]["type"] = json!("path");
+        assert!(validate_document(&doc,false).iter().any(|error|error.contains("visual type")));
     }
 
     #[test]
@@ -1409,10 +1662,10 @@ mod tests {
             assert!(validate_document(&document, false).is_empty(), "{name}: {:?}", validate_document(&document, false));
             if name == "screen-recording" {
                 assert!(validate_document(&document, true).is_empty());
-                assert_eq!(execute_initialization(&document).unwrap().len(), 6);
+                assert_eq!(execute_initialization(&document).unwrap().len(), 4);
             } else {
                 assert!(validate_document(&document, true).iter().any(|error| error.contains("preview")));
-                assert_eq!(execute_initialization(&document).unwrap().len(), 1);
+                assert_eq!(execute_initialization(&document).unwrap().len(), 0);
             }
         }
     }

@@ -7,7 +7,7 @@ type LayoutNode = Pick<BlueprintNode, 'id' | 'position'> & {
 }
 export type NodeGeometry = { width: number; height: number; handles: Record<string, RoutePoint> }
 type Rect = RoutePoint & { width: number; height: number }
-type Link = { source: string; target: string; sourceHandle: string; targetHandle: string; flow: boolean }
+type Link = { source: string; target: string; sourceHandle: string; targetHandle: string }
 type Group = { root: string; members: string[]; positions: Map<string, RoutePoint>; bounds: Rect }
 
 const mediaTypes = new Set(['video_frames', 'audio_samples', 'encoded_video'])
@@ -41,83 +41,26 @@ function orderedGraph(ids: string[], links: Link[]) {
   return { order: order.reverse(), links: links.filter(link => forward.includes(link)) }
 }
 
-function eventOwners(nodes: LayoutNode[], links: Link[], execution: Set<string>) {
-  const owners = new Map(nodes.map(node => [node.id, new Set<string>()]))
-  const events = new Set(nodes.filter(node => node.data.kind === 'event').map(node => node.id))
-  for (const event of events) {
-    const queue = [event]
-    owners.get(event)!.add(event)
-    for (let i = 0; i < queue.length; i++) {
-      for (const link of links.filter(link => link.flow && link.source === queue[i])) {
-        const target = owners.get(link.target)!
-        if (events.has(link.target) || target.has(event)) continue
-        target.add(event); queue.push(link.target)
-      }
-    }
-  }
-  const dataLinks = links.filter(link => !link.flow)
-  const inherit = (target: Set<string>, source: Set<string>) => {
-    const size = target.size
-    source.forEach(owner => target.add(owner))
-    return size !== target.size
-  }
-  // A value belongs to the Events of its eventual execution consumers, not every sibling consumer.
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const link of dataLinks) {
-      if (!execution.has(link.source)) changed = inherit(owners.get(link.source)!, owners.get(link.target)!) || changed
-    }
-  }
-  // Terminal data/media outputs can have a producer Event without an execution consumer.
-  const producers = new Map(nodes.map(node => [node.id, new Set(execution.has(node.id) ? owners.get(node.id) : [])]))
-  changed = true
-  while (changed) {
-    changed = false
-    for (const link of dataLinks) {
-      if (!execution.has(link.target)) changed = inherit(producers.get(link.target)!, producers.get(link.source)!) || changed
-    }
-  }
-  for (const node of nodes) if (!owners.get(node.id)!.size) inherit(owners.get(node.id)!, producers.get(node.id)!)
-  return owners
-}
-
 export function formatGraph(nodes: LayoutNode[], edges: Edge[], geometry: ReadonlyMap<string, NodeGeometry>, selectedIds: string[], onlySelected: boolean) {
   const nodeMap = new Map(nodes.map(node => [node.id, node]))
   const selected = [...new Set(selectedIds)].filter(id => nodeMap.has(id)).sort(byId)
   const positions = new Map<string, RoutePoint>()
   const resetRouteEdgeIds = new Set<string>()
   if (!selected.length) return { positions, resetRouteEdgeIds }
-  const execution = new Set(nodes.filter(node => [...node.data.inputs, ...node.data.outputs].some(port => port.valueType === 'flow')).map(node => node.id))
-  const main = new Set(nodes.filter(node => execution.has(node.id) || [...node.data.inputs, ...node.data.outputs].some(port => mediaTypes.has(port.valueType))).map(node => node.id))
+  const main = new Set(nodes.filter(node => [...node.data.inputs, ...node.data.outputs].some(port => mediaTypes.has(port.valueType))).map(node => node.id))
   const links: Link[] = edges.flatMap(edge => {
     const source = nodeMap.get(edge.source)?.data.outputs.find(port => `out:${port.id}` === edge.sourceHandle)
     const target = nodeMap.get(edge.target)?.data.inputs.find(port => `in:${port.id}` === edge.targetHandle)
-    return source && target ? [{ source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle!, targetHandle: edge.targetHandle!, flow: source.valueType === 'flow' && target.valueType === 'flow' }] : []
+    return source && target ? [{ source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle!, targetHandle: edge.targetHandle! }] : []
   }).sort((a, b) => {
     const ports = nodeMap.get(a.source)!.data.outputs
     return byId(a.source, b.source) || ports.findIndex(port => `out:${port.id}` === a.sourceHandle) - ports.findIndex(port => `out:${port.id}` === b.sourceHandle) || byId(a.target, b.target) || byId(a.targetHandle, b.targetHandle)
   })
-  const owners = eventOwners(nodes, links, execution)
-  const scope = new Set<string>()
-  for (const id of selected) {
-    if (onlySelected) { scope.add(id); continue }
-    const events = owners.get(id)!
-    if (events.size === 1) {
-      const event = [...events][0]!
-      for (const [other, owned] of owners) if (owned.size === 1 && owned.has(event)) scope.add(other)
-    } else {
-      const allowed = (other: string) => events.size > 1
-        ? !execution.has(other) && owners.get(other)!.size > 1
-        : owners.get(other)!.size === 0
-      const local = links.filter(link => allowed(link.source) && allowed(link.target))
-      connectedNodeIds([id], local).forEach(other => scope.add(other))
-    }
-  }
+  const scope = onlySelected ? new Set(selected) : connectedNodeIds(selected, links)
   if (nodes.some(node => !geometry.has(node.id))) return null
   if (nodes.some(node => scope.has(node.id) && (
-    node.data.inputs.some(port => (port.valueType === 'flow' || mediaTypes.has(port.valueType)) && !geometry.get(node.id)!.handles[`in:${port.id}`]) ||
-    node.data.outputs.some(port => (port.valueType === 'flow' || mediaTypes.has(port.valueType)) && !geometry.get(node.id)!.handles[`out:${port.id}`])
+    node.data.inputs.some(port => mediaTypes.has(port.valueType) && !geometry.get(node.id)!.handles[`in:${port.id}`]) ||
+    node.data.outputs.some(port => mediaTypes.has(port.valueType) && !geometry.get(node.id)!.handles[`out:${port.id}`])
   ))) return null
   if (links.some(link => (scope.has(link.source) || scope.has(link.target)) && (!geometry.get(link.source)?.handles[link.sourceHandle] || !geometry.get(link.target)?.handles[link.targetHandle]))) return null
   if ([...geometry.values()].some(size => !Number.isFinite(size.width) || !Number.isFinite(size.height) || size.width <= 0 || size.height <= 0)) return null
@@ -130,11 +73,10 @@ export function formatGraph(nodes: LayoutNode[], edges: Edge[], geometry: Readon
     const component = [...connectedNodeIds([[...pending][0]!], links.filter(link => scope.has(link.source) && scope.has(link.target)))].sort(byId)
     component.forEach(id => pending.delete(id))
     const localLinks = links.filter(link => component.includes(link.source) && component.includes(link.target))
-    const events = component.filter(id => nodeMap.get(id)!.data.kind === 'event').sort(spatial)
     const seeds = selected.filter(id => component.includes(id))
     const roots = component.filter(id => !localLinks.some(link => link.target === id)).sort(spatial)
-    const anchor = events[0] ?? (seeds.length === 1 ? seeds[0]! : roots[0] ?? [...component].sort(spatial)[0]!)
-    components.push({ ids: component, anchor, fixed: new Set([anchor, ...events]) })
+    const anchor = seeds.length === 1 ? seeds[0]! : roots[0] ?? [...component].sort(spatial)[0]!
+    components.push({ ids: component, anchor, fixed: new Set([anchor]) })
   }
   const allFixed = new Set(components.flatMap(component => [...component.fixed]))
   const obstacles: Rect[] = nodes.filter(node => !scope.has(node.id) || allFixed.has(node.id)).map(node => ({ ...node.position, ...geometry.get(node.id)! }))
@@ -163,13 +105,13 @@ export function formatGraph(nodes: LayoutNode[], edges: Edge[], geometry: Readon
       const members = component.filter(id => groupOf.get(id) === root)
       const params = members.filter(id => id !== root)
       const mainPinYs = nodeMap.get(root)!.data.inputs
-        .filter(port => (port.valueType === 'flow' || mediaTypes.has(port.valueType)) && links.some(link => link.target === root && link.targetHandle === `in:${port.id}`))
+        .filter(port => mediaTypes.has(port.valueType) && links.some(link => link.target === root && link.targetHandle === `in:${port.id}`))
         .map(port => geometry.get(root)!.handles[`in:${port.id}`]!.y)
       const parameterBaseline = mainPinYs.length ? Math.max(...mainPinYs) + 25 : -Infinity
       const local = new Map<string, RoutePoint>([[root, { x: 0, y: 0 }]])
       const single = params[0]
       const helix = params.length === 1 && !links.some(link => link.target === single && !main.has(link.source)) && new Set(links.filter(link => link.source === single).map(link => link.target)).size === 1
-      if (helix) local.set(single!, { x: 0, y: geometry.get(root)!.height + 25 })
+      if (helix) local.set(single!, { x: 0, y: geometry.get(root)!.height + 40 })
       else {
         const parameterGap = Math.max(120, 40 + 12 * (params.length - 1))
         const graph = orderedGraph(members, localLinks.filter(link => members.includes(link.source) && members.includes(link.target)))

@@ -1,8 +1,24 @@
 # 验收场景
 
+2026-11-05 节点验收：70 项前端测试、构建和 lint 通过；Release 图交互与录制控件脚本通过，覆盖引脚边缘起拖、新建连线、重连、禁用与节点内控件的鼠标／键盘排序及保存重开。最终 Computer Use 在隔离实例确认新建连线、不同节点标题色、禁用灰显、节点排序与拖至总控栏；未使用用户蓝图作持久修改。证据：apps/desktop/src-tauri/target/graph-v2-check-1793847865278 和 blueprint-v2-check-1793847865190。
+
+2026-11-04 录屏状态／时长快捷方式：70 项前端、57 项 Rust 单测、lint、前端与 Release 构建通过。Release WebView 鼠标验证节点内两个只读显示、拖入／删除／重加、重复去重、与按钮混排、保存重开；暂停时节点与总控栏状态／时长一致性断言、完整录制与选区生命周期回归通过（blueprint-v2-check-1793788454842）。后端覆盖显示绑定必须指向录屏节点、跨图无效引用以及包含只读控件的目标顺序；删除源节点清理显示与顺序有模型测试。
+
+2026-11-04 拖放补验：此前基于注入 DragEvent 的成功不能证明 Windows 实际可拖动。改为 Pointer Capture 后，当前 debug 窗口通过 computer-use 原生鼠标排序与节点拖入；Release 脚本改为仅发送鼠标输入并完整通过（blueprint-v2-check-1793786416204），默认 Overview／Blueprint 标签、去重、保存重开及录制生命周期正常。69 项前端测试、lint、前端和 Release 构建通过。未重跑安装包或性能测试。
+
+2026-11-04 快捷方式修订：69 项前端测试、lint、前端构建及 Release 原生构建通过。真实 Release WebView 的总控栏拖入／排序／删除、固定标签、Graph 列表、保存重开、跨图／选区录制和错误定位通过（blueprint-v2-check-1793782253357）。图交互回归通过（graph-v2-check-1793782355659）；脚本在端口拖动前先适配全图，避免目标在视口外。Overview 卡片拖动、分组、缩放及无横向溢出回归通过（out/ui-tests）。未重跑完整安装包及性能门禁。
+
+V2 最终验收（2026-10-31）：`npm run verify` 退出码 0，67 项前端、57 项 Rust 单测，以及签名安装包、备份、Overview、图编辑、跨图／三节点实录、错误定位、多路隔离、硬件故障、原生选区和手势回归全部通过。完整日志为 `apps/desktop/src-tauri/target/verify-v2-final.log`，按原计划的证据和环境边界见 [V2 验收清单](blueprint-v2-acceptance.md)。以下按批次保留历史记录，不将早期限制视为最终状态。
+
+2026-10-31 当前工作树的 `npm run verify` 全流程退出码 0：65 项前端、51 项 Rust 单测；签名 NSIS 构建与原生安装备份测试；Overview、图交互、V2 控件／跨图实录、单路录制解码、双写入／双编码发布冲突隔离、五种硬件故障注入、原生选区与 CDP 手势回归全部通过。主要证据：`installer-backup-check-1793440819121`、`blueprint-v2-check-1793440849309`、`recording-check-1793440906701`、`live-recording-faults-1793440921848`、`region-check-1793440937475`（均位于 apps/desktop/src-tauri/target）。未安装到用户现有应用目录。上述通过不消除 [V2 验收清单](blueprint-v2-acceptance.md) 中的本地内联配置、节点诊断和分支校验范围缺口。
+
+V2 原生性能验收（2026-10-31）：已完成同机旧单路、当前单路、共享编码双写入和双编码各三次测量，18 个视频全部解码，所有统计零丢帧。CPU、工作集、初始化／停止耗时与方法边界见 [录制重构性能对比](recording-performance.md)。提供 `npm run test:recording-performance` 重现脚本；该短时低分辨率结果不能代表硬件容量或高负载性能。
+
 已有蓝图存储／运行单测、React 前端测试和 Release WebView 真实无声 H.264 录屏闭环；音频和回放尚未实现。以下场景用于澄清“做到什么程度算可用”，工具、性能阈值和环境在实践中确定。
 
-文档与旧原型清理验证（2026-10-27）：`npm run verify:unit` 通过 55 项模型及 28 项 Rust 测试，lint 有既存的 RegionTool effect 警告；前端构建、无安装包 Release 构建及签名 NSIS 构建通过。隔离内置蓝图的 Release WebView 已启动并显示 Screen recording 和控制栏，截图见 [README 界面图](images/desktop-overview.png)；本轮未重新实录或做完整硬件验收。
+2026-10-31 V2 验收增量：图交互、录制、选区工具和画布手势脚本已改为节点动作／数据图模型。`recording-check-1793438895570/result.json` 记录真实 898×360、88 帧、39 次动态画面变化、停止耗时 9 ms；验证暂停／继续、暂停时停止、已有成品与部分文件保护、越界区域拒绝，以及关闭主窗口后文件可解码。图交互证据为 `graph-v2-check-1793438652716`；选区原生与录制证据为 `region-check-1793438962066`，详见 Desktop 模块。本批 lint 通过，保留既存 RegionTool effect 警告。整个重设计仍未完成性能基线对比及最终全量验收，不能据此认定全部计划已交付。
+
+文档与旧原型清理验证（2026-10-27）：`npm run verify:unit` 通过 55 项模型及 28 项 Rust 测试，lint 有既存的 RegionTool effect 警告；前端构建、无安装包 Release 构建及签名 NSIS 构建通过。隔离内置蓝图的 Release WebView 已启动并显示 Screen recording 和控制栏，当时界面截图不再作为当前产品图片保留；本轮未重新实录或做完整硬件验收。
 
 ## 验收方向
 
@@ -134,3 +150,11 @@ Nodrec 脚本另用 `Input.synthesizePinchGesture`（`gestureSourceType: mouse`�
 当时 Release x64 构建、自检和四个 DX11 界面快照通过，并在 225% DPI 下目视检查布局；没有完成真实拖放、窄窗口或窗口缩放验收。原型源代码已于 2026-10-27 从仓库移除，该记录仅用于保留历史证据，不代表当前桌面应用的验证。
 
 React + Tauri 交互修复（2026-10-12）：lint、TypeScript／Vite 和 Tauri Release 构建通过；Release 窗口验证了窗口按钮、变量暴露以及卡片参数的鼠标拖动、固定状态和列宽。该次没有覆盖全部窗口尺寸或键盘交互。
+
+## 路径控件、Toggle 与代码清理验收（2026-11-12）
+
+- `npm run verify` 完整通过，日志为 `out/ui-cleanup-final-verify.log`。74 项前端单测、59 项常规 Rust 单测通过，硬件故障测试单独运行并通过 1 项。lint 无警告；前端、Release 及签名 NSIS 安装包构建成功，安装器备份回归通过。Vite 保留大于 500 kB 的 bundle 体积提示。
+- Release 回归通过 Overview 分组／上下插入／缩放、图编辑／保存重开、节点与总控栏拖动、跨图录制、本地内联配置、单／多输出、编码与写入故障隔离、选区生命周期／暂停／捕获排除，以及 CDP 模拟滚动／缩放。修复 Overview 自动滚动后的旧目标坐标，并在跨窗口操作后显式恢复主 WebView 焦点再测试 Ctrl+S。
+- 新增检查覆盖 Toggle 外框及点击命中区、节点与 Details 同步、参数目录与本地 directory 的两个按钮、无效目录报错、显示器别名双向比较。快速框选按松开坐标确认，运行期间延后文档初始化并保留暂停／停止操作，停止后的保存处理器同步更新。
+- Computer Use 在隔离文档中检查 Overview、参数节点和 Details，实测鼠标／空格键切换，打开包含空格和中文的目录，以及原生目录选择与取消。界面夹具为 `apps/desktop/src-tauri/target/field-ui-check-1794495767207`。
+- 原生捕获测试使用 `NODREC_REGION_NATIVE_FOCUS=1`，在校准门禁通过 Computer Use 唤醒显示器、聚焦真实校准画面后继续，捕获排除采样与解码通过。夹具为 `apps/desktop/src-tauri/target/region-check-1794497033872`。此次未执行真实安装升级、物理触摸板或多显示器／混合 DPI 测试。

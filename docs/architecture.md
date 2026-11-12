@@ -14,7 +14,7 @@ flowchart LR
     Capture --> Output["Media Foundation<br/>H.264 / MP4"]
 ```
 
-- Desktop 编辑蓝图、展示运行状态，并将事件派发给 Rust；Rust 校验节点和连线，执行事件链并解析媒体管线。
+- Desktop 编辑 V2 数据图和控件绑定、展示运行状态，并派发节点动作；Rust 校验依赖，按录屏根编译媒体分支。旧事件／函数／执行线模型已移除。
 - 录制开始时冻结显示器、区域、视频规格和输出路径；原生录制线程处理图像与编码，逐帧数据不经过 WebView 或 Tauri IPC。
 - 蓝图以单个 `.nodrec.json` 文件保存；应用设置与蓝图分开。格式、保存保护及目录见 [Storage](modules/storage.md)，模块间数据见 [接口文档](contracts.md)。
 - Windows 捕获／编码的实现与设备限制见 [Capture](modules/capture.md) 和 [Media Output](modules/media-output.md)。当前不支持音频、窗口捕获、操作录制／回放或 MCP。

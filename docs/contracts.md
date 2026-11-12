@@ -1,42 +1,42 @@
-# 跨模块接口议题
+# 跨模块接口
 
-设置与更新（Windows）：主窗口调用 `get_settings`／`save_settings`、`check_update`、`install_update`、`open_project`。检查返回当前／可用版本、说明、出口地区和成功线路；下载通过 `update-progress` 发送 downloaded／total 字节及线路。Rust 保存最近检查的更新对象，前端不能提交任意下载地址；更改设置会清除旧检查。安装前 Desktop 必须保存全部修改，Rust 拒绝录制中的安装，并串行化设置／检查／安装操作。详见 [发布与更新](releases.md)。
+## 蓝图与节点动作
 
-已实现的蓝图存储及 Rust 运行接口见下表；Windows 首版媒体接口见下；音频、回放和多路产物接口仍待确定。
+- 蓝图仅接受 `schemaVersion: 2`，保存为单个 `.nodrec.json`。`graphs` 保存稳定 ID、名称、节点和数据边；节点有 enabled 状态及可选 actionOrder，用于节点控件排序。事件、函数和执行线模型已移除，旧文件显示不兼容，不转换或执行。原文件保存保护见 [Storage](modules/storage.md)。
+- `controls` 保存 id、label、icon、enabled、targets 和 `{graphId,nodeId,action}` 绑定，`controlOrder` 按显示目标保存控件 ID 数组，不保存控件坐标或尺寸。Overview 参数布局独立保存。节点目录返回字段默认值、端口、可接线参数、动作、Provider 和 choices。
+- `displays` 的 status／elapsed 由 Screen Capture 提供，保存对应 `{graphId,nodeId,action:"record"}` 绑定。它们与按钮一起进入 `controlOrder`，按目标混合排序。删除快捷方式不影响节点显示；删除源录屏节点清理其按钮和只读快捷方式。已有 V2 未绑定的显示项在读取时绑定文档首个录屏节点，补齐目标顺序；未保存前不改写原文件。后端校验显式绑定必须指向录屏节点。
+- 总控栏是节点动作快捷方式：拖入已有绑定时复用控件 ID，主窗口删除只移除 main 目标；无剩余目标才删除控件定义。节点删除会清理失效绑定及顺序，选区节点删除会清理其工具条显示目标。标签为编辑瞬态，Overview 与 Blueprint 固定不可关闭。
+- 主窗口调用 `activate_blueprint`、`dispatch_node_action`、`runtime_snapshot`；动作包含录屏 start/pause/resume/stop 和选区 select。激活、添加节点或编辑参数不会启动录制。一次只运行一个录屏会话，开始后冻结本次参数，运行期间拒绝修改活动文档。
+- 编码 Provider 由节点类型确定，当前为 `encode_media_foundation`。codec 为参数，实际支持 H.264；前端选项和后端预检共用目录 choices，不展示 FFmpeg 或 H.265 为可运行选项。
+- 数据节点按需求值。命名值通过 Define Value 单一定义，Read Value 引用定义 ID，读取形成依赖，重复名称、缺失定义或循环被拒绝。参数在图中不可写。
+- 边的可选 `data.routePoints: {x,y}[]` 仅供图表布线；执行仍使用 source/target 和 handle。节点的 measured/selected 等编辑瞬态不写入文件。
 
-| 协作边界 | 需要表达的内容 |
-| --- | --- |
-| Workflow ↔ Runtime | Rust 节点目录提供类型与端口；蓝图事件及执行／数据／媒体流连接传入运行器。值节点按需求值；函数与子图未实现 |
-| Capture／Audio ↔ Media Output | 帧／音频格式、时间、缓冲所有权、输出规格及结束行为 |
-| Input ↔ Replay | 键鼠事件顺序、时间、绝对／相对位置、UI 树和定位材料 |
-| Runtime ↔ Storage | Tauri 命令列举、保存、删除与恢复 `.nodrec.json`；revision 用于防止磁盘外部修改覆盖。运行产物关系未实现 |
-| Replay／Storage ↔ Verification | 帧时间轴、环境信息、配对条件、逐帧与汇总统计 |
-| Desktop／MCP ↔ 应用能力 | Desktop 调用 Tauri 蓝图索引、保存、激活、事件派发和运行快照；MCP 尚未接入 |
-| 核心 ↔ Platform | 目标／设备、能力可用性、平台资源与权限限制 |
+## Windows 无声录制
 
-优先解决容易导致模块误解的问题：桌面像素和 UI 布局单位、视频与输入的时间关联、GPU 缓冲生命周期、帧缺口、运行中编辑的影响、基线保护及部分失败。具体策略属于待确认设计，不从旧草案继承默认值。
+- `list_displays` 返回 `{id,name,width,height,x,y,hdr}[]`。尺寸、区域和显示器内位置使用物理像素，UI 布局使用逻辑像素。HDR 不支持，无法唯一解析显示器时要求重新选择。
+- 当前图通过 region → screen → encode_media_foundation → write 数据链解析显示器、采集、编码和路径配置。录屏节点拥有 fps、cursor 和 startDelaySeconds；编码节点拥有 codec、resolution、bitrate、encodingMode，帧率继承采集。Screen 的 region 对象和 Write 的 path 对象提供本地内联默认值；连接 region/path 数据输入时覆盖并锁定本地配置，断线恢复。局部字段合并保留其他默认值，三个媒体节点即可录制。
+- 从被操作的录屏根收集有有效写入用途的分支。同一编码节点按 ID 分组，只创建一个编码实例；支持一源多编码和一编码多写入。启动预检拒绝输出及 partial 路径冲突，无有效输出时不创建会话。禁用节点只在唯一、同类型输入输出可对应时旁路，不能将原始帧旁路到 MP4。
+- 采集、GPU 转换及硬件编码在 D3D11 设备所属线程调度。每个编码分支拥有独立资源；Writer 消费与 Provider 无关的编码格式和带 PTS/duration/关键帧标记的数据包。帧不经过 WebView/JSON，压缩包字节在写入端间共享。
+- 每个写入端具有独立线程和有界队列，同时限制约两秒包数量和 64 MiB。队列满使该端失败，不阻塞其他端，不静默丢弃压缩包。编码器忙时仅跳过该分支原始帧并统计。写入失败影响自身，编码失败关闭其下游；无消费者组件释放，全部输出失败后停止采集。
+- 会话共用暂停时钟，时间戳单位为 100 ns，暂停时间不计入媒体时长。停止依次关闭采集、排空编码、完成写入并发布成品；不覆盖既有成品或 partial，失败保留已写部分，不自动由硬件回退软件。
+- `runtime_snapshot.recording` 包含 encoder/adapter、width/height/fps、durationMs、encodedFrames/droppedFrames/repeatedFrames、outputPath/partialPath、stopMs、error/finished，以及逐文件 outputs。encodedFrames 在多编码时为各编码器产出之和，不能当成一个输出的帧率。成功必须等文件发布；整体部分失败时，健康端仍可发布，逐文件结果是判断产物成功的依据。
+- 快照 nodeErrors 返回 `{graphId,nodeId,message}[]`，根据本次编译的稳定输出路径映射定位写入及编码节点，录屏根承载会话错误；控件的临时 error 随同快照发往主窗口和浮动工具条，不写入蓝图。outputs.encoderError 区分编码分支故障，避免把普通单端写入失败标为编码器故障。停止即使失败也先保留最终统计，再报告错误。
+- 真实单／多路、故障与性能证据见 [Media Output](modules/media-output.md) 和 [性能报告](recording-performance.md)。音频、窗口采集、操作回放、原始帧／序列帧写入尚未接入。
 
-### 连线路径布局
+## 选区工具
 
-蓝图事件图与函数图的边允许可选 `data.routePoints: { x: number; y: number }[]`，坐标为图表坐标。该字段仅用于编辑器布线，执行器仍使用原边的 source／target 与 handle；缺失时自动布线，无需迁移旧文件。
+- `select_region` 是纯数据／动作节点：Region 输出、Initial Region 输入，以及 select 动作。没有 Execute、Selected 或 Cancelled 执行端口。`get_selected_region` 的 Selected Region 输入优先读取显式连线；旧 V2 文件未连接时按 toolId 读取当前选区。Selected Region 模式缺少选区时拒绝录制，其他模式使用 fallback。确认选区时主窗口同步 display、x、y、width、height 和 regionMode 参数；取消不提交。
+- `dispatch_node_action` 在主窗口打开选区；浮动工具条调用 `region_tool_node_action`，携带当前 token、controlId 和 action，由 Rust 校验窗口、工具会话、控件目标及绑定。过期 token 被拒绝。区域变更、比例和显示设置在录制期间被锁定。
+- 每次打开重新校验上次区域；有效 Initial Region 或会话区域直接恢复，无效区域清除并等待框选。区域仅保留在当前蓝图运行时，不跨应用重启保存。DPI 或显示器几何变化使其失效。
+- `region_tool_layout` 更新窗口边界；`region_tool_shape` 更新可见控件原生命中区域；`region_tool_ratio` 同步有限非负比例，0 表示解锁。浮动工具条与主窗口共享录制状态和时钟。
 
-### 第一版无声录屏接口
+## 存储、更新与后续接口
 
-- `list_displays` 返回 `{ id, name, width, height, x, y, hdr }[]`：id 是稳定监视器接口标识；尺寸和桌面位置为物理像素。Screen Region 的 x/y 是显示器内坐标。
-- `RecordingPlan` 是开始时冻结的显示器／矩形／鼠标／输出尺寸／FPS／码率／硬软模式／路径配置。保留 `region → screen → encode → write` 类型和端口 ID；一次运行只解析一个屏幕源、编码器和输出，音频连接明确拒绝。
-- GPU 纹理由原生录制线程和 MF 样本分配器持有；只有压缩包字节、PTS、duration、关键帧标记进入有界写入队列，不把帧序列化进 JSON。编码不重排 B 帧；时间戳为单调时钟导出的 100 ns 单位，暂停时间扣除。
-- `runtime_snapshot.recording` 为可空统计对象，包含 encoder/adapter、width/height/fps、durationMs、encodedFrames/droppedFrames/repeatedFrames、outputPath/partialPath、stopMs、error/finished。frameCount 对应已产出的编码帧；最终成功必须等 MP4 完成，`.partial.mp4` 不作为成功产物。
-- 旧 schemaVersion 1 文件保持可读；缺少 region.mode 的旧节点按 Rectangle 解释。旧 Display 1 仅在唯一显示器时解析；无法唯一对应时要求重选。新增参数默认值不自动写盘。Overview Value 扩展支持 number；数字参数按数值类型连接，旧字符串值保持原样。
-### 区域工具与蓝图 UI
+Tauri 蓝图命令提供索引、原子保存、revision 冲突检测、删除与恢复；内置模板替换前备份。设置通过 `get_settings`／`save_settings` 保存，更新使用 `check_update`／`install_update` 和 `update-progress`。Rust 保留最近检查的更新对象，前端不能提交任意下载地址；安装前保存修改，录制期间拒绝更新安装。详见 [发布与更新](releases.md)。
 
-- `select_region`（Select Region）：Execute 输入，Selected／Cancelled 执行输出，Region 数据输出；配置稳定 `toolId`、显示器与可选 initialRegion，另有可连接的 Initial Region 输入。Selected 在框选确认后继续，工具保持打开；恢复已有工具直接返回 Selected，后续移动更新会话区域。
-- `get_selected_region`：通过 toolId 按需求值最新 Region。mode 为 Selected Region 时缺少选区明确报错；Full Display／Rectangle 从 fallback Region 输入读取原参数，并使用所选模式。默认蓝图的 Capture mode 控制该选择，不自动保存选区。
-- `register_control.control.targets`、`register_display.display.targets` 是非空且不重复的目标数组；`main` 表示主窗口，`region:<toolId>` 表示本蓝图工具。旧按钮缺少 targets 时默认 `["main"]`。同一 ID 共用按钮状态、菜单、事件及 Order，Update Control 不修改 ID 或目标。
-- `register_display.display` 包含 id、targets、整数 order、source、format。source 为 status 时 format=text；elapsed 时 format=HH:mm:ss。显示项不派发事件、不需要蓝图定时循环；runtime_snapshot 增加 displays 数组，controls 继续只返回按钮。
-- 选取工具 ID、UI ID、显示数据源和目标引用在激活时校验。按钮与显示项 ID 不可重复；工具引用不能跨蓝图。运行时选择值仅注入求值副本，不进入持久化图。
-- `region_tool_state` 返回 `{tool,runtime}`；工具含 token、blueprintId、toolId、display、物理 rect／work、scale、picking、visible、captureExclusion（用户开关）和 excluded（已应用排除）。action（ready／select／change／reselect／cancel／hide／show／close／exclude-capture／allow-capture）、layout、dispatch 都校验会话；dispatch 还校验按钮启用状态、显示目标及菜单事件。
-- 浮层使用原生窗口区域实现内部穿透；窗口显示不抢焦点，显示后按开关重新应用并回读 WDA_EXCLUDEFROMCAPTURE 或 WDA_NONE。排除失败时隐藏相关窗口；未确认 API 返回值不能当作“不入镜”的实录证明。DPI 或显示器几何变化使选区失效。
+音频、输入／回放、验证基线及 MCP 边界仍属于后续工作，不将计划视为已实现接口。
 
-Select Region 每次打开按当前显示器重新校验上次区域；合法时直接输出 Selected 并显示选区工具，无效时清除旧区域并等待拖动框选。有效 Initial Region 也可直接恢复。区域仍只保留在当前蓝图运行时会话，不写入蓝图文件或跨应用重启保存。
+## 桌面路径操作
 
-区域工具内部布局：`region_tool_layout` 仅在边界变化时移动／缩放窗口；`region_tool_shape` 只接受当前工具条会话，按物理像素更新可见控件的原生命中区域；`region_tool_ratio` 将有限且非负的长宽比同步至工具条与边框，0 表示解锁，录制期间拒绝修改。
+- `open_folder({path})` 仅允许主窗口调用，接受已存在且可访问的绝对目录路径，拒绝空路径、相对路径、文件路径、缺失目录及 NUL 字符。通过 Windows Shell 打开目录，保留空格和 Unicode；错误通过 IPC 返回并显示在字段旁。
+- 目录选择继续使用原生 dialog，取消保留原值。打开目录按钮独立于选择动作，读取连接值时不修改配置。`open_project` 与目录打开共用 Shell 入口。

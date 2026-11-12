@@ -4,6 +4,15 @@ use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex}};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 use crate::recording::DisplayInfo;
 
+pub fn same_tool_definitions(mut previous: HashMap<String, Value>, mut next: HashMap<String, Value>, displays: &[DisplayInfo]) -> bool {
+    if displays.len() == 1 {
+        for config in previous.values_mut().chain(next.values_mut()) {
+            if config["display"] == "Display 1" { config["display"] = json!(displays[0].id); }
+        }
+    }
+    previous == next
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Rect { pub x: i32, pub y: i32, pub width: u32, pub height: u32 }
 
@@ -207,7 +216,7 @@ fn apply_capture_affinity(window: &tauri::WebviewWindow, excluded: bool) -> Resu
     let (send, receive) = std::sync::mpsc::sync_channel(1);
     let shown = window.clone();
     window.run_on_main_thread(move || {
-        let result = set_capture_affinity(&shown, excluded);
+        let result = disable_native_frame_rendering(&shown).and_then(|_| set_capture_affinity(&shown, excluded));
         if result.is_err() { let _ = shown.hide(); }
         let _ = send.send(result);
     }).map_err(|e| e.to_string())?;
@@ -230,6 +239,29 @@ fn set_capture_affinity(window: &tauri::WebviewWindow, excluded: bool) -> Result
 }
 #[cfg(not(windows))]
 fn set_capture_affinity(_: &tauri::WebviewWindow, _: bool) -> Result<(), String> { Err("Windows required".into()) }
+
+#[cfg(windows)]
+fn disable_native_frame_rendering(window: &tauri::WebviewWindow) -> Result<(), String> {
+    use windows::Win32::{Foundation::{HWND, LPARAM, LRESULT, WPARAM}, UI::{Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass}, WindowsAndMessaging::{WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCDESTROY, WM_NCPAINT}}};
+    unsafe extern "system" fn overlay_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, id: usize, _: usize) -> LRESULT {
+        match message {
+            WM_NCCALCSIZE | WM_NCPAINT => LRESULT(0),
+            WM_NCACTIVATE => LRESULT(1),
+            _ => {
+                if message == WM_NCDESTROY { let _ = RemoveWindowSubclass(hwnd, Some(overlay_proc), id); }
+                DefSubclassProc(hwnd, message, wparam, lparam)
+            }
+        }
+    }
+    unsafe {
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        // Native caption painting otherwise fills transparent regions near the top of the overlay.
+        SetWindowSubclass(hwnd, Some(overlay_proc), 1, 0).ok().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+#[cfg(not(windows))]
+fn disable_native_frame_rendering(_: &tauri::WebviewWindow) -> Result<(), String> { Err("Windows required".into()) }
 
 #[cfg(windows)]
 fn set_frame_region(window: &tauri::WebviewWindow, tool: &Tool) -> Result<(), String> {
@@ -265,6 +297,17 @@ fn set_frame_region(_: &tauri::WebviewWindow, _: &Tool) -> Result<(), String> { 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn tool_definitions_compare_display_aliases_in_both_directions() {
+        let display = DisplayInfo { id:"d".into(), name:"d".into(), width:1920,height:1080,x:0,y:0,hdr:false };
+        let alias = HashMap::from([("capture".into(),json!({"display":"Display 1","toolId":"capture"}))]);
+        let explicit = HashMap::from([("capture".into(),json!({"display":"d","toolId":"capture"}))]);
+        assert!(same_tool_definitions(alias.clone(),explicit.clone(),&[display.clone()]));
+        assert!(same_tool_definitions(explicit.clone(),alias.clone(),&[display.clone()]));
+        assert!(!same_tool_definitions(explicit.clone(),alias.clone(),&[]));
+        assert!(!same_tool_definitions(explicit.clone(),alias.clone(),&[display.clone(),display.clone()]));
+        let changed = HashMap::from([("capture".into(),json!({"display":"other","toolId":"capture"}))]);
+        assert!(!same_tool_definitions(explicit,changed,&[display]));
+    }
     #[test] fn restore_only_valid_regions() {
         let display = DisplayInfo { id:"d".into(), name:"d".into(), width:1920,height:1080,x:-1920,y:0,hdr:false };
         let valid = json!({"display":"d","x":100,"y":200,"width":640,"height":480});
@@ -295,6 +338,7 @@ pub fn set_toolbar_shape(window: &tauri::WebviewWindow, areas: Vec<Rect>) -> Res
     let (send, receive) = std::sync::mpsc::sync_channel(1);
     window.run_on_main_thread(move || {
         let result = (|| unsafe {
+            disable_native_frame_rendering(&shown)?;
             let hwnd = shown.hwnd().map_err(|e| e.to_string())?;
             let region = CreateRectRgn(0, 0, 0, 0);
             if region.is_invalid() { return Err("Cannot allocate toolbar shape".to_string()); }

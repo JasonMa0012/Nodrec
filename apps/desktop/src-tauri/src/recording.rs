@@ -39,6 +39,10 @@ pub struct RecordingPlan {
 }
 
 impl RecordingPlan {
+    pub(super) fn same_source(&self, other: &Self) -> bool {
+        self.display == other.display && self.full_display == other.full_display && self.x == other.x && self.y == other.y
+            && self.width == other.width && self.height == other.height && self.fps == other.fps && self.cursor == other.cursor
+    }
     pub fn validate(&mut self, display: &DisplayInfo) -> Result<(), String> {
         if display.hdr { return Err("HDR displays are not supported yet; switch the display to SDR".into()); }
         if self.full_display { self.x = 0; self.y = 0; self.width = display.width; self.height = display.height; }
@@ -62,6 +66,7 @@ impl RecordingPlan {
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingStats {
+    pub outputs: Vec<OutputStats>,
     pub encoder: String,
     pub adapter: String,
     pub width: u32,
@@ -78,6 +83,16 @@ pub struct RecordingStats {
     pub finished: bool,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputStats {
+    pub path: String,
+    pub partial_path: String,
+    pub finished: bool,
+    pub error: Option<String>,
+    pub encoder_error: Option<String>,
+}
+
 #[derive(Default)]
 pub(super) struct Control {
     pub stop: bool,
@@ -92,12 +107,29 @@ pub struct RecordingSession {
 }
 
 impl RecordingSession {
+    pub fn start_graph(plan: RecordingPlan, groups: Vec<(RecordingPlan,Vec<PathBuf>)>) -> Result<Self, String> {
+        let session = Self::launch_graph(plan, groups);
+        session.wait_ready()?;
+        Ok(session)
+    }
+    pub fn start_outputs(plan: RecordingPlan, paths: Vec<PathBuf>) -> Result<Self, String> {
+        let session = Self::launch_outputs(plan, paths);
+        session.wait_ready()?;
+        Ok(session)
+    }
     pub fn start(plan: RecordingPlan) -> Result<Self, String> {
         let session = Self::launch(plan);
         session.wait_ready()?;
         Ok(session)
     }
     pub fn launch(plan: RecordingPlan) -> Self {
+        let paths = vec![plan.path.clone()];
+        Self::launch_outputs(plan, paths)
+    }
+    pub fn launch_outputs(plan: RecordingPlan, paths: Vec<PathBuf>) -> Self {
+        Self::launch_graph(plan.clone(), vec![(plan,paths)])
+    }
+    pub fn launch_graph(plan: RecordingPlan, groups: Vec<(RecordingPlan,Vec<PathBuf>)>) -> Self {
         let control = Arc::new(Mutex::new(Control::default()));
         {
             let mut state = control.lock().unwrap_or_else(|e| e.into_inner());
@@ -108,11 +140,15 @@ impl RecordingSession {
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
             #[cfg(windows)]
-            let result = windows::record(plan, &shared, &ready_tx).map_err(|error| error.to_string());
+            let result = windows::record(plan, groups, &shared, &ready_tx).map_err(|error| error.to_string());
             #[cfg(not(windows))]
             let result: Result<(), String> = { let _ = plan; Err("Screen recording currently requires Windows".into()) };
             let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
-            let result = result.map_err(|error| format!("{error}. Any partial recording remains at {}", state.stats.partial_path));
+            let result = result.map_err(|error| {
+                let mut partials: Vec<_> = state.stats.outputs.iter().filter(|output| output.error.is_some() && Path::new(&output.partial_path).is_file()).map(|output| output.partial_path.clone()).collect();
+                if partials.is_empty() && Path::new(&state.stats.partial_path).is_file() { partials.push(state.stats.partial_path.clone()); }
+                if partials.is_empty() { error } else { format!("{error}. Partial recordings remain at {}",partials.join("; ")) }
+            });
             state.stats.error = result.as_ref().err().cloned();
             state.stats.finished = true;
             drop(state);
@@ -130,9 +166,13 @@ impl RecordingSession {
     pub fn pause(&self, paused: bool) { self.control.lock().unwrap_or_else(|e| e.into_inner()).paused = paused; }
     pub fn request_stop(&self) { self.control.lock().unwrap_or_else(|e| e.into_inner()).stop = true; }
     pub fn stop(mut self) -> Result<RecordingStats, String> {
+        self.finish()?;
+        Ok(self.stats())
+    }
+    pub(crate) fn finish(&mut self) -> Result<(), String> {
         self.request_stop();
         if let Some(worker) = self.worker.take() { worker.join().map_err(|_| "Recording worker panicked".to_string())??; }
-        Ok(self.stats())
+        Ok(())
     }
 }
 
@@ -142,6 +182,20 @@ impl Drop for RecordingSession {
 
 pub(super) fn temp_path(path: &Path) -> PathBuf {
     path.with_file_name(format!("{}.partial.mp4", path.file_stem().unwrap_or_default().to_string_lossy()))
+}
+
+pub(crate) fn validate_output_paths<'a>(paths: impl IntoIterator<Item = &'a PathBuf>) -> Result<(), String> {
+    let mut reserved = std::collections::HashSet::new();
+    for path in paths {
+        for candidate in [path.clone(), temp_path(path)] {
+            let absolute = std::path::absolute(&candidate).map_err(|error| format!("Invalid output path {}: {error}",candidate.display()))?;
+            let key = absolute.to_string_lossy().into_owned();
+            #[cfg(windows)]
+            let key = key.to_lowercase();
+            if !reserved.insert(key) { return Err(format!("Recording output or partial paths conflict: {}",candidate.display())); }
+        }
+    }
+    Ok(())
 }
 
 pub(super) struct Timeline {
@@ -161,6 +215,32 @@ impl Timeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn output_paths_reserve_both_final_and_partial_names() {
+        assert!(validate_output_paths(&vec![PathBuf::from("test.mp4"),PathBuf::from("copy.mp4")]).is_ok());
+        for paths in [vec!["test.mp4","./test.mp4"], vec!["test.mp4","test.partial.mp4"]] {
+            assert!(validate_output_paths(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()).is_err());
+        }
+        #[cfg(windows)]
+        assert!(validate_output_paths(&vec![PathBuf::from("TEST.mp4"),PathBuf::from("folder/../test.mp4")]).is_err());
+    }
+    #[test]
+    fn shared_capture_requires_identical_source_configuration() {
+        let source = plan();
+        let mut branch = source.clone();
+        branch.output_width = 1920;
+        branch.bitrate = 10_000_000;
+        branch.path = "copy.mp4".into();
+        assert!(source.same_source(&branch));
+        branch.fps = 30;
+        assert!(!source.same_source(&branch));
+        branch.fps = source.fps;
+        branch.cursor = false;
+        assert!(!source.same_source(&branch));
+        branch.cursor = source.cursor;
+        branch.x = 1;
+        assert!(!source.same_source(&branch));
+    }
     fn plan() -> RecordingPlan { RecordingPlan { display: "test".into(), full_display: false, x: 0, y: 0, width: 897, height: 360, output_width: 0, output_height: 0, fps: 60, bitrate: 20_000_000, software: false, cursor: true, path: "test.mp4".into() } }
     #[test]
     fn rectangle_and_padding() {
@@ -176,5 +256,23 @@ mod tests {
         assert!(clock.update(false) >= Duration::from_secs(2));
         let before = clock.elapsed; clock.last -= Duration::from_secs(5);
         assert_eq!(clock.update(true), before);
+    }
+    #[test]
+    fn failed_finish_keeps_final_statistics_available() {
+        let control = Arc::new(Mutex::new(Control::default()));
+        let worker_control = control.clone();
+        let worker = thread::spawn(move || {
+            let mut state = worker_control.lock().unwrap();
+            state.stats.finished = true;
+            state.stats.error = Some("Writer failed".into());
+            state.stats.encoded_frames = 42;
+            Err("Writer failed".into())
+        });
+        let (_, ready) = mpsc::channel();
+        let mut session = RecordingSession {control,worker:Some(worker),ready:Arc::new(Mutex::new(ready))};
+        assert!(session.finish().is_err());
+        assert_eq!(session.stats().encoded_frames,42);
+        assert_eq!(session.stats().error.as_deref(),Some("Writer failed"));
+        assert!(session.stats().finished);
     }
 }

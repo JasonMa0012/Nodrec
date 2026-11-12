@@ -18,7 +18,7 @@ try {
 } catch (error) { if (error.message.startsWith('Refusing')) throw error }
 
 const webviewDataDirectory = path.join(desktop, 'src-tauri', 'target', 'release', `webview2-touchpad-${port}`)
-const app = spawn(executable, [], { env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: webviewDataDirectory, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` }, stdio: 'pipe', windowsHide: false })
+const app = spawn(executable, [], { env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: webviewDataDirectory, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` }, stdio: 'pipe', windowsHide: true })
 let appOutput = ''
 app.stdout.setEncoding('utf8').on('data', (chunk) => { appOutput += chunk })
 app.stderr.setEncoding('utf8').on('data', (chunk) => { appOutput += chunk })
