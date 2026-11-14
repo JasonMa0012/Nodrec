@@ -49,7 +49,13 @@
 
 ## 从源码运行
 
-需要 Windows x64、Node.js 24 和 npm、Rust stable MSVC 工具链、Visual Studio C++ Build Tools、Windows SDK 与 WebView2 Runtime。仓库根目录的启动脚本会在缺少 `node_modules` 时运行 `npm ci`，然后编译并启动 Tauri 开发版：
+需要 Windows x64。首次使用先运行仓库根目录的 `_Init.bat`：通过 winget 补齐 Node.js 24 和 npm、Rust stable MSVC 工具链、Visual Studio C++ Build Tools（包含推荐的 Windows SDK）与 WebView2 Runtime，然后运行 `npm ci`、下载锁定的 Cargo 依赖并编译前后端。需要联网和 Microsoft App Installer（winget），系统组件安装可能触发管理员授权；若要求重启，请重启后重新运行脚本。Node.js 固定安装 24.22.1，已有 Node.js 24 时复用；系统已有其他主版本时可能需要先手动处理安装冲突。初始化不需要更新签名私钥。
+
+```bat
+_Init.bat
+```
+
+初始化完成后，使用启动脚本编译并启动 Tauri 开发版（缺少 `node_modules` 时会运行 `npm ci`）：
 
 ```bat
 _Build_And_Run.bat

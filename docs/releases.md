@@ -1,5 +1,12 @@
 # Windows 发布与更新
 
+## v0.1.8 发布准备（2026-11-14）
+
+- 新增根目录 `_Init.bat`，安装开发工具链与锁定的项目依赖，完成前后端开发构建；README 补充首次初始化步骤。
+- 包含 v0.1.7 之后已提交的蓝图列表、多显示器选区与编码候选回退修复。
+- 本次 `_Init.bat` 完整执行成功，lint、78 项前端测试、63 项 Rust 常规测试通过；1 项真实硬件测试默认跳过。日志见 `out/init-check.log`。
+- 正式签名安装包与 GitHub Release 待原始更新签名私钥恢复后生成；未验证真实安装升级及本轮 UI／录制回归。
+
 ## 打包和发布
 
 - Windows x64：双击根目录 `_Release.bat`，输入版本号和描述；或在 `apps/desktop` 执行 `npm run release -- 0.1.2 "Release notes"`。需要项目 Node/Rust 依赖、MSVC 工具链及有本仓库 Release 写权限的 `MOOATOON_ENGINE_TOKEN`（也接受 `GITHUB_TOKEN`）。令牌仅用于本地 GitHub API 发布，不进入安装包。
