@@ -7,6 +7,7 @@
 - 本次 `_Init.bat` 完整执行成功，lint、78 项前端测试、63 项 Rust 常规测试通过；1 项真实硬件测试默认跳过。日志见 `out/init-check.log`。
 - 发布前自动通过隔离的 Release 应用与 CDP 执行所有内置蓝图的现有 F 排列，保存位置及重置的折线路径；验证节点无重叠、重复排列稳定及连线不变，不需要 Computer Use。可独立执行 `npm run blueprints:format`，需先构建 Release 可执行文件。
 - v0.1.8 Release／签名 NSIS 构建、安装器备份回归通过，日志见 `out/release-0.1.8-build.log`。使用应用内置公钥与 minisign-verify 0.3.0 独立验证安装包签名，并确认篡改包被拒绝；自动排列跨进程重复执行后文件保持一致。未验证真实安装升级及本轮 UI／录制回归。
+- [v0.1.8](https://github.com/JasonMa0012/Nodrec/releases/tag/v0.1.8) 已公开发布，含安装器、签名及 `latest.json`。匿名下载最新清单和安装包通过，远端安装包与本地构建逐字节一致，SHA-256 为 `57c3f41451cd97827e04c692c259670c8de90284b3199e6a7f64ce5e6c2aea42`；远端签名与清单一致，并通过应用内置公钥验证及篡改拒绝检查。发布日志见 `out/release-0.1.8-publish.log`。
 
 ## 打包和发布
 
