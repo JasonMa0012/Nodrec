@@ -1,3 +1,4 @@
+mod logging;
 mod storage;
 mod settings;
 mod shell;
@@ -11,22 +12,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager, State};
 
 fn log_startup(stage: &str) {
-    use std::{io::Write, sync::OnceLock, time::{Instant, SystemTime, UNIX_EPOCH}};
-    static START: OnceLock<Instant> = OnceLock::new();
-    let elapsed = START.get_or_init(Instant::now).elapsed().as_millis();
-    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
-    let line = format!("[startup] unix_ms={timestamp} pid={} +{elapsed}ms {}", std::process::id(), stage.replace(['\r', '\n'], " "));
-    eprintln!("{line}");
-    let path = std::env::temp_dir().join(format!("nodrec-startup-{}.log", std::process::id()));
-    match std::fs::OpenOptions::new().create(true).append(true).open(path).and_then(|mut file| writeln!(file, "{line}")) {
-        Ok(()) => {},
-        Err(error) => eprintln!("[startup] Cannot write startup log: {error}"),
-    }
+    logging::write("info", "startup", stage);
 }
 
 #[tauri::command]
 fn startup_log(window: tauri::WebviewWindow, stage: String) {
-    log_startup(&format!("{} {}", window.label(), stage.chars().take(2048).collect::<String>()));
+    log_startup(&format!("{} {}", window.label(), stage));
 }
 
 struct AppState {
@@ -110,6 +101,7 @@ fn check_tool(window: &tauri::WebviewWindow, state: &AppState, token: &str) -> R
 #[tauri::command]
 async fn region_tool_action(app: tauri::AppHandle, window: tauri::WebviewWindow, state: State<'_, AppState>, token: String, action: String, rect: Option<region_tool::Rect>) -> Result<(), String> {
     let tool = check_tool(&window, &state, &token)?;
+    if action == "close" { state.workflow.stop_for_region_close(app.clone())?; }
     if action == "ready" { state.workflow.tools.ready(window.label()); }
     let locked = matches!(state.workflow.snapshot().status.as_str(), "starting" | "recording" | "paused" | "stopping");
     state.workflow.tools.update(&app, &token, &tool.blueprint_id, &action, rect, locked)?;
@@ -170,6 +162,8 @@ fn runtime_snapshot(state: State<'_, AppState>) -> workflow::RuntimeSnapshot {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| { logging::write("error", "panic", info.to_string()); previous_hook(info); }));
     log_startup(&format!("Rust entry executable={:?}", std::env::current_exe()));
     let store = storage::BlueprintStore::beside_executable().expect("cannot locate the Nodrec application directory");
     log_startup("storage located; building Tauri");
@@ -180,7 +174,12 @@ pub fn run() {
         .plugin(tauri::plugin::Builder::<tauri::Wry>::new("startup-diagnostics")
             .js_init_script(include_str!("../startup.js").to_string()).build())
         .on_page_load(|webview, payload| log_startup(&format!("{} page {:?}", webview.label(), payload.event())))
-        .setup(|_| { log_startup("Tauri setup: configured windows created"); Ok(()) })
+        .setup(|app| {
+            logging::attach(app.handle().clone());
+            log_startup("Tauri setup: configured windows created");
+            std::thread::spawn(logging::startup_system_info);
+            Ok(())
+        })
         .manage(AppState { store, workflow: workflow::WorkflowRuntime::default(), store_lock: Mutex::new(()), shutting_down: AtomicBool::new(false) })
         .invoke_handler(tauri::generate_handler![
             settings::get_settings,
@@ -190,6 +189,9 @@ pub fn run() {
             shell::open_project,
             shell::open_folder,
             startup_log,
+            logging::app_log,
+            logging::get_logs,
+            logging::open_logs_folder,
             list_blueprints,
             save_blueprint,
             delete_blueprint,
@@ -212,9 +214,14 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 if window.label() != "main" {
-                    if let Some(tool) = window.state::<AppState>().workflow.tools.snapshot() {
-                        let _ = window.state::<AppState>().workflow.tools.update(window.app_handle(), &tool.token, &tool.blueprint_id, "hide", None, false);
-                    }
+                    let workflow = window.state::<AppState>().workflow.clone();
+                    let app = window.app_handle().clone();
+                    std::thread::spawn(move || {
+                        match workflow.stop_for_region_close(app.clone()) {
+                            Ok(()) => workflow.tools.close(&app),
+                            Err(error) => logging::write("error", "region", format!("Cannot close region tool: {error}")),
+                        }
+                    });
                     return;
                 }
                 window.state::<AppState>().workflow.tools.reset(window.app_handle());

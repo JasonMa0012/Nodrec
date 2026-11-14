@@ -88,6 +88,14 @@ unsafe fn video_media_type(width: u32, height: u32, fps: u32, subtype: &GUID) ->
     Ok(media)
 }
 
+fn encoder_step<T>(name: &str, step: &str, action: impl FnOnce() -> Result<T>) -> Result<T> {
+    crate::logging::write("info", "encoder", format!("{name}: {step}"));
+    action().map_err(|error| {
+        crate::logging::write("error", "encoder", format!("{name}: {step} failed | HRESULT=0x{:08X} | {error}", error.code().0 as u32));
+        Error::new(error.code(), format!("{name}: {step}: {error}"))
+    })
+}
+
 struct EncoderActivation(IMFActivate);
 impl Drop for EncoderActivation {
     fn drop(&mut self) { unsafe { let _ = self.0.ShutdownObject(); } }
@@ -104,54 +112,63 @@ struct Encoder {
 }
 impl Encoder {
     unsafe fn new(plan: &RecordingPlan, luid: u64, manager: &IMFDXGIDeviceManager) -> Result<Self> {
-        let (transform, name, activation) = if plan.software {
-            (CoCreateInstance::<_, IMFTransform>(&CMSH264EncoderMFT, None, CLSCTX_INPROC_SERVER)?, "Microsoft H.264 (Software)".into(), None)
-        } else {
-            let attrs = attributes(1)?;
-            attrs.SetUINT64(&MFT_ENUM_ADAPTER_LUID, luid)?;
-            let mut raw = std::ptr::null_mut();
-            let mut count = 0;
-            MFTEnum2(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER,
-                Some(&MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: MFVideoFormat_NV12 }),
-                Some(&MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: MFVideoFormat_H264 }),
-                &attrs, &mut raw, &mut count)?;
-            let mut selected = None;
-            let mut reasons = Vec::new();
-            if !raw.is_null() {
-                for activation in std::slice::from_raw_parts_mut(raw, count as usize) {
-                    if let Some(activation) = activation.take() {
-                        let attrs: IMFAttributes = activation.cast()?;
-                        let name = attr_string(&attrs, &MFT_FRIENDLY_NAME_Attribute).unwrap_or_else(|_| "Hardware H.264".into());
-                        if selected.is_none() {
-                            match activation.ActivateObject::<IMFTransform>() { Ok(t) => selected = Some((t, name, Some(EncoderActivation(activation)))), Err(e) => reasons.push(e.to_string()) }
-                        }
-                    }
-                }
-                CoTaskMemFree(Some(raw.cast()));
-            }
-            selected.ok_or_else(|| failure(format!("No H.264 hardware encoder on the capture adapter. Select Software explicitly. {}", reasons.join("; "))))?
+        crate::logging::write("info", "encoder", format!("H.264 setup | mode={} | adapter LUID=0x{luid:016X} | {}x{} @ {} fps | bitrate={} bps | input=NV12 | profile=High | GOP={} | B frames=0", if plan.software { "Software" } else { "Hardware Auto" }, plan.output_width, plan.output_height, plan.fps, plan.bitrate, plan.fps * 2));
+        if plan.software {
+            let transform = encoder_step("Microsoft H.264 (Software)", "activate", || CoCreateInstance::<_, IMFTransform>(&CMSH264EncoderMFT, None, CLSCTX_INPROC_SERVER))?;
+            return Self::configure(plan, manager, transform, "Microsoft H.264 (Software)".into(), None);
+        }
+        let attrs = attributes(1)?;
+        attrs.SetUINT64(&MFT_ENUM_ADAPTER_LUID, luid)?;
+        let mut raw = std::ptr::null_mut();
+        let mut count = 0;
+        encoder_step("Hardware H.264", "enumerate capture-adapter encoders", || MFTEnum2(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER,
+            Some(&MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: MFVideoFormat_NV12 }),
+            Some(&MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: MFVideoFormat_H264 }),
+            &attrs, &mut raw, &mut count))?;
+        let activations: Vec<_> = if raw.is_null() { vec![] } else {
+            let activations = std::slice::from_raw_parts_mut(raw, count as usize).iter_mut().filter_map(Option::take).collect();
+            CoTaskMemFree(Some(raw.cast()));
+            activations
         };
-        let attrs = transform.GetAttributes()?;
+        crate::logging::write("info", "encoder", format!("Hardware candidates: {}", activations.len()));
+        let mut reasons = Vec::new();
+        for activation in activations {
+            let activation = EncoderActivation(activation);
+            let attrs: IMFAttributes = activation.0.cast()?;
+            let name = attr_string(&attrs, &MFT_FRIENDLY_NAME_Attribute).unwrap_or_else(|_| "Hardware H.264".into());
+            crate::logging::write("info", "encoder", format!("Candidate: {name} | CLSID={:?}", attrs.GetGUID(&MFT_TRANSFORM_CLSID_Attribute)));
+            let result = encoder_step(&name, "activate", || activation.0.ActivateObject::<IMFTransform>())
+                .and_then(|transform| Self::configure(plan, manager, transform, name.clone(), Some(activation)));
+            match result {
+                Ok(encoder) => { crate::logging::write("info", "encoder", format!("Selected: {name}")); return Ok(encoder); },
+                Err(error) => reasons.push(format!("{name}: {error}")),
+            }
+        }
+        Err(failure(format!("No usable H.264 hardware encoder on the capture adapter. Select Software explicitly. {}", reasons.join("; "))))
+    }
+    unsafe fn configure(plan: &RecordingPlan, manager: &IMFDXGIDeviceManager, transform: IMFTransform, name: String, activation: Option<EncoderActivation>) -> Result<Self> {
+        let attrs = encoder_step(&name, "read transform attributes", || transform.GetAttributes())?;
         let asynchronous = attrs.GetUINT32(&MF_TRANSFORM_ASYNC).unwrap_or(0) != 0;
-        if asynchronous { attrs.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1)?; }
+        crate::logging::write("info", "encoder", format!("{name}: asynchronous={asynchronous} | D3D11 aware={}", attrs.GetUINT32(&MF_SA_D3D11_AWARE).unwrap_or(0)));
+        if asynchronous { encoder_step(&name, "unlock asynchronous transform", || attrs.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1))?; }
         if !plan.software {
             if attrs.GetUINT32(&MF_SA_D3D11_AWARE).unwrap_or(0) == 0 { return Err(failure("Hardware encoder does not accept D3D11 surfaces")); }
-            transform.ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize)?;
+            encoder_step(&name, "D3D11 device manager", || transform.ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize))?;
         }
-        let codec: ICodecAPI = transform.cast()?;
-        codec.SetValue(&CODECAPI_AVEncCommonRateControlMode, &VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32))?;
-        codec.SetValue(&CODECAPI_AVEncCommonMeanBitRate, &VARIANT::from(plan.bitrate))?;
-        codec.SetValue(&CODECAPI_AVEncMPVGOPSize, &VARIANT::from(plan.fps * 2))?;
+        let codec: ICodecAPI = encoder_step(&name, "query ICodecAPI", || transform.cast())?;
+        encoder_step(&name, "CBR rate control", || codec.SetValue(&CODECAPI_AVEncCommonRateControlMode, &VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32)))?;
+        encoder_step(&name, "bitrate", || codec.SetValue(&CODECAPI_AVEncCommonMeanBitRate, &VARIANT::from(plan.bitrate)))?;
+        encoder_step(&name, "GOP size", || codec.SetValue(&CODECAPI_AVEncMPVGOPSize, &VARIANT::from(plan.fps * 2)))?;
         // No frame reordering keeps timestamps and the drain tail small.
-        codec.SetValue(&CODECAPI_AVEncMPVDefaultBPictureCount, &VARIANT::from(0u32))?;
-        let output = media_type(plan, &MFVideoFormat_H264)?;
+        encoder_step(&name, "disable B frames", || codec.SetValue(&CODECAPI_AVEncMPVDefaultBPictureCount, &VARIANT::from(0u32)))?;
+        let output = encoder_step(&name, "create H.264 media type", || media_type(plan, &MFVideoFormat_H264))?;
         output.SetUINT32(&MF_MT_AVG_BITRATE, plan.bitrate)?;
         output.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32)?;
-        transform.SetOutputType(0, &output, 0)?;
-        transform.SetInputType(0, &media_type(plan, &MFVideoFormat_NV12)?, 0)?;
-        transform.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
-        transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
-        let events = if asynchronous { Some(transform.cast()?) } else { None };
+        encoder_step(&name, "H.264 output type", || transform.SetOutputType(0, &output, 0))?;
+        encoder_step(&name, "NV12 input type", || transform.SetInputType(0, &media_type(plan, &MFVideoFormat_NV12)?, 0))?;
+        encoder_step(&name, "begin streaming", || transform.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0))?;
+        encoder_step(&name, "start streaming", || transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0))?;
+        let events = if asynchronous { Some(encoder_step(&name, "query asynchronous events", || transform.cast())?) } else { None };
         Ok(Self { transform, events, input_ready: 0, output_ready: 0, drained: false, name, _activation:activation })
     }
     unsafe fn poll_events(&mut self) -> Result<()> {
@@ -509,6 +526,7 @@ struct PacketOutputs {
 }
 impl PacketOutputs {
     fn fail_all(&mut self, error: &str) {
+        crate::logging::write("error", "encoder", format!("Branch failed | outputs={:?} | {error}", self.paths));
         self.encoder_error = Some(error.to_string());
         for (index, writer) in self.writers.iter_mut().enumerate() {
             writer.sender.take();
@@ -612,7 +630,7 @@ fn writer(output_path: PathBuf, format: EncodedVideoFormat, packets: mpsc::Recei
             Ok(())
         })()
     };
-    if let Err(e) = &result { let _ = ready.try_send(Err(e.to_string())); }
+    if let Err(e) = &result { crate::logging::write("error", "writer", format!("{} | HRESULT=0x{:08X} | {e}", output_path.display(), e.code().0 as u32)); let _ = ready.try_send(Err(e.to_string())); }
     result
 }
 
@@ -645,6 +663,7 @@ pub fn record(mut plan: RecordingPlan, mut groups: Vec<(RecordingPlan,Vec<PathBu
         #[cfg(test)] eprintln!("fault probe: capture session ready");
         let mut branches = Vec::new();
         let desc = display.adapter.GetDesc1()?;
+        crate::logging::write("info", "capture", format!("Adapter={} | display={} | region={},{} {}x{} | cursor={}", text16(&desc.Description), display.info.name, plan.x, plan.y, plan.width, plan.height, plan.cursor));
         let luid = ((desc.AdapterLuid.HighPart as u32 as u64) << 32) | desc.AdapterLuid.LowPart as u64;
         let mut failed_outputs = Vec::new();
         let mut failed_writers = Vec::new();
@@ -685,6 +704,7 @@ pub fn record(mut plan: RecordingPlan, mut groups: Vec<(RecordingPlan,Vec<PathBu
         match initialized {
             Ok(branch) => branches.push(branch),
             Err(error) => {
+                crate::logging::write("error", "recording", format!("Branch initialization failed | outputs={failure_paths:?} | HRESULT=0x{:08X} | {error}", error.code().0 as u32));
                 initialization_errors.push(error.to_string());
                 failed_outputs.extend(failure_paths.iter().map(|path|OutputStats{encoder_error:encoder_initializing.then(||error.to_string()),path:path.to_string_lossy().into(),partial_path:temp_path(path).to_string_lossy().into(),finished:true,error:Some(error.to_string())}));
             }
@@ -775,6 +795,15 @@ pub fn record(mut plan: RecordingPlan, mut groups: Vec<(RecordingPlan,Vec<PathBu
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn encoder_diagnostics_preserve_hresult_and_failed_operation() {
+        let result: Result<()> = encoder_step("test encoder", "test configuration", || Err(Error::new(E_INVALIDARG, "unsupported value")));
+        let error = result.unwrap_err();
+        assert_eq!(error.code(), E_INVALIDARG);
+        assert!(error.to_string().contains("test configuration"));
+        assert!(crate::logging::entries().iter().any(|entry| entry.level == "error" && entry.message.contains("test encoder: test configuration failed | HRESULT=0x80070057")));
+    }
+
     #[test]
     #[ignore = "Requires a connected SDR display and hardware H.264 encoder"]
     fn live_recording_fault_isolation() {

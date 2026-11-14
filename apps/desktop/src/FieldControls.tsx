@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { invoke, isTauri } from '@tauri-apps/api/core'
+import { invoke, isTauri } from './tauri'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Folder, FolderOpen } from 'lucide-react'
 
@@ -28,6 +28,7 @@ export function FolderActions({ label, value, onChange }: {
         await invoke('open_folder', { path: value })
       }
     } catch (error) {
+      if (pick) console.error(`Folder picker ${label} failed`, error)
       setError(String(error))
     } finally {
       setBusy(false)

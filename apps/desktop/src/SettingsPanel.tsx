@@ -1,7 +1,7 @@
 import brandIcon from '../src-tauri/icons/icon.svg'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from './tauri'
 import { getVersion } from '@tauri-apps/api/app'
 import { listen } from '@tauri-apps/api/event'
 import { Download, ExternalLink, Globe, Info, Settings, X } from 'lucide-react'

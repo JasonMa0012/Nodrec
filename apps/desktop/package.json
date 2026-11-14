@@ -1,13 +1,13 @@
 {
   "name": "nodrec-desktop",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test:model": "node --experimental-strip-types --test src/model.test.mjs src/graph-layout.test.mjs src/workflow-controls.test.mjs",
+    "test:model": "node --experimental-strip-types --test src/model.test.mjs src/graph-layout.test.mjs src/workflow-controls.test.mjs src/startup.test.mjs",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --lib",
     "test:update": "node scripts/verify-updates.mjs",
     "test:overview-drag": "node scripts/verify-overview-drag.mjs",

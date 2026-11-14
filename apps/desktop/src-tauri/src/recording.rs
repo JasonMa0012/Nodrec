@@ -149,6 +149,8 @@ impl RecordingSession {
                 if partials.is_empty() && Path::new(&state.stats.partial_path).is_file() { partials.push(state.stats.partial_path.clone()); }
                 if partials.is_empty() { error } else { format!("{error}. Partial recordings remain at {}",partials.join("; ")) }
             });
+            if let Err(error) = &result { crate::logging::write("error", "recording", error); }
+            crate::logging::write("info", "recording", format!("Session finished | encoder={} | {}x{} @ {} fps | duration={} ms | frames={} dropped={} repeated={} | stop={:?} ms | outputs={:?}", state.stats.encoder, state.stats.width, state.stats.height, state.stats.fps, state.stats.duration_ms, state.stats.encoded_frames, state.stats.dropped_frames, state.stats.repeated_frames, state.stats.stop_ms, state.stats.outputs));
             state.stats.error = result.as_ref().err().cloned();
             state.stats.finished = true;
             drop(state);

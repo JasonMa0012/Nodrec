@@ -4,7 +4,7 @@ import { reconcileNodeShortcuts } from './control-order'
 import { outputStatusText, type OutputStatus } from './output-status'
 import { Fragment, createContext, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useId, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { invoke, isTauri } from '@tauri-apps/api/core'
+import { invoke, isTauri } from './tauri'
 import { FolderActions, Toggle } from './FieldControls'
 import { startupLog } from './startup'
 import { listen } from '@tauri-apps/api/event'
@@ -33,7 +33,7 @@ type NameDialog = { kind: 'new' | 'rename'; blueprintId?: string } | null
 type OverviewCardDropPlacement = 'left' | 'right' | 'above' | 'below'
 type OverviewDropInfo = { cardId: string | null; placement: OverviewCardDropPlacement | 'swap' | 'end' } | null
 type BlueprintIndex = { blueprints: { scope: BlueprintScope; id: string; name: string; revision: string; document: BlueprintDocument | null; error: string | null; runnable: boolean }[]; diagnostics: string[] }
-type RuntimeLog = { sequence: number; blueprintId: string; runId: string | null; message: string }
+type RuntimeLog = { sequence: number; blueprintId: string | null; runId: string | null; timestampMs: number; level: string; source: string; message: string }
 type RecordingStats = { outputs: OutputStatus[]; encoder: string; adapter: string; width: number; height: number; fps: number; durationMs: number; encodedFrames: number; droppedFrames: number; repeatedFrames: number; outputPath: string; stopMs: number | null; error: string | null; finished: boolean }
 type DisplayInfo = { id: string; name: string; width: number; height: number; x: number; y: number; hdr: boolean }
 const DisplayContext = createContext<DisplayInfo[]>([])
@@ -116,17 +116,35 @@ function PanelGlyph({ collapsed }: { collapsed: boolean }) {
 function PanelOpenIcon() { return <span className="panel-glyph"><span /></span> }
 function PanelCloseIcon() { return <span className="panel-glyph open"><span /></span> }
 
+function formatLog(log: RuntimeLog) {
+  const context = [log.blueprintId, log.runId].filter(Boolean).join(' / ')
+  return `${new Date(log.timestampMs).toISOString()} [${log.level.toUpperCase()}] [${log.source}]${context ? ` [${context}]` : ''} ${log.message}`
+}
+
 function LogsWindow({ logs, onClose }: { logs: RuntimeLog[]; onClose: () => void }) {
   const listRef = useRef<HTMLDivElement>(null)
+  const [feedback, setFeedback] = useState('')
+  const [failed, setFailed] = useState(false)
+  const copyLogs = async () => {
+    try {
+      const entries = isTauri() ? await invoke<RuntimeLog[]>('get_logs') : logs
+      await navigator.clipboard.writeText(entries.map(formatLog).join('\n'))
+      setFailed(false); setFeedback('Copied all logs')
+    } catch (error) { console.error('Copy logs failed', error); setFailed(true); setFeedback(String(error)) }
+  }
+  const openFolder = async () => {
+    try { await invoke('open_logs_folder'); setFailed(false); setFeedback('Opened log folder') }
+    catch (error) { console.error('Open log folder failed', error); setFailed(true); setFeedback(String(error)) }
+  }
   const latestSequence = logs[logs.length - 1]?.sequence
   useLayoutEffect(() => {
     const list = listRef.current
     if (list) list.scrollTop = list.scrollHeight
   }, [latestSequence])
   return <section className="logs-window" aria-label="Logs window">
-    <header className="logs-window-header"><div><ScrollText size={14} /><strong>Logs</strong><span>{logs.length} {logs.length === 1 ? 'entry' : 'entries'}</span></div><button type="button" aria-label="Close Logs window" onClick={onClose}><X size={14} /></button></header>
+    <header className="logs-window-header"><div><ScrollText size={14} /><strong>Logs</strong><span>{logs.length} {logs.length === 1 ? 'entry' : 'entries'}</span></div><div className="logs-window-actions">{feedback && <span role={failed ? 'alert' : 'status'}>{feedback}</span>}<button type="button" className="icon-button" aria-label="Copy all logs" title="Copy all logs" onClick={() => void copyLogs()}><Copy size={14} /></button><button type="button" className="icon-button" aria-label="Open log folder" title="Open log folder" disabled={!isTauri()} onClick={() => void openFolder()}><Folder size={14} /></button><button type="button" className="icon-button" aria-label="Close Logs window" onClick={onClose}><X size={14} /></button></div></header>
     <div className="logs-window-list" ref={listRef} role="log" aria-live="polite">
-      {logs.length ? logs.map((log) => <div className="logs-window-entry" key={log.sequence}>{log.message}</div>) : <div className="logs-window-empty">No logs yet.</div>}
+      {logs.length ? logs.map((log) => <div className={`logs-window-entry ${log.level}`} key={log.sequence}>{formatLog(log)}</div>) : <div className="logs-window-empty">No logs yet.</div>}
     </div>
   </section>
 }
@@ -150,8 +168,8 @@ function useParameterSizing(value: unknown) {
       context.font = `${fieldStyle.fontWeight} ${fieldStyle.fontSize} ${fieldStyle.fontFamily}`
       const text = field instanceof HTMLSelectElement ? field.selectedOptions[0]?.textContent ?? '' : field instanceof HTMLInputElement ? field.value : field.textContent ?? ''
       const fieldChrome = parseFloat(fieldStyle.paddingLeft) + parseFloat(fieldStyle.paddingRight) + parseFloat(fieldStyle.borderLeftWidth) + parseFloat(fieldStyle.borderRightWidth)
-      // Native select arrows and number steppers occupy space inside the content box.
-      const nativeControlWidth = field instanceof HTMLSelectElement || field instanceof HTMLInputElement && field.type === 'number' ? 20 : 0
+      // Select arrows use CSS padding; native number steppers occupy content space.
+      const nativeControlWidth = field instanceof HTMLInputElement && field.type === 'number' ? 20 : 0
       const fieldWidth = field.classList.contains('checkbox-control') ? 31 : Math.ceil(context.measureText(text).width + fieldChrome + nativeControlWidth)
       const controlExtras = Array.from(control.children).filter(child => child !== field).reduce((total, child) => total + child.getBoundingClientRect().width, 0) + parseFloat(getComputedStyle(control).columnGap) * Math.max(0, control.children.length - 1)
       const extras = row.classList.contains('layout-field-heading') ? 88 : 10
@@ -775,7 +793,7 @@ function CaptureActions({ node, status, durationMs, graphId, actionsReady, locke
       update(current=>({...current,nodes:current.nodes.map(item=>item.id===node.id?{...item,data:{...item.data,actionOrder:next}}:item)}))
     }} className={`node-action-control action-control${insertion?.id===id?insertion.after?' insert-after':' insert-before':''}`}>
       <ActionDragHandle binding={{...control.binding,...(source?{source}: {})}} label={label} disabled={locked}/>
-      {source?<RuntimeDisplay display={{id:`node-${node.id}-${source}`,binding:control.binding,source,format:source==='status'?'text':'HH:mm:ss',order:0,targets:[]}} status={status} durationMs={durationMs}/>:<ControlButton control={control} status={status} durationMs={durationMs} disabled={!supported||!actionsReady||node.data.enabled===false}/>}
+      {source?<RuntimeDisplay display={{id:`node-${node.id}-${source}`,binding:control.binding,source,format:source==='status'?'text':'HH:mm:ss',order:0,targets:[]}} status={status} durationMs={durationMs}/>:<ControlButton control={control} status={status} disabled={!supported||!actionsReady||node.data.enabled===false}/>}
     </div>
   })}</div>
 }
@@ -945,6 +963,23 @@ export default function App() {
   }, [])
   const [logs, setLogs] = useState<RuntimeLog[]>([])
   const [logsOpen, setLogsOpen] = useState(false)
+  useEffect(() => {
+    if (!isTauri()) return
+    let disposed = false
+    let stop: (() => void) | undefined
+    const merge = (entries: RuntimeLog[]) => setLogs(current => {
+      const combined = new Map(current.map(log => [log.sequence, log]))
+      entries.forEach(log => combined.set(log.sequence, log))
+      return [...combined.values()].sort((a, b) => a.sequence - b.sequence)
+    })
+    void listen<RuntimeLog>('app-log', event => { if (!disposed) merge([event.payload]) }).then(async unlisten => {
+      if (disposed) { unlisten(); return }
+      stop = unlisten
+      const entries = await invoke<RuntimeLog[]>('get_logs')
+      if (!disposed) merge(entries)
+    }).catch(error => console.error('Cannot load application logs', error))
+    return () => { disposed = true; stop?.() }
+  }, [])
   const logsPanelRef = usePanelRef()
   const activeBlueprint = blueprints.find((blueprint) => blueprint.id === activeBlueprintId)
   const activeBlueprintIdRef = useRef(activeBlueprintId)
@@ -1036,9 +1071,9 @@ export default function App() {
           if (!live) return
           setActivatedDocumentKey(`${initial.id}:${JSON.stringify(document)}`)
           setControls(activation.controls)
+          setRegisteredDisplays(snapshot.displays ?? [])
           setStatus(snapshot.status)
           setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setNodeErrors(snapshot.nodeErrors ?? [])
-          setLogs(snapshot.logs)
           if (activation.diagnostics.length) setNotice(activation.diagnostics.join(' · '))
           else if (initial.supported && activation.controls.length === 0) setNotice('This blueprint has no node action controls.')
         } catch (error) { startupLog(`initialization failed: ${String(error)}`); if (live) setNotice(`Cannot initialize blueprint controls: ${String(error)}`) }
@@ -1061,7 +1096,7 @@ export default function App() {
       setStatus(snapshot.status)
       setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? [])
       setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setNodeErrors(snapshot.nodeErrors ?? [])
-      setLogs(snapshot.logs)
+
       setBlueprints((current) => current.map((blueprint) => blueprint.id === snapshot.blueprintId ? { ...blueprint, recordState: snapshot.status } : blueprint))
       if (snapshot.error) setNotice(snapshot.error)
     }
@@ -1072,9 +1107,6 @@ export default function App() {
         const {x,y,width,height}=payload.rect
         setBlueprints(current=>current.map(blueprint=>blueprint.id===payload.blueprintId && !['starting','recording','paused','stopping'].includes(blueprint.recordState) ? {...blueprint,values:{...blueprint.values,display:payload.display.id,regionMode:'Selected Region',x,y,width,height}} : blueprint))
       }),
-      listen<RuntimeLog>('workflow-log', (event) => {
-        setLogs((current) => current.some((log) => log.sequence === event.payload.sequence) ? current : [...current, event.payload].slice(-300))
-      }),
     ]).then((listeners) => { if (disposed) listeners.forEach((stop) => stop()); else unlisten = listeners })
     return () => { disposed = true; unlisten.forEach((stop) => stop()) }
   }, [])
@@ -1084,7 +1116,7 @@ export default function App() {
     const poll = () => void invoke<RuntimeSnapshot>('runtime_snapshot').then((snapshot) => {
       if (snapshot.blueprintId !== activeBlueprintIdRef.current) return
       setStatus(snapshot.status); setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? []); setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setNodeErrors(snapshot.nodeErrors ?? [])
-      setLogs(snapshot.logs)
+
     }).catch((error) => setNotice(String(error)))
     poll()
     const timer = window.setInterval(poll, 500)
@@ -1104,7 +1136,7 @@ export default function App() {
         else if (supported && activation.controls.length === 0) setNotice('This blueprint has no node action controls.')
         else setNotice(null)
         return invoke<RuntimeSnapshot>('runtime_snapshot').then((snapshot) => { if (live) {
-          setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setNodeErrors(snapshot.nodeErrors ?? []); setLogs(snapshot.logs); setStatus(snapshot.status); setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? [])
+          setFrameCount(snapshot.frameCount); setRecording(snapshot.recording); setNodeErrors(snapshot.nodeErrors ?? []); setStatus(snapshot.status); setControls(snapshot.controls); setRegisteredDisplays(snapshot.displays ?? [])
           setActivatedDocumentKey(activationKey)
         } })
       }).catch((error) => { if (live) setNotice(`Cannot initialize blueprint controls: ${String(error)}`) })
@@ -1217,6 +1249,9 @@ export default function App() {
     setControls([]); setFrameCount(0); setStatus('ready'); setNotice(null)
     setActiveBlueprintId(id); setPage('workspace'); setMenuBlueprint(null)
   }
+  useEffect(() => { if (notice) console.warn(notice) }, [notice])
+  useEffect(() => { diagnostics.forEach(message => console.warn(message)) }, [diagnostics])
+
   const showLogs = () => { setLogsOpen(true); logsPanelRef.current?.expand() }
   const workspaceTabs:EditorTab[] = activeBlueprint ? [{id:'overview',kind:'overview'},{id:'blueprint',kind:'blueprint'},...activeBlueprint.tabs.filter(tab=>tab.kind==='card')] : []
   const selectedTabId=workspaceTabs.some(tab=>tab.id===activeBlueprint?.activeTab)?activeBlueprint?.activeTab:'overview'

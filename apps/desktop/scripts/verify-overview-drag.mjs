@@ -74,7 +74,7 @@ try {
       const style = getComputedStyle(select)
       const canvas = document.createElement('canvas').getContext('2d')
       canvas.font = style.font
-      const needed = canvas.measureText(option.textContent).width + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) + 20
+      const needed = canvas.measureText(option.textContent).width + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
       return { actual: select.clientWidth, needed }
     } finally { option.textContent = original; row.style.width = originalWidth }
   })()`)

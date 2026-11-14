@@ -716,3 +716,11 @@ test('output folder control keeps its string path through save and reload', () =
   blueprint.nodes[1].data={kind:'define_value',label:'Cycle',config:{name:'Cycle'}}
   assert.equal(connectedInputValue(blueprint,'target','value'),undefined)
  })
+
+
+test('toolbar stays below a lower-half region until it reaches the screen edge', () => {
+  const work = {x:0,y:0,width:1920,height:1040}
+  assert.equal(dockRegion({x:100,y:650,width:800,height:200},work,760,56,8).side,1)
+  assert.equal(dockRegion({x:100,y:776,width:800,height:200},work,760,56,8).side,1)
+  assert.equal(dockRegion({x:100,y:777,width:800,height:200},work,760,56,8).side,0)
+})

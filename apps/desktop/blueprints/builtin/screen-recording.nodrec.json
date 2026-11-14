@@ -381,8 +381,8 @@
           "id": "log-select-region",
           "type": "select_region",
           "position": {
-            "x": -400,
-            "y": 900
+            "x": -944,
+            "y": 120
           },
           "data": {
             "kind": "select_region",
@@ -398,8 +398,8 @@
           "id": "picker-display",
           "type": "read_parameter",
           "position": {
-            "x": -920,
-            "y": 900
+            "x": -1440,
+            "y": 171
           },
           "data": {
             "kind": "read_parameter",
@@ -413,8 +413,8 @@
           "id": "region",
           "type": "region",
           "position": {
-            "x": -920,
-            "y": 120
+            "x": -944,
+            "y": 354
           },
           "data": {
             "kind": "region",
@@ -450,8 +450,8 @@
           "id": "encode_media_foundation",
           "type": "encode_media_foundation",
           "position": {
-            "x": 640,
-            "y": 120
+            "x": 1128,
+            "y": 160
           },
           "data": {
             "kind": "encode_media_foundation",
@@ -468,8 +468,8 @@
           "id": "path",
           "type": "path",
           "position": {
-            "x": 1160,
-            "y": 900
+            "x": 2032,
+            "y": 237.890625
           },
           "data": {
             "kind": "path",
@@ -484,8 +484,8 @@
           "id": "write",
           "type": "write",
           "position": {
-            "x": 1160,
-            "y": 120
+            "x": 2512,
+            "y": 160
           },
           "data": {
             "kind": "write",
@@ -497,8 +497,8 @@
           "id": "selected-region",
           "type": "get_selected_region",
           "position": {
-            "x": -400,
-            "y": 120
+            "x": -412,
+            "y": 160
           },
           "data": {
             "kind": "get_selected_region",
@@ -513,8 +513,8 @@
           "id": "parameter-display",
           "type": "read_parameter",
           "position": {
-            "x": -920,
-            "y": 1020
+            "x": -1440,
+            "y": 340
           },
           "data": {
             "kind": "read_parameter",
@@ -528,8 +528,8 @@
           "id": "parameter-regionMode",
           "type": "read_parameter",
           "position": {
-            "x": -400,
-            "y": 1020
+            "x": -908,
+            "y": 618
           },
           "data": {
             "kind": "read_parameter",
@@ -543,8 +543,8 @@
           "id": "parameter-x",
           "type": "read_parameter",
           "position": {
-            "x": -920,
-            "y": 1280
+            "x": -1440,
+            "y": 481
           },
           "data": {
             "kind": "read_parameter",
@@ -558,8 +558,8 @@
           "id": "parameter-y",
           "type": "read_parameter",
           "position": {
-            "x": -920,
-            "y": 1540
+            "x": -1440,
+            "y": 622
           },
           "data": {
             "kind": "read_parameter",
@@ -573,8 +573,8 @@
           "id": "parameter-width",
           "type": "read_parameter",
           "position": {
-            "x": -920,
-            "y": 1800
+            "x": -1440,
+            "y": 763
           },
           "data": {
             "kind": "read_parameter",
@@ -588,8 +588,8 @@
           "id": "parameter-height",
           "type": "read_parameter",
           "position": {
-            "x": -920,
-            "y": 2060
+            "x": -1440,
+            "y": 904
           },
           "data": {
             "kind": "read_parameter",
@@ -603,8 +603,8 @@
           "id": "parameter-cursor",
           "type": "read_parameter",
           "position": {
-            "x": 120,
-            "y": 1020
+            "x": -376,
+            "y": 379
           },
           "data": {
             "kind": "read_parameter",
@@ -618,8 +618,8 @@
           "id": "parameter-fps",
           "type": "read_parameter",
           "position": {
-            "x": 120,
-            "y": 1280
+            "x": -376,
+            "y": 520
           },
           "data": {
             "kind": "read_parameter",
@@ -633,8 +633,8 @@
           "id": "parameter-resolution",
           "type": "read_parameter",
           "position": {
-            "x": 640,
-            "y": 1020
+            "x": 684,
+            "y": 237.890625
           },
           "data": {
             "kind": "read_parameter",
@@ -648,8 +648,8 @@
           "id": "parameter-bitrate",
           "type": "read_parameter",
           "position": {
-            "x": 640,
-            "y": 1280
+            "x": 684,
+            "y": 378.890625
           },
           "data": {
             "kind": "read_parameter",
@@ -663,8 +663,8 @@
           "id": "parameter-encodingMode",
           "type": "read_parameter",
           "position": {
-            "x": 640,
-            "y": 1540
+            "x": 684,
+            "y": 519.890625
           },
           "data": {
             "kind": "read_parameter",
@@ -678,8 +678,8 @@
           "id": "parameter-output",
           "type": "read_parameter",
           "position": {
-            "x": 1160,
-            "y": 1800
+            "x": 1588,
+            "y": 237.890625
           },
           "data": {
             "kind": "read_parameter",
@@ -693,8 +693,8 @@
           "id": "parameter-filename",
           "type": "read_parameter",
           "position": {
-            "x": 1160,
-            "y": 2060
+            "x": 1588,
+            "y": 378.890625
           },
           "data": {
             "kind": "read_parameter",

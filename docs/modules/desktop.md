@@ -2,6 +2,10 @@
 
 ## 当前实现
 
+Overview／Blueprint 切换时，总控栏通过 180ms CSS 过渡展开／收起拖拽把手、内边距和编辑外框。Overview 的把手宽度为 0，且 inert／disabled。状态和计时项在 Overview 中无边框／背景，进入 Blueprint 时渐显编辑外框，删除按钮同步淡入／淡出。系统减少动态效果偏好沿用全局规则，立即完成切换。
+
+全局单选下拉框复用统一 ChevronDown 图形，箭头距右边缘 10px，文本预留 32px，覆盖 Overview、节点／Details、设置和选区菜单。键盘及弹出选项继续使用原生 select，强制颜色模式恢复系统箭头。主窗口首次加载同时同步运行快照的按钮、状态与计时项，Overview 无需切换 Blueprint 即显示完整总控栏。
+
 本轮修复并复验此前记录的 Overview 向下插入与选区会话重置问题，完整 `npm run verify` 已通过。74 项前端单测、59 项常规 Rust 单测及单独硬件故障测试通过，路径／Toggle 的实际界面复验完成；方法、夹具、捕获校准与设备边界见 [本轮验收记录](../testing.md#路径控件toggle-与代码清理验收2026-11-12)。
 
 选区快速松开使用 pointerup 坐标计算最终矩形，避免读取尚未渲染的移动状态。录制期间沿用已激活会话的控制操作，待处理的文档初始化延后到停止后，保持主窗口和节点 Pause／Stop 可用。单显示器的 Display 1 别名与实际 ID 在配置比较时双向归一化，纯 UI 配置调整保持选区会话；其他显示器、工具或蓝图变更仍重置会话。保存快捷键在 DOM 提交时同步更新处理器，覆盖停止后立即 Ctrl+S。
@@ -75,7 +79,8 @@ React + Tauri 2 桌面应用位于 [apps/desktop](../../apps/desktop)，使用 R
 - 蓝图可新建、复制、重命名、保存、删除和撤销删除。未保存圆点基于整个蓝图内容，因此同一蓝图的标签会一起显示；Ctrl+S 保存当前蓝图。存储位置和升级覆盖规则见 [Storage](storage.md)。
 - Output folder 使用文件夹路径控件，支持直接输入和原生文件夹选择；取消选择保留原值，选择结果沿用蓝图修改、还原和保存流程。选择器仅授权主窗口。
 - Settings 提供启动更新检查、代理、版本和手动更新。应用在安装更新前保存修改；安装器及签名更新细节见 [发布与更新](../releases.md)。
-- 启动诊断写入终端和 `%TEMP%/nodrec-startup-<PID>.log`，记录窗口、前端资源及蓝图初始化时序；开发服务器不监听 `src-tauri/target` 构建目录。
+- 启动、更新、工作流、原生录制以及各 WebView 的控制台／未处理错误共用 `logging.rs` 日志流，日志存储通过回调通知 UI，原生录制／解码探针可独立运行，同时写入终端、Logs 窗口与 `%LOCALAPPDATA%/Nodrec/logs/nodrec-<启动毫秒>-<PID>.log`；缺少 LOCALAPPDATA 时使用临时目录。每条包含时间、级别、来源和可用的蓝图／运行上下文。本次运行全部日志保留，切换蓝图不清除。写入失败在窗口提示并继续保留内存日志。
+- 启动后台记录应用版本、Windows 版本／构建号、CPU、内存、所有 DXGI GPU 的设备 ID／显存／驱动版本、显示器几何／HDR，以及 WebView 版本与缩放。Logs 标题栏提供 Copy all logs 和 Open log folder，复制包括尚未打开面板时产生的日志。开发服务器不监听 `src-tauri/target` 构建目录。
 - 内置 Screen recording 支持真实无声录屏；Operation recording 是不可运行的预览。音频、键鼠录制／回放、差异报告和 MCP 尚未实现。
 
 界面使用英文。通用交互、参数行与字体要求集中记录在 [UI 规范](../ui-guidelines.md)；运行时和媒体接口见 [跨模块接口](../contracts.md)。
@@ -91,6 +96,16 @@ Desktop 负责导航、参数编辑、蓝图画布及运行状态展示；工作
 - 保留未来跨平台的桌面边界；捕获和输入仍需逐平台适配。
 
 ## 验收
+
+2026-11-14 按用户修订完成总控栏动画。8 次常规切换分别采样 16–20 帧，确认把手出现 0–22px 中间宽度、只读项背景出现中间透明度；Overview 最终把手宽度和只读边框均为 0，背景透明。快速反向切换无剩余占位，减少动态效果模拟下直接收起／展开，控件 DOM 保留。完整蓝图运行回归、78 项前端测试、62 项 Rust 常规测试与 Release 构建通过，产物为 apps/desktop/src-tauri/target/blueprint-v2-check-1794645088707/result.json 中 toolbarAnimation。Computer Use 在 225% DPI 检查两种外观与快速往返后的最终状态。
+
+2026-11-14 总控栏切换稳定性回归通过。连续 8 次切换 Overview／Blueprint，requestAnimationFrame 共采样 34 帧，按钮及状态显示的 DOM 身份、坐标、尺寸、背景、文字颜色、边框宽度和内边距保持一致。完整蓝图运行回归仍通过拖拽排序、快捷项删除、保存重开及录制操作，证据为 apps/desktop/src-tauri/target/blueprint-v2-check-1794643558630/result.json 中 toolbarStability。78 项前端、62 项 Rust 常规测试及 Release 构建通过。Computer Use 在 225% DPI 复验两页总控栏位置与外观，并确认 Overview 的隐藏编辑操作未暴露给辅助功能树。
+
+2026-11-14 下拉框与初始化总控栏回归通过。Release 自动化在首次 Overview、尚未打开 Blueprint 时检查 4 个快捷项和状态／计时显示，并校验全部原生 select 的箭头内缩与文本预留。完整蓝图运行回归通过，产物为 apps/desktop/src-tauri/target/blueprint-v2-check-1794643002931。78 项前端测试、62 项 Rust 常规测试与 Release 构建通过。Computer Use 检查首次 Overview 的完整总控栏、箭头与整数步进控件间距、原生下拉菜单展开和 Blueprint 切换，使用 225% DPI。
+
+2026-11-14 统一日志验收通过。78 项前端测试、62 项 Rust 常规测试和 Release 构建通过，硬件故障注入测试默认忽略。扩展区域回归验证启动系统／GPU／驱动信息、前端 console、命令拒绝、磁盘日志、硬件编码初始化步骤和切换蓝图后的日志保留，并追加 305 条日志确认窗口保留早期内容。产物为 apps/desktop/src-tauri/target/region-check-1794641166660，日志为 %LOCALAPPDATA%/Nodrec/logs/nodrec-1794641166801-42800.log。本机 AMD 8060S 的 2880×1800 硬件录制与 MP4 解码通过。
+
+Computer Use 检查了 509 条日志的面板和按钮，真实点击 Copy all logs 后剪贴板包含 43,647 字符，确认包含系统信息、编码步骤及首尾保留标记。Open log folder 打开实际日志目录并显示本次文件。尚未在 RTX 50 系列机器验证编码失败，日志增强不代表该兼容性问题已解决。
 
 已有 Release WebView 回归覆盖 Overview、蓝图、选区工具、节点整理和无声录屏；具体环境、命令及限制见 [验收文档](../testing.md)。2026-10-27 曾完成签名安装器及 0.1.1 → 0.1.2 真实更新验证，范围见 [发布与更新](../releases.md)。
 

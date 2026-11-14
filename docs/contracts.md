@@ -40,3 +40,9 @@ Tauri 蓝图命令提供索引、原子保存、revision 冲突检测、删除�
 
 - `open_folder({path})` 仅允许主窗口调用，接受已存在且可访问的绝对目录路径，拒绝空路径、相对路径、文件路径、缺失目录及 NUL 字符。通过 Windows Shell 打开目录，保留空格和 Unicode；错误通过 IPC 返回并显示在字段旁。
 - 目录选择继续使用原生 dialog，取消保留原值。打开目录按钮独立于选择动作，读取连接值时不修改配置。`open_project` 与目录打开共用 Shell 入口。
+
+## 应用日志
+
+`app-log` 事件与主窗口 `get_logs` 返回同一会话的日志项，字段为 sequence、timestampMs、level、source、blueprintId、runId、message。sequence 全应用递增，前端先订阅再读取快照，按序号合并，避免初始加载与多线程事件交错导致丢失或重复。runtime_snapshot.logs 保留最近 300 条工作流日志供既有调用方使用，序号来自统一日志服务；应用 Logs 窗口通过 app-log／get_logs 读取本次会话全部来源的日志。
+
+各 WebView 通过 app_log 提交 debug／info／warn／error 文本，原生工作流与录制直接写入日志服务；前端统一 invoke 入口记录命令失败并保留原异常。get_logs 和 open_logs_folder 仅供主窗口读取及打开日志目录，区域工具仍不展示录制错误详情。

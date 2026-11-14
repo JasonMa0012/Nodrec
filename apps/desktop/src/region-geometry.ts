@@ -32,10 +32,10 @@ export function transformRegion(r: Rect, h: Handle, dx: number, dy: number, boun
   return { x: Math.round(h.includes('w') ? r.x + r.width - width : !h.includes('e') && ratio ? r.x + (r.width - width) / 2 : r.x), y: Math.round(h.includes('n') ? r.y + r.height - height : !h.includes('s') && ratio ? r.y + (r.height - height) / 2 : r.y), width, height }
 }
 export type Dock = { x: number; y: number; side: number }
-export function dockRegion(r: Rect, work: Rect, width: number, height: number, gap: number, previous?: number): Dock {
+export function dockRegion(r: Rect, work: Rect, width: number, height: number, gap: number, preferred = 1): Dock {
   const positions = [r.y - gap - height, r.y + r.height + gap, r.y + gap, r.y + r.height - gap - height]
   const fits = (i: number, margin: number) => positions[i]! >= work.y + margin && positions[i]! + height <= work.y + work.height - margin
-  const side = previous !== undefined && fits(previous, gap) ? previous : positions.findIndex((_, i) => fits(i, gap * 2))
+  const side = fits(preferred, 0) ? preferred : [1, 0, 3, 2].find(i => fits(i, 0)) ?? -1
   const y = positions[side < 0 ? 2 : side]!
   return { side: side < 0 ? 2 : side, x: Math.max(work.x + gap, Math.min(r.x + (r.width - width) / 2, work.x + work.width - width - gap)), y: Math.max(work.y + gap, Math.min(y, work.y + work.height - height - gap)) }
 }
@@ -48,7 +48,7 @@ export function expandToolbar(dock: Dock, work: Rect, baseHeight: number, reques
   const below = Math.max(0, work.y + work.height - gap - dock.y - baseHeight)
   const above = Math.max(0, dock.y - work.y - gap)
   const extra = Math.max(0, requestedHeight - baseHeight)
-  const up = dock.side === 0 ? above > 0 : dock.side === 1 ? below === 0 : below < extra && above > below
+  const up = dock.side === 0 ? above > 0 : below < extra && above > below
   const extension = Math.min(extra, up ? above : below)
   return { y: dock.y - (up ? extension : 0), height: baseHeight + extension, offset: up ? extension : 0 }
 }

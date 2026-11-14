@@ -73,14 +73,7 @@ pub fn node_catalog() -> Vec<NodeType> {
     ]
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RuntimeLog {
-    pub sequence: u64,
-    pub blueprint_id: String,
-    pub run_id: Option<String>,
-    pub message: String,
-}
+pub use crate::logging::LogEntry as RuntimeLog;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -124,7 +117,6 @@ struct RuntimeState {
     generation: u64,
     busy_generation: Option<u64>,
     frame_count: u64,
-    log_sequence: u64,
     controls: Vec<Value>,
     logs: VecDeque<RuntimeLog>,
     error: Option<String>,
@@ -244,7 +236,7 @@ impl WorkflowRuntime {
             if !node_action_allowed(node_kind(node), &action, state.status) {
                 return Err("Action is not supported by this node".into());
             }
-            if state.busy_generation.is_some() && !(action == "stop" && state.status == "starting") { return Err("Another action is still running".into()); }
+            if state.busy_generation.is_some() && action != "stop" { return Err("Another action is still running".into()); }
             match (action.as_str(), state.status) {
                 ("start", "ready" | "failed") => {
                     let outputs = match compile_recording_outputs(&self.evaluation_document(&document), &id) {
@@ -291,6 +283,16 @@ impl WorkflowRuntime {
             runtime.emit_status(&app);
         });
         Ok(self.snapshot())
+    }
+
+    pub fn stop_for_region_close(&self, app: AppHandle) -> Result<(), String> {
+        let source = {
+            let state = self.state.lock().map_err(|_| "Workflow state is unavailable".to_string())?;
+            matches!(state.status, "starting" | "recording" | "paused")
+                .then(|| (state.run_graph.clone(), state.run_source.clone()))
+        };
+        if let Some((graph, source)) = source { self.dispatch_node(app, graph, source, "stop".into())?; }
+        Ok(())
     }
 
     pub fn stop_for_shutdown(&self) {
@@ -405,13 +407,7 @@ impl WorkflowRuntime {
     }
 
     fn push_log(&self, state: &mut RuntimeState, message: String) -> RuntimeLog {
-        state.log_sequence = state.log_sequence.wrapping_add(1);
-        let log = RuntimeLog {
-            sequence: state.log_sequence,
-            blueprint_id: state.blueprint_id.clone().unwrap_or_default(),
-            run_id: state.run_id.clone(),
-            message,
-        };
+        let log = crate::logging::contextual(if message.starts_with("Workflow failed:") { "error" } else { "info" }, "workflow", state.blueprint_id.clone(), state.run_id.clone(), message);
         state.logs.push_back(log.clone());
         if state.logs.len() > 300 { state.logs.pop_front(); }
         log

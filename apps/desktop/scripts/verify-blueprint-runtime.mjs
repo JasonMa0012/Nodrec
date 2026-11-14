@@ -81,12 +81,68 @@ try {
   await command('Page.reload'); await delay(250)
   await until(async()=>evaluate(`!!document.querySelector('.overview-page')`))
   assert.equal(await evaluate(`document.querySelector('.workspace-tab.active button').textContent.trim()`),'Overview')
+  await until(()=>evaluate(`document.querySelectorAll('.titlebar .control-shortcut').length===4`))
+  assert.equal(await evaluate(`document.querySelectorAll('.titlebar [aria-label="Workflow status"],.titlebar [aria-label="Recording time"]').length`),2,'Overview initializes status and elapsed displays before visiting Blueprint')
+  const dropdownStyles = await evaluate(`[...document.querySelectorAll('select')].map(select=>{const style=getComputedStyle(select);return {appearance:style.appearance,padding:style.paddingRight,position:style.backgroundPosition,image:style.backgroundImage}})`)
+  assert.ok(dropdownStyles.length>=5)
+  for(const style of dropdownStyles){assert.equal(style.appearance,'none');assert.equal(style.padding,'32px');assert.match(style.position,/10px/);assert.match(style.image,/svg/)}
+
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('.workspace-tab > button:first-child')].map(b=>b.textContent.trim())`),['Overview','Blueprint'])
-  assert.equal(await evaluate(`!!document.querySelector('footer,.statusbar,.status-bar,.action-drag-handle')`),false)
+  assert.equal(await evaluate(`!!document.querySelector('footer,.statusbar,.status-bar,.action-grip-slot:not([inert]) .action-drag-handle')`),false)
   assert.equal(await evaluate(`document.querySelectorAll('.workspace-tab button').length`),2,'core tabs cannot close')
+  await command('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]})
+  await evaluate(`(() => {
+    const elements = [...document.querySelectorAll('.titlebar .control-shortcut, .titlebar .control-shortcut .button, .titlebar .registered-display')]
+    const state = window.__toolbarAnimation = {running:true,samples:[],detached:false}
+    const sample = () => {
+      if (!state.running) return
+      const bar = document.querySelector('.titlebar-recording-actions')
+      const grip = bar.querySelector('.action-grip-slot')
+      const status = bar.querySelector('.read-only-shortcut')
+      state.detached ||= elements.some(element=>!element.isConnected)
+      state.samples.push({width:bar.getBoundingClientRect().width,grip:grip.getBoundingClientRect().width,border:parseFloat(getComputedStyle(status).borderTopWidth),background:getComputedStyle(status).backgroundColor})
+      requestAnimationFrame(sample)
+    }
+    requestAnimationFrame(sample)
+  })()`)
+  const toolbarAnimation = []
+  for (let cycle = 0; cycle < 4; cycle++) {
+    for (const tab of ['Blueprint','Overview']) {
+      await evaluate('window.__toolbarAnimation.samples=[]')
+      await click('.workspace-tab button',tab)
+      await until(() => evaluate(`document.querySelector('.workspace-tab.active button').textContent.trim()===${JSON.stringify(tab)}`))
+      await delay(260)
+      const samples = await evaluate('window.__toolbarAnimation.samples')
+      assert.ok(samples.some(sample=>sample.grip>0.1&&sample.grip<21.9),'grip space animates through intermediate widths')
+      assert.ok(samples.some(sample=>sample.background.startsWith('rgba(')&&sample.background!=='rgba(0, 0, 0, 0)'), 'read-only chrome fades during the transition')
+      const last = samples.at(-1)
+      assert.equal(last.grip,tab==='Blueprint'?22:0,'Overview leaves no handle space')
+      if(tab==='Blueprint')assert.ok(last.border>0&&last.border<=1,'Blueprint shows the editing border at the current DPI')
+      else assert.equal(last.border,0,'Overview read-only displays have no border')
+      if(tab==='Overview')assert.equal(last.background,'rgba(0, 0, 0, 0)')
+      toolbarAnimation.push({tab,frames:samples.length,start:samples[0],end:last})
+    }
+  }
+  for (const tab of ['Blueprint','Overview','Blueprint','Overview']) {
+    await click('.workspace-tab button',tab)
+    await delay(50)
+  }
+  await delay(220)
+  assert.equal(await evaluate('document.querySelector(".titlebar .action-grip-slot").getBoundingClientRect().width'),0,'rapid reversal finishes without leftover handle space')
+  assert.equal(await evaluate('window.__toolbarAnimation.detached'),false,'tab switching preserves control DOM identity')
+  await evaluate('window.__toolbarAnimation.running=false')
+  await command('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]})
+  await click('.workspace-tab button','Blueprint')
+  await delay(50)
+  assert.equal(await evaluate('document.querySelector(".titlebar .action-grip-slot").getBoundingClientRect().width'),22)
+  await click('.workspace-tab button','Overview')
+  await delay(50)
+  assert.equal(await evaluate('document.querySelector(".titlebar .action-grip-slot").getBoundingClientRect().width'),0)
+  await command('Emulation.setEmulatedMedia',{features:[]})
   await click('.workspace-tab button','Blueprint')
   await until(()=>evaluate(`!!document.querySelector('.react-flow__node[data-id="screen"] .action-drag-handle')`))
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('.library-section:first-child .tree-item')].map(b=>b.textContent.trim())`),['Custom Recording Graph','Second Graph'])
+  await delay(220)
   const integratedControls=await evaluate(`[...document.querySelectorAll('.action-control')].filter(item=>item.querySelector('.action-drag-handle')).map(item=>{const grip=item.querySelector('.action-drag-handle'),content=item.querySelector('.button,.registered-display'),box=item.getBoundingClientRect(),g=grip.getBoundingClientRect(),c=content.getBoundingClientRect();return {border:parseFloat(getComputedStyle(item).borderTopWidth),gripBorder:parseFloat(getComputedStyle(grip).borderTopWidth),gripBackground:getComputedStyle(grip).backgroundColor,sameColor:getComputedStyle(grip).color===getComputedStyle(content).color,encloses:box.left<=g.left&&box.right>=c.right,joined:Math.abs(g.right-c.left)<1}})`)
   assert.ok(integratedControls.length>=7)
   for(const item of integratedControls) {
@@ -153,7 +209,7 @@ try {
   await until(async()=>JSON.parse(await readFile(stored,'utf8')).controlOrder.main[0]==='start-recording')
   await command('Page.reload');await delay(250)
   await until(()=>evaluate(`!!document.querySelector('.overview-page')`))
-  assert.equal(await evaluate(`!!document.querySelector('.titlebar .action-drag-handle')`),false)
+  assert.equal(await evaluate(`!!document.querySelector('.titlebar .action-grip-slot:not([inert]) .action-drag-handle')`),false)
   await click('.workspace-tab button','Blueprint')
   await until(async()=>JSON.stringify(await shortcutLabels())===JSON.stringify(['Record','Select region']))
   assert.equal(await evaluate(`document.querySelector('.react-flow__node[data-id="screen"] [data-node-action]')?.dataset.nodeAction`),'elapsed','node control order must survive saving and reload')
@@ -306,7 +362,7 @@ Region action diagnostics: ${JSON.stringify(await evaluate(`({alerts:[...documen
   await until(()=>evaluate(`!!document.querySelector('.titlebar [role="alert"]')?.textContent`))
   assert.ok((await runtime()).nodeErrors.some(error=>error.nodeId==='write'&&error.graphId==='custom-recording-graph'))
   assert.equal(await readFile(collisionPath,'utf8'),'preserve publication conflict')
-  await writeFile(path.join(fixture,'result.json'),JSON.stringify({fixture,shortcutToolbar:true,nodeReadOnlyShortcuts:true,nodeActionOrder:true,directRemoval:true,deduplication:true,mouseOrder:true,insertionIndicator:true,keyboardOrder:true,saveReload:true,inlineParameters:true,disconnectRestoresLocal:true,countdownCancelled:true,crossWindowControls:true,localRecording,secondGraphRecording,regionRecording,recording:result.recording},null,2))
+  await writeFile(path.join(fixture,'result.json'),JSON.stringify({fixture,toolbarAnimation,shortcutToolbar:true,nodeReadOnlyShortcuts:true,nodeActionOrder:true,directRemoval:true,deduplication:true,mouseOrder:true,insertionIndicator:true,keyboardOrder:true,saveReload:true,inlineParameters:true,disconnectRestoresLocal:true,countdownCancelled:true,crossWindowControls:true,localRecording,secondGraphRecording,regionRecording,recording:result.recording},null,2))
   console.log(JSON.stringify({fixture,recording:result.recording},null,2))
 } finally {
   socket?.close()
