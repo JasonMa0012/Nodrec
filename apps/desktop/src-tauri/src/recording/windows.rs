@@ -144,7 +144,7 @@ impl Encoder {
                 Err(error) => reasons.push(format!("{name}: {error}")),
             }
         }
-        Err(failure(format!("No usable H.264 hardware encoder on the capture adapter. Select Software explicitly. {}", reasons.join("; "))))
+        Err(failure(format!("No usable H.264 hardware encoder on the capture adapter. {}", reasons.join("; "))))
     }
     unsafe fn configure(plan: &RecordingPlan, manager: &IMFDXGIDeviceManager, transform: IMFTransform, name: String, activation: Option<EncoderActivation>) -> Result<Self> {
         let attrs = encoder_step(&name, "read transform attributes", || transform.GetAttributes())?;
@@ -159,13 +159,13 @@ impl Encoder {
         encoder_step(&name, "CBR rate control", || codec.SetValue(&CODECAPI_AVEncCommonRateControlMode, &VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32)))?;
         encoder_step(&name, "bitrate", || codec.SetValue(&CODECAPI_AVEncCommonMeanBitRate, &VARIANT::from(plan.bitrate)))?;
         encoder_step(&name, "GOP size", || codec.SetValue(&CODECAPI_AVEncMPVGOPSize, &VARIANT::from(plan.fps * 2)))?;
-        // No frame reordering keeps timestamps and the drain tail small.
-        encoder_step(&name, "disable B frames", || codec.SetValue(&CODECAPI_AVEncMPVDefaultBPictureCount, &VARIANT::from(0u32)))?;
         let output = encoder_step(&name, "create H.264 media type", || media_type(plan, &MFVideoFormat_H264))?;
         output.SetUINT32(&MF_MT_AVG_BITRATE, plan.bitrate)?;
         output.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32)?;
         encoder_step(&name, "H.264 output type", || transform.SetOutputType(0, &output, 0))?;
         encoder_step(&name, "NV12 input type", || transform.SetInputType(0, &media_type(plan, &MFVideoFormat_NV12)?, 0))?;
+        // Some drivers expose codec properties only after media type negotiation.
+        encoder_step(&name, "disable B frames", || codec.SetValue(&CODECAPI_AVEncMPVDefaultBPictureCount, &VARIANT::from(0u32)))?;
         encoder_step(&name, "begin streaming", || transform.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0))?;
         encoder_step(&name, "start streaming", || transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0))?;
         let events = if asynchronous { Some(encoder_step(&name, "query asynchronous events", || transform.cast())?) } else { None };
@@ -427,7 +427,7 @@ fn fitted_size(w: u32, h: u32, ow: u32, oh: u32) -> (u32,u32) {
 const MAX_PACKET_BYTES: usize = 64 * 1024 * 1024;
 #[cfg(test)]
 #[derive(Clone, Copy)]
-enum RecordingFault { Writer, SlowWriter, Encoder }
+enum RecordingFault { Writer, SlowWriter, Encoder, HardwareSetup }
 #[cfg(test)]
 static RECORDING_FAULT: std::sync::Mutex<Option<(PathBuf,RecordingFault)>> = std::sync::Mutex::new(None);
 #[cfg(test)]
@@ -673,9 +673,22 @@ pub fn record(mut plan: RecordingPlan, mut groups: Vec<(RecordingPlan,Vec<PathBu
         let mut encoder_initializing = true;
         let initialized = (|| -> Result<EncoderBranch> {
         plan.validate(&display.info).map_err(failure)?;
-        let gpu = source_gpu.encoding_branch(&plan)?;
-        #[cfg(test)] eprintln!("fault probe: creating encoder {}",plan.path.display());
-        let encoder = Encoder::new(&plan, luid, &gpu.manager).map_err(|e| failure(format!("H.264 setup: {e}")))?;
+        let create = |plan: &RecordingPlan| -> Result<(Gpu, Encoder)> {
+            #[cfg(test)]
+            if !plan.software && matches!(recording_fault(&plan.path), Some(RecordingFault::HardwareSetup)) { return Err(failure("Injected hardware setup failure")); }
+            let gpu = source_gpu.encoding_branch(plan)?;
+            let encoder = Encoder::new(plan, luid, &gpu.manager)?;
+            Ok((gpu, encoder))
+        };
+        let (gpu, encoder) = match create(&plan) {
+            Ok(resources) => resources,
+            Err(error) if !plan.software => {
+                crate::logging::write("warn", "encoder", format!("Hardware setup failed; falling back to CPU: {error}"));
+                plan.software = true;
+                create(&plan).map_err(|cpu| failure(format!("Hardware: {error}; CPU fallback: {cpu}")))?
+            }
+            Err(error) => return Err(error),
+        };
         #[cfg(test)] eprintln!("fault probe: encoder ready");
 
         let output_type = encoder.transform.GetOutputCurrentType(0)?;
@@ -858,6 +871,14 @@ mod tests {
         assert!(!failed.exists() && temp_path(&failed).is_file());
         std::fs::write(directory.join("all-outputs-failed.json"),serde_json::to_vec_pretty(&stats).unwrap()).unwrap();
         *RECORDING_FAULT.lock().unwrap() = None;
+        let fallback = directory.join("cpu-fallback.mp4");
+        *RECORDING_FAULT.lock().unwrap() = Some((fallback.clone(),RecordingFault::HardwareSetup));
+        let plan = RecordingPlan {display:display.id.clone(),full_display:false,x:0,y:0,width:897,height:360,output_width:0,output_height:0,fps:60,bitrate:20_000_000,software:false,cursor:true,path:fallback.clone()};
+        let session = RecordingSession::start(plan).unwrap();
+        thread::sleep(Duration::from_secs(1));
+        let stats = session.stop().unwrap();
+        assert!(stats.encoder.contains("Software") && stats.encoded_frames > 0 && fallback.is_file(), "CPU fallback did not produce a recording: {stats:?}");
+        std::fs::write(directory.join("cpu-fallback.json"),serde_json::to_vec_pretty(&stats).unwrap()).unwrap();
         println!("Live fault artifacts: {}",directory.display());
     }
     #[test]

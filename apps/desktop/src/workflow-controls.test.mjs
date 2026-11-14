@@ -36,9 +36,9 @@ test('recording control renders each session state without unrelated actions', (
   assert.match(render('ready',{control:{...control,binding:undefined}}),/Invalid node action binding/)
 })
 
-test('recording errors stay in the main window', () => {
+test('recording errors never expand action controls', () => {
   const props = {control:{...control,error:'Output queue full'}}
-  assert.match(render('failed',props),/role="alert">Output queue full/)
+  assert.doesNotMatch(render('failed',props),/Output queue full/)
   assert.doesNotMatch(render('failed',{...props,token:'region-token'}),/Output queue full/)
 })
 

@@ -190,10 +190,10 @@ function useParameterSizing(value: unknown) {
 function BuiltinBadge() {
   const [anchor, setAnchor] = useState<DOMRect | null>(null)
   const tooltipId = useId()
-  return <><span className="builtin-badge" role="img" aria-label="Built-in blueprint" aria-describedby={anchor ? tooltipId : undefined} tabIndex={0}
+  return <><span className="blueprint-icon builtin-badge" role="img" aria-label="Built-in blueprint" aria-describedby={anchor ? tooltipId : undefined} tabIndex={0}
     onMouseEnter={event => setAnchor(event.currentTarget.getBoundingClientRect())} onMouseLeave={() => setAnchor(null)}
     onFocus={event => setAnchor(event.currentTarget.getBoundingClientRect())} onBlur={() => setAnchor(null)}
-    onKeyDown={event => { if (event.key === 'Escape') setAnchor(null) }}><Package size={14} /></span>
+    onKeyDown={event => { if (event.key === 'Escape') setAnchor(null) }}><Package size={15} /></span>
     {anchor && createPortal(<span id={tooltipId} className="builtin-tooltip" role="tooltip" style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 368)), top: anchor.bottom + 6 }}>Built-in blueprint. Replaced on every update. Duplicate to keep your changes.</span>, document.body)}</>
 }
 
@@ -1249,6 +1249,11 @@ export default function App() {
     setControls([]); setFrameCount(0); setStatus('ready'); setNotice(null)
     setActiveBlueprintId(id); setPage('workspace'); setMenuBlueprint(null)
   }
+  useEffect(() => {
+    const show = (event: Event) => setNotice((event as CustomEvent<string>).detail)
+    window.addEventListener('workflow-action-error', show)
+    return () => window.removeEventListener('workflow-action-error', show)
+  }, [])
   useEffect(() => { if (notice) console.warn(notice) }, [notice])
   useEffect(() => { diagnostics.forEach(message => console.warn(message)) }, [diagnostics])
 
@@ -1265,7 +1270,7 @@ export default function App() {
         <div className="blueprint-list">{blueprints.map((blueprint) => {
           const dirty = savedDocuments[blueprint.id] !== JSON.stringify(serializeBlueprint(blueprint))
           return <div className={`blueprint-nav-item${blueprint.id === activeBlueprintId ? ' active' : ''}`} key={blueprint.id}>
-            <button className="blueprint-select" disabled={runtimeLocked && blueprint.id !== activeBlueprintId} onClick={() => switchBlueprint(blueprint.id)}><span className="blueprint-icon"><Workflow size={15} /></span><span className="blueprint-name">{blueprint.name}</span>{blueprint.scope === 'builtin' && <BuiltinBadge />}{dirty && <span className="unsaved-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}</button>
+            <button className="blueprint-select" disabled={runtimeLocked && blueprint.id !== activeBlueprintId} onClick={() => switchBlueprint(blueprint.id)}>{blueprint.scope === 'builtin' ? <BuiltinBadge /> : <span className="blueprint-icon"><Workflow size={15} /></span>}<span className="blueprint-name">{blueprint.name}</span></button>
             {dirty && <button className="blueprint-save" title={`Save ${blueprint.name}`} aria-label={`Save ${blueprint.name}`} disabled={savingBlueprints.has(blueprint.id) || runtimeLocked && blueprint.id === activeBlueprintId} onClick={() => { void saveBlueprint(blueprint.id) }}><Save size={14} /></button>}
             <button className="blueprint-more" title="More actions" aria-label={`More actions for ${blueprint.name}`} disabled={runtimeLocked} onClick={(event) => toggleBlueprintMenu(blueprint.id, event.currentTarget)}><Ellipsis size={16} /></button>
           </div>

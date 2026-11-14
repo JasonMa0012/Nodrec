@@ -18,14 +18,14 @@
 - 从被操作的录屏根收集有有效写入用途的分支。同一编码节点按 ID 分组，只创建一个编码实例；支持一源多编码和一编码多写入。启动预检拒绝输出及 partial 路径冲突，无有效输出时不创建会话。禁用节点只在唯一、同类型输入输出可对应时旁路，不能将原始帧旁路到 MP4。
 - 采集、GPU 转换及硬件编码在 D3D11 设备所属线程调度。每个编码分支拥有独立资源；Writer 消费与 Provider 无关的编码格式和带 PTS/duration/关键帧标记的数据包。帧不经过 WebView/JSON，压缩包字节在写入端间共享。
 - 每个写入端具有独立线程和有界队列，同时限制约两秒包数量和 64 MiB。队列满使该端失败，不阻塞其他端，不静默丢弃压缩包。编码器忙时仅跳过该分支原始帧并统计。写入失败影响自身，编码失败关闭其下游；无消费者组件释放，全部输出失败后停止采集。
-- 会话共用暂停时钟，时间戳单位为 100 ns，暂停时间不计入媒体时长。停止依次关闭采集、排空编码、完成写入并发布成品；不覆盖既有成品或 partial，失败保留已写部分，不自动由硬件回退软件。
+- 会话共用暂停时钟，时间戳单位为 100 ns，暂停时间不计入媒体时长。停止依次关闭采集、排空编码、完成写入并发布成品；不覆盖既有成品或 partial，失败保留已写部分，Hardware Auto 分支初始化失败会记录硬件原因并重建 CPU 编码资源；CPU 仍失败则保留双方错误，软件模式不重复重试。录制中编码／写入失败仍按输出隔离并保留 partial。
 - `runtime_snapshot.recording` 包含 encoder/adapter、width/height/fps、durationMs、encodedFrames/droppedFrames/repeatedFrames、outputPath/partialPath、stopMs、error/finished，以及逐文件 outputs。encodedFrames 在多编码时为各编码器产出之和，不能当成一个输出的帧率。成功必须等文件发布；整体部分失败时，健康端仍可发布，逐文件结果是判断产物成功的依据。
 - 快照 nodeErrors 返回 `{graphId,nodeId,message}[]`，根据本次编译的稳定输出路径映射定位写入及编码节点，录屏根承载会话错误；控件的临时 error 随同快照发往主窗口和浮动工具条，不写入蓝图。outputs.encoderError 区分编码分支故障，避免把普通单端写入失败标为编码器故障。停止即使失败也先保留最终统计，再报告错误。
 - 真实单／多路、故障与性能证据见 [Media Output](modules/media-output.md) 和 [性能报告](recording-performance.md)。音频、窗口采集、操作回放、原始帧／序列帧写入尚未接入。
 
 ## 选区工具
 
-- `select_region` 是纯数据／动作节点：Region 输出、Initial Region 输入，以及 select 动作。没有 Execute、Selected 或 Cancelled 执行端口。`get_selected_region` 的 Selected Region 输入优先读取显式连线；旧 V2 文件未连接时按 toolId 读取当前选区。Selected Region 模式缺少选区时拒绝录制，其他模式使用 fallback。确认选区时主窗口同步 display、x、y、width、height 和 regionMode 参数；取消不提交。
+- `select_region` 是纯数据／动作节点：Region 输出、Initial Region 输入，以及 select 动作。没有 Execute、Selected 或 Cancelled 执行端口。`get_selected_region` 的 Selected Region 输入优先读取显式连线；旧 V2 文件未连接时按 toolId 读取当前选区。Selected Region 模式缺少选区时拒绝录制，其他模式使用 fallback。选择时遮罩覆盖所有显示器，使用虚拟桌面物理坐标；拖动限制在起点所在屏幕，后端拒绝跨屏区域，并转换为所选显示器内坐标。再次选择也进入遮罩，取消保留旧区域。确认选区时主窗口同步 display、x、y、width、height 和 regionMode 参数；取消不提交。
 - `dispatch_node_action` 在主窗口打开选区；浮动工具条调用 `region_tool_node_action`，携带当前 token、controlId 和 action，由 Rust 校验窗口、工具会话、控件目标及绑定。过期 token 被拒绝。区域变更、比例和显示设置在录制期间被锁定。
 - 每次打开重新校验上次区域；有效 Initial Region 或会话区域直接恢复，无效区域清除并等待框选。区域仅保留在当前蓝图运行时，不跨应用重启保存。DPI 或显示器几何变化使其失效。
 - `region_tool_layout` 更新窗口边界；`region_tool_shape` 更新可见控件原生命中区域；`region_tool_ratio` 同步有限非负比例，0 表示解锁。浮动工具条与主窗口共享录制状态和时钟。

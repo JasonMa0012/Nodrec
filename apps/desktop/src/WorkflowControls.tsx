@@ -1,5 +1,4 @@
 import { invoke } from './tauri'
-import { useState } from 'react'
 import { Crop, Monitor, MousePointer2, Play, Pause, Square, StopCircle, Settings, Video, Folder, AudioLines, Clock3, CircleHelp } from 'lucide-react'
 import type { RegisteredControl, RegisteredDisplay } from './model'
 import { elapsedText } from './region-geometry'
@@ -11,20 +10,18 @@ function ControlIcon({ name, size = 14 }: { name: string; size?: number }) {
 }
 
 export function ControlButton({ control, disabled, status = 'ready', token }: { control: RegisteredControl; disabled: boolean; status?: string; token?: string }) {
-  const [error,setError] = useState<string | null>(null)
   const send = (action: string) => {
     const binding = control.binding
     if (!binding) return
-    setError(null)
-    void invoke(token ? 'region_tool_node_action' : 'dispatch_node_action', token ? {token,controlId:control.id,action} : {graphId:binding.graphId,nodeId:binding.nodeId,action}).catch(error => setError(String(error)))
+    void invoke(token ? 'region_tool_node_action' : 'dispatch_node_action', token ? {token,controlId:control.id,action} : {graphId:binding.graphId,nodeId:binding.nodeId,action}).catch(error => window.dispatchEvent(new CustomEvent('workflow-action-error', { detail: String(error) })))
   }
   const locked = disabled || !control.enabled
-  if (control.binding?.action === 'select') return <div><button className="button secondary" disabled={locked || !['ready','failed'].includes(status)} onClick={() => send('select')}><ControlIcon name={control.icon} />{control.label}</button>{!token && (control.error || error) && <span role="alert">{control.error || error}</span>}</div>
+  if (control.binding?.action === 'select') return <div><button className="button secondary" disabled={locked || !['ready','failed'].includes(status)} onClick={() => send('select')}><ControlIcon name={control.icon} />{control.label}</button></div>
   if (control.binding?.action === 'record') return <div><div className="split-control">{status === 'ready' || status === 'failed'
     ? <button className="button primary" disabled={locked} onClick={() => send('start')}><ControlIcon name={control.icon} />{control.label}</button>
     : status === 'starting' ? <><span role="status">Preparing…</span><button className="button secondary" disabled={locked} onClick={() => send('stop')}>Cancel</button></>
     : status === 'stopping' ? <span role="status">Saving…</span>
-    : <><button className="button secondary" disabled={locked} onClick={() => send(status === 'paused' ? 'resume' : 'pause')}>{status === 'paused' ? 'Resume' : 'Pause'}</button><button className="button secondary" disabled={locked} onClick={() => send('stop')}>Stop</button></>}</div>{!token && (control.error || error) && <span role="alert">{control.error || error}</span>}</div>
+    : <><button className="button secondary" disabled={locked} onClick={() => send(status === 'paused' ? 'resume' : 'pause')}>{status === 'paused' ? 'Resume' : 'Pause'}</button><button className="button secondary" disabled={locked} onClick={() => send('stop')}>Stop</button></>}</div></div>
   return <span role="alert">Invalid node action binding</span>
 }
 

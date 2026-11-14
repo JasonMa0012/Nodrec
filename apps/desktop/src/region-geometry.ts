@@ -2,7 +2,7 @@ export type Rect = { x: number; y: number; width: number; height: number }
 export type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'move'
 export const handles: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 export function selectionRect(start: { x: number; y: number }, end: { x: number; y: number }, bounds: Rect): Rect {
-  const x = Math.max(0, Math.min(end.x, bounds.width)), y = Math.max(0, Math.min(end.y, bounds.height))
+  const x = Math.max(bounds.x, Math.min(end.x, bounds.x + bounds.width)), y = Math.max(bounds.y, Math.min(end.y, bounds.y + bounds.height))
   return { x: Math.min(start.x,x), y: Math.min(start.y,y), width: Math.abs(x-start.x), height: Math.abs(y-start.y) }
 }
 export function handlePoint(r: Rect, h: Handle) {

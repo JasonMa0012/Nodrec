@@ -4,11 +4,10 @@ use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex}};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 use crate::recording::DisplayInfo;
 
-pub fn same_tool_definitions(mut previous: HashMap<String, Value>, mut next: HashMap<String, Value>, displays: &[DisplayInfo]) -> bool {
-    if displays.len() == 1 {
-        for config in previous.values_mut().chain(next.values_mut()) {
-            if config["display"] == "Display 1" { config["display"] = json!(displays[0].id); }
-        }
+pub fn same_tool_definitions(mut previous: HashMap<String, Value>, mut next: HashMap<String, Value>) -> bool {
+    // Selection determines the display; committing that display must not destroy the tool.
+    for config in previous.values_mut().chain(next.values_mut()) {
+        if let Some(config) = config.as_object_mut() { config.remove("display"); }
     }
     previous == next
 }
@@ -37,10 +36,30 @@ fn restored_region(value: Option<&Value>, display: &DisplayInfo, single_display:
     Some(rect)
 }
 
+fn desktop_bounds(displays: &[DisplayInfo]) -> Option<Rect> {
+    let x = displays.iter().map(|d| d.x).min()?;
+    let y = displays.iter().map(|d| d.y).min()?;
+    let right = displays.iter().map(|d| d.x as i64 + d.width as i64).max()?;
+    let bottom = displays.iter().map(|d| d.y as i64 + d.height as i64).max()?;
+    Some(Rect { x, y, width: u32::try_from(right - x as i64).ok()?, height: u32::try_from(bottom - y as i64).ok()? })
+}
+
+fn selected_display(rect: &Rect, desktop: &Rect, displays: &[DisplayInfo]) -> Result<(DisplayInfo, Rect), String> {
+    let x = desktop.x as i64 + rect.x as i64;
+    let y = desktop.y as i64 + rect.y as i64;
+    for display in displays {
+        let (Ok(x), Ok(y)) = (i32::try_from(x - display.x as i64), i32::try_from(y - display.y as i64)) else { continue; };
+        let local = Rect { x, y, width: rect.width, height: rect.height };
+        if local.validate(display).is_ok() { return Ok((display.clone(), local)); }
+    }
+    Err("Select a region inside a single display; cross-display recording is not supported".into())
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tool {
     pub token: String, pub blueprint_id: String, pub tool_id: String,
+    pub desktop: Rect, pub displays: Vec<DisplayInfo>,
     pub display: DisplayInfo, pub scale: f64, pub work: Rect,
     pub rect: Option<Rect>, pub picking: bool, pub visible: bool,
     pub excluded: bool, pub capture_exclusion: bool, pub aspect_ratio: f64,
@@ -78,7 +97,8 @@ impl RegionTools {
         let tool_id = config["toolId"].as_str().ok_or("Select Region needs a toolId")?;
         let displays = crate::recording::displays()?;
         let name = config["display"].as_str().unwrap_or("Display 1");
-        let display = displays.iter().find(|d| d.id == name).or_else(|| if name == "Display 1" && displays.len() == 1 { displays.first() } else { None }).cloned().ok_or("Select a valid display")?;
+        let display = displays.iter().find(|d| d.id == name).or_else(|| displays.first()).cloned().ok_or("No displays available")?;
+        let desktop = desktop_bounds(&displays).ok_or("No displays available")?;
         let monitor = app.available_monitors().map_err(|e| e.to_string())?.into_iter()
             .find(|m| m.position().x == display.x && m.position().y == display.y).ok_or("Display is no longer available")?;
         let scale = monitor.scale_factor();
@@ -99,8 +119,10 @@ impl RegionTools {
         if let Some(mut tool) = self.snapshot().filter(|t| t.tool_id == tool_id && t.blueprint_id == blueprint_id && t.display.id == display.id && t.display.x == display.x && t.display.y == display.y && t.display.width == display.width && t.display.height == display.height && t.scale == scale) {
             tool.visible = true;
             tool.work = work;
-            tool.picking = initial.is_none();
-            tool.outcome = initial.as_ref().map(|_| true);
+            tool.picking = true;
+            tool.desktop = desktop;
+            tool.displays = displays;
+            tool.outcome = None;
             tool.rect = initial;
             self.0.lock().unwrap_or_else(|e| e.into_inner()).active = Some(tool);
             return self.refresh(app);
@@ -111,8 +133,8 @@ impl RegionTools {
             if app.get_webview_window("region-frame").is_none() && app.get_webview_window("region-toolbar").is_none() { break; }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        let picking = initial.is_none();
-        let tool = Tool { token: token.clone(), blueprint_id: blueprint_id.into(), tool_id: tool_id.into(), display: display.clone(), scale, work, rect: initial, picking, visible: true, excluded: false, capture_exclusion: true, aspect_ratio: 0., outcome: if picking { None } else { Some(true) } };
+        let picking = true;
+        let tool = Tool { token: token.clone(), blueprint_id: blueprint_id.into(), tool_id: tool_id.into(), desktop, displays, display: display.clone(), scale, work, rect: initial, picking, visible: true, excluded: false, capture_exclusion: true, aspect_ratio: 0., outcome: if picking { None } else { Some(true) } };
         self.0.lock().unwrap_or_else(|e| e.into_inner()).active = Some(tool);
         let result = (|| -> Result<bool, String> {
             let mut excluded = true;
@@ -137,7 +159,17 @@ impl RegionTools {
         if action == "close" { self.close(app); return Ok(()); }
         match action {
             "change" | "select" => {
-                let rect = rect.ok_or("A region is required")?;
+                let mut rect = rect.ok_or("A region is required")?;
+                if action == "select" && tool.picking {
+                    let (display, local) = selected_display(&rect, &tool.desktop, &tool.displays)?;
+                    tool.display = display;
+                    rect = local;
+                    let monitor = app.available_monitors().map_err(|e| e.to_string())?.into_iter()
+                        .find(|m| m.position().x == tool.display.x && m.position().y == tool.display.y).ok_or("Display is no longer available")?;
+                    tool.scale = monitor.scale_factor();
+                    let area = monitor.work_area();
+                    tool.work = Rect { x: area.position.x - tool.display.x, y: area.position.y - tool.display.y, width: area.size.width, height: area.size.height };
+                }
                 rect.validate(&tool.display)?;
                 tool.rect = Some(rect.clone());
                 if action == "select" { tool.picking = false; tool.outcome = Some(true); }
@@ -168,6 +200,11 @@ impl RegionTools {
     pub fn refresh(&self, app: &AppHandle) -> Result<(), String> {
         let Some(tool) = self.snapshot() else { return Ok(()); };
         if let Some(window) = app.get_webview_window("region-frame") {
+            let area = if tool.picking { tool.desktop.clone() } else { Rect { x: tool.display.x, y: tool.display.y, width: tool.display.width, height: tool.display.height } };
+            let position = PhysicalPosition::new(area.x, area.y);
+            let size = PhysicalSize::new(area.width, area.height);
+            if window.outer_position().map_err(|e| e.to_string())? != position { window.set_position(position).map_err(|e| e.to_string())?; }
+            if window.inner_size().map_err(|e| e.to_string())? != size { window.set_size(size).map_err(|e| e.to_string())?; }
             set_frame_region(&window, &tool)?;
             set_visible(&window, tool.visible && self.is_ready("region-frame"), tool.capture_exclusion)?;
         }
@@ -268,7 +305,7 @@ fn set_frame_region(window: &tauri::WebviewWindow, tool: &Tool) -> Result<(), St
     use windows::Win32::Graphics::Gdi::{CreateRectRgn, CombineRgn, DeleteObject, SetWindowRgn, RGN_DIFF, RGN_OR};
     unsafe {
         let hwnd = window.hwnd().map_err(|e| e.to_string())?;
-        let region = if tool.picking { CreateRectRgn(0, 0, tool.display.width as i32, tool.display.height as i32) }
+        let region = if tool.picking { CreateRectRgn(0, 0, tool.desktop.width as i32, tool.desktop.height as i32) }
         else if let Some(r) = &tool.rect {
             let margin = (4. * tool.scale).ceil() as i32;
             let outer = CreateRectRgn(r.x-margin, r.y-margin, r.x+r.width as i32+margin, r.y+r.height as i32+margin);
@@ -297,16 +334,27 @@ fn set_frame_region(_: &tauri::WebviewWindow, _: &Tool) -> Result<(), String> { 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn tool_definitions_compare_display_aliases_in_both_directions() {
-        let display = DisplayInfo { id:"d".into(), name:"d".into(), width:1920,height:1080,x:0,y:0,hdr:false };
+    #[test] fn committing_a_selected_display_preserves_the_tool() {
         let alias = HashMap::from([("capture".into(),json!({"display":"Display 1","toolId":"capture"}))]);
         let explicit = HashMap::from([("capture".into(),json!({"display":"d","toolId":"capture"}))]);
-        assert!(same_tool_definitions(alias.clone(),explicit.clone(),&[display.clone()]));
-        assert!(same_tool_definitions(explicit.clone(),alias.clone(),&[display.clone()]));
-        assert!(!same_tool_definitions(explicit.clone(),alias.clone(),&[]));
-        assert!(!same_tool_definitions(explicit.clone(),alias.clone(),&[display.clone(),display.clone()]));
+        assert!(same_tool_definitions(alias.clone(),explicit.clone()));
+        assert!(same_tool_definitions(explicit.clone(),alias.clone()));
         let changed = HashMap::from([("capture".into(),json!({"display":"other","toolId":"capture"}))]);
-        assert!(!same_tool_definitions(explicit,changed,&[display]));
+        assert!(same_tool_definitions(explicit.clone(),changed));
+        let changed = HashMap::from([("capture".into(),json!({"display":"d","toolId":"other"}))]);
+        assert!(!same_tool_definitions(explicit,changed));
+    }
+    #[test] fn selection_resolves_negative_origin_and_rejects_cross_display() {
+        let left = DisplayInfo { id:"left".into(), name:"left".into(), width:1920,height:1080,x:-1920,y:-200,hdr:false };
+        let right = DisplayInfo { id:"right".into(), name:"right".into(), width:2560,height:1440,x:0,y:0,hdr:false };
+        let displays = vec![left, right];
+        let desktop = desktop_bounds(&displays).unwrap();
+        assert_eq!(desktop, Rect{x:-1920,y:-200,width:4480,height:1640});
+        let (display, rect) = selected_display(&Rect{x:2000,y:300,width:640,height:480}, &desktop, &displays).unwrap();
+        assert_eq!(display.id, "right");
+        assert_eq!(rect, Rect{x:80,y:100,width:640,height:480});
+        assert!(selected_display(&Rect{x:1800,y:300,width:640,height:480}, &desktop, &displays).is_err());
+        assert!(selected_display(&Rect{x:2000,y:0,width:640,height:100}, &desktop, &displays).is_err());
     }
     #[test] fn restore_only_valid_regions() {
         let display = DisplayInfo { id:"d".into(), name:"d".into(), width:1920,height:1080,x:-1920,y:0,hdr:false };

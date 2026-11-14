@@ -7,7 +7,7 @@ import { ControlButton, RuntimeDisplay } from './WorkflowControls'
 import { dockRegion, expandToolbar, editRegionField, handles, handlePoint, hitRegion, selectionRect, transformRegion, type Rect, type Handle } from './region-geometry'
 import type { RegisteredControl, RegisteredDisplay } from './model'
 
-type Tool = { token: string; toolId: string; blueprintId: string; display: { id: string; x: number; y: number; width: number; height: number }; rect: Rect | null; work: Rect; scale: number; picking: boolean; visible: boolean; excluded: boolean; captureExclusion: boolean; aspectRatio: number }
+type Tool = { token: string; toolId: string; blueprintId: string; desktop: Rect; displays: { x: number; y: number; width: number; height: number }[]; display: { id: string; x: number; y: number; width: number; height: number }; rect: Rect | null; work: Rect; scale: number; picking: boolean; visible: boolean; excluded: boolean; captureExclusion: boolean; aspectRatio: number }
 type Runtime = { status: string; controls: RegisteredControl[]; displays: RegisteredDisplay[]; recording: { durationMs: number } | null; error: string | null }
 type ToolState = { tool: Tool | null; runtime: Runtime }
 
@@ -19,7 +19,7 @@ export default function RegionTool({ role, token }: { role: string; token: strin
   const [hover, setHover] = useState<Handle | null>(null)
   const [menu, setMenu] = useState<'size' | 'more' | null>(null)
   const surface = useRef<HTMLDivElement>(null)
-  const drag = useRef<{ start: { x: number; y: number }; rect: Rect; handle: Handle; picking: boolean } | null>(null)
+  const drag = useRef<{ start: { x: number; y: number }; rect: Rect; handle: Handle; picking: boolean; bounds: Rect } | null>(null)
   const queued = useRef<Rect | null>(null)
   const sending = useRef(false)
   const tool = state?.tool
@@ -43,10 +43,10 @@ export default function RegionTool({ role, token }: { role: string; token: strin
     const apply = (next: ToolState) => {
       if (disposed || next.tool?.token !== token) return
       setState(next)
-      if (!drag.current && !sending.current) setRect(next.tool.rect)
+      if (!drag.current && !sending.current) setRect(next.tool.picking ? null : next.tool.rect)
     }
     void Promise.all([
-      listen<Tool>('region-tool', event => { if (event.payload.token === token) { setState(current => current ? { ...current, tool: event.payload } : current); if (!drag.current && !sending.current) setRect(event.payload.rect) } }),
+      listen<Tool>('region-tool', event => { if (event.payload.token === token) { setState(current => current ? { ...current, tool: event.payload } : current); if (!drag.current && !sending.current) setRect(event.payload.picking ? null : event.payload.rect) } }),
       listen<Runtime>('workflow-status', event => setState(current => current ? { ...current, runtime: event.payload } : current)),
     ]).then(async listeners => {
       if (disposed) { listeners.forEach(stop => stop()); return }
@@ -119,7 +119,7 @@ export default function RegionTool({ role, token }: { role: string; token: strin
   }, [role, shapeScale, token, toolbarOffset])
 
   if (!tool || tool.token !== token || !state) return null
-  const scale = tool.scale
+  const scale = role === 'frame' && tool.picking ? window.devicePixelRatio : tool.scale
   const bounds = { x: 0, y: 0, width: tool.display.width, height: tool.display.height }
   const point = (event: PointerEvent) => role === 'frame'
     ? { x: Math.round(event.clientX * scale), y: Math.round(event.clientY * scale) }
@@ -130,15 +130,18 @@ export default function RegionTool({ role, token }: { role: string; token: strin
     const picking = role === 'frame' && tool.picking
     const hit = handle ?? (rect ? hitRegion(rect, p.x, p.y, scale) : null)
     if (!picking && (!rect || !hit)) return
+    const display = picking ? tool.displays.find(d => p.x >= d.x-tool.desktop.x && p.y >= d.y-tool.desktop.y && p.x < d.x-tool.desktop.x+d.width && p.y < d.y-tool.desktop.y+d.height) : null
+    if (picking && !display) return
+    const dragBounds = display ? { x: display.x-tool.desktop.x, y: display.y-tool.desktop.y, width: display.width, height: display.height } : bounds
     event.currentTarget.setPointerCapture(event.pointerId)
-    drag.current = { start: p, rect: rect ?? { ...p, width: 16, height: 16 }, handle: hit ?? 'se', picking }
+    drag.current = { start: p, rect: rect ?? { ...p, width: 16, height: 16 }, handle: hit ?? 'se', picking, bounds: dragBounds }
     if (picking) setRect({ ...p, width: 0, height: 0 })
   }
   const move = (event: PointerEvent) => {
     const p = point(event)
     const d = drag.current
     if (!d) { if (role === 'frame' && rect) setHover(hitRegion(rect, p.x, p.y, scale)); return }
-    const next = d.picking ? selectionRect(d.start, p, bounds)
+    const next = d.picking ? selectionRect(d.start, p, d.bounds)
       : transformRegion(d.rect, d.handle, p.x-d.start.x, p.y-d.start.y, bounds, event.shiftKey ? d.rect.width/d.rect.height : tool.aspectRatio)
     setRect(next)
     if (!d.picking) void sendChange(next)
@@ -149,7 +152,7 @@ export default function RegionTool({ role, token }: { role: string; token: strin
     drag.current = null
     event.currentTarget.releasePointerCapture(event.pointerId)
     if (d.picking) {
-      const selected = selectionRect(d.start, point(event), bounds)
+      const selected = selectionRect(d.start, point(event), d.bounds)
       setRect(selected)
       if (selected.width >= 16 && selected.height >= 16) void act('select', selected)
       else { setRect(tool.rect); setError('Select at least 16 × 16 physical pixels') }
@@ -165,7 +168,7 @@ export default function RegionTool({ role, token }: { role: string; token: strin
     setRect(next); void sendChange(next)
   }
   if (role === 'frame') return <div className={`region-frame ${tool.picking ? 'picking' : ''}`} tabIndex={0} role="application" aria-label="Screen region: drag border to move, drag round handles to resize" style={{ cursor: tool.picking ? 'crosshair' : locked ? 'default' : hover === 'move' ? 'move' : hover ? `${hover}-resize` : 'default' }} onKeyDown={key} onPointerDown={start} onPointerMove={move} onPointerUp={finish} onPointerCancel={() => { drag.current = null; setRect(tool.rect) }}>
-    {tool.picking && <div className="region-pick-hint">Drag to select a region · Esc to cancel{error && <p role="alert">{error}</p>}</div>}
+    {tool.picking && tool.displays.map(display => <div key={`${display.x}:${display.y}`} className="region-pick-hint" style={{ left: (display.x - tool.desktop.x + display.width / 2) / scale, top: (display.y - tool.desktop.y) / scale + 20 }}>Drag to select on one display · Esc to cancel{error && <p role="alert">{error}</p>}</div>)}
     {rect && <div className={`region-outline${locked ? ' locked' : ''}`} style={{ left:rect.x/scale, top:rect.y/scale, width:rect.width/scale, height:rect.height/scale }} />}
     {rect && !locked && !tool.picking && handles.map(h => { const p = handlePoint(rect, h); return <span key={h} className="region-handle" style={{ left:p.x/scale, top:p.y/scale }} /> })}
   </div>

@@ -46,6 +46,8 @@ try {
   await main.evaluate('console.warn("logging-regression: frontend warning"); console.error(new Error("logging-regression: stack trace"))')
   await main.evaluate('[...document.querySelectorAll(".titlebar button")].find(button=>button.textContent.trim()==="Record").click()')
   await until(async () => (await main.invoke('get_logs')).some(log => log.message.includes('Command dispatch_node_action failed')), 'command failure forwarded')
+  assert.equal(await main.evaluate('document.querySelectorAll(".titlebar [role=alert]").length'),0,'errors do not expand toolbar controls')
+  assert.ok(await main.evaluate('!!document.querySelector(".app-notice")'),'command errors remain in the main notification area')
   const startupLogs = await main.invoke('get_logs')
   for (const marker of ['Windows:', 'CPU:', 'RAM:', 'driver=', 'WebView=', 'logging-regression: frontend warning', 'logging-regression: stack trace']) assert.ok(startupLogs.some(log => log.message.includes(marker)), marker)
   const logPath = startupLogs.find(log => log.message.startsWith('Log file: ')).message.slice('Log file: '.length)
@@ -62,10 +64,32 @@ try {
   await select()
   const frame = await connect('frame'); let toolbar = await connect('toolbar')
   await until(() => frame.evaluate(`!!document.querySelector('.region-frame')`), 'picker UI')
-  const draw = async (x,y,xx,yy) => {
+  const initialTool = (await main.invoke('region_tool_state')).tool
+  const draw = async (x,y,xx,yy,displayIndex=0) => {
+    const {tool} = await main.invoke('region_tool_state')
+    if (tool.picking) {
+      const dpi = await frame.evaluate('devicePixelRatio')
+      const display = tool.displays[displayIndex]
+      const ox = display.x-tool.desktop.x, oy = display.y-tool.desktop.y
+      ;[x,y,xx,yy] = [(ox+x*initialTool.scale)/dpi,(oy+y*initialTool.scale)/dpi,(ox+xx*initialTool.scale)/dpi,(oy+yy*initialTool.scale)/dpi]
+    }
     await frame.command('Input.dispatchMouseEvent', { type:'mousePressed', x, y, button:'left', clickCount:1 })
     await frame.command('Input.dispatchMouseEvent', { type:'mouseMoved', x:xx, y:yy, button:'left', buttons:1 })
     await frame.command('Input.dispatchMouseEvent', { type:'mouseReleased', x:xx, y:yy, button:'left', clickCount:1 })
+  }
+  const pickerSize = await frame.evaluate('({width:Math.round(innerWidth*devicePixelRatio),height:Math.round(innerHeight*devicePixelRatio)})')
+  assert.ok(Math.abs(pickerSize.width-initialTool.desktop.width)<=2 && Math.abs(pickerSize.height-initialTool.desktop.height)<=2,'picker covers the entire virtual desktop')
+  assert.equal(await frame.evaluate('document.querySelectorAll(".region-pick-hint").length'), initialTool.displays.length, 'each display shows selection instructions')
+  if (initialTool.displays.length > 1) {
+    await draw(100,100,500,300,1)
+    const secondary = await until(async()=>{const s=await main.invoke('region_tool_state');return s.tool && !s.tool.picking ? s.tool : null},'secondary display selection')
+    assert.equal(secondary.display.id,initialTool.displays[1].id)
+    assert.equal(secondary.rect.x,Math.round(100*initialTool.scale))
+    await delay(500)
+    assert.equal((await main.invoke('region_tool_state')).tool.token,secondary.token,'committing a different display preserves the tool')
+    await main.invoke('region_tool_action',{token:secondary.token,action:'reselect',rect:null})
+    await until(()=>frame.evaluate(`!!document.querySelector('.region-frame.picking')`),'reselect all displays')
+    await assert.rejects(()=>main.invoke('region_tool_action',{token:secondary.token,action:'select',rect:{x:0,y:0,width:initialTool.desktop.width,height:initialTool.desktop.height}}),/single display/)
   }
   await draw(100,100,500,300)
   let state = await until(async () => { const s = await main.invoke('region_tool_state'); return s.tool?.picking === false ? s : null }, 'selection completion')
@@ -218,6 +242,8 @@ try {
   await select()
   const reopened = await main.invoke('region_tool_state')
   token = reopened.tool.token
+  assert.equal(reopened.tool.picking,true,'Select region always dims the desktop')
+  await main.invoke('region_tool_action', { token, action:'cancel', rect:null })
   toolbar = await connect('toolbar')
   await until(() => toolbar.evaluate(`!!document.querySelector(".region-toolbar")`), 'toolbar after closing recording')
   await toolbar.invoke('region_tool_node_action', { token, controlId:'start-recording', action:'start' })
@@ -232,6 +258,7 @@ try {
   assert.match(nativeClosedDecoded.stdout,/Decoded H.264 MP4/)
   await select()
   token = (await main.invoke('region_tool_state')).tool.token
+  await main.invoke('region_tool_action', { token, action:'cancel', rect:null })
   toolbar = await connect('toolbar')
   await until(() => toolbar.evaluate('!!document.querySelector(".region-toolbar")'), 'toolbar after native window close')
   const noUI = structuredClone(document)
@@ -252,7 +279,7 @@ try {
   await select()
   await until(async()=> (await main.invoke('region_tool_state')).tool?.picking,'reopen cancelled picker')
   const emptyState = await main.invoke('region_tool_state')
-  await main.invoke('region_tool_action', { token:emptyState.tool.token, action:'select', rect:{x:100,y:100,width:600,height:300} })
+  await main.invoke('region_tool_action', { token:emptyState.tool.token, action:'select', rect:{x:100+emptyState.tool.display.x-emptyState.tool.desktop.x,y:100+emptyState.tool.display.y-emptyState.tool.desktop.y,width:600,height:300} })
   await until(async()=> !(await main.invoke('region_tool_state')).tool?.picking,'selected region')
   const emptyToolbar = await connect('toolbar')
   await until(() => emptyToolbar.evaluate(`!!document.querySelector('.region-toolbar')`), 'standalone toolbar')
@@ -263,7 +290,7 @@ try {
   await until(async()=> (await main.invoke('region_tool_state')).tool === null,'close destroys the tool session')
   assert.equal(await main.evaluate(`!!document.querySelector('.region-restore') || document.body.textContent.includes('Show region tool')`),false)
   await select()
-  await until(async()=> {const s=await main.invoke('region_tool_state'); return s.tool && s.tool.token!==emptyState.tool.token && s.tool.rect?.width===600 && !s.tool.picking},'selection node reopens closed tool with remembered region')
+  await until(async()=> {const s=await main.invoke('region_tool_state'); return s.tool && s.tool.token!==emptyState.tool.token && s.tool.rect?.width===600 && s.tool.picking},'selection node dims desktop while retaining remembered region for cancel')
 
   const initialSelection = structuredClone(noUI)
   initialSelection.id = 'region-initial-test'
@@ -271,7 +298,7 @@ try {
   selectNode.data.config.initialRegion = { display:emptyState.tool.display.id, x:100, y:100, width:600, height:300 }
   assert.deepEqual((await main.invoke('activate_blueprint',{document:initialSelection})).diagnostics,[])
   await select()
-  await until(async()=> {const s=await main.invoke('region_tool_state'); return s.tool?.rect?.width===600 && !s.tool.picking},'valid initial region restores without dragging')
+  await until(async()=> {const s=await main.invoke('region_tool_state'); return s.tool?.rect?.width===600 && s.tool.picking},'valid initial region is retained while selecting again')
   initialSelection.id = 'region-invalid-initial-test'
   selectNode.data.config.initialRegion.width = 15
   assert.deepEqual((await main.invoke('activate_blueprint',{document:initialSelection})).diagnostics,[])
@@ -284,7 +311,7 @@ try {
   assert.ok(logWindowText.includes('Windows:'))
   assert.ok(logWindowText.includes('logging-regression: frontend warning'))
   assert.ok((await main.invoke('get_logs')).some(log => log.message.includes('logging-regression: frontend warning')), 'switching blueprints preserves application logs')
-  console.log(JSON.stringify({fixture, logPath, output:stopped.recording.outputPath, stats:stopped.recording, captureExclusionSamples:checked, decoded:decoded.stdout, checks:'unified startup, console, command, disk and encoder diagnostics, selection, border move, round handle resize, centered dashed outline, capture exclusion toggle, compact dropdown, close and reopen, valid region restore, invalid region picker fallback, size menu, stale session, hide/restore, shared controls, native recording, locking, single timer, clock reset, close while recording finalizes MP4, native close while paused finalizes MP4, pause clock, standalone tool'},null,2))
+  console.log(JSON.stringify({fixture, logPath, output:stopped.recording.outputPath, stats:stopped.recording, captureExclusionSamples:checked, decoded:decoded.stdout, checks:'virtual desktop overlay, secondary display auto-selection, cross-display rejection, errors outside controls, unified startup, console, command, disk and encoder diagnostics, selection, border move, round handle resize, centered dashed outline, capture exclusion toggle, compact dropdown, close and reopen, valid region restore, invalid region picker fallback, size menu, stale session, hide/restore, shared controls, native recording, locking, single timer, clock reset, close while recording finalizes MP4, native close while paused finalizes MP4, pause clock, standalone tool'},null,2))
   if (process.env.NODREC_REGION_KEEP_OPEN === '1') { console.log(`Keeping test application open for native UI inspection: ${app.pid}`); await delay(120000) }
 } catch (error) {
   console.error(JSON.stringify({ targets: (await targets()).map(t=>t.url), state: main ? await main.invoke('region_tool_state').then(s=>({tool:s.tool,error:s.runtime.error})).catch(()=>null) : null },null,2))

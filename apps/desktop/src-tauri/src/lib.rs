@@ -75,7 +75,7 @@ async fn activate_blueprint(app: tauri::AppHandle, window: tauri::WebviewWindow,
     let previous_tools = state.workflow.tool_definitions();
     let result = state.workflow.activate(document)?;
     let next_tools = state.workflow.tool_definitions();
-    let same_tools = previous_tools == next_tools || region_tool::same_tool_definitions(previous_tools, next_tools, &recording::displays().unwrap_or_default());
+    let same_tools = previous_tools == next_tools || region_tool::same_tool_definitions(previous_tools, next_tools);
     if before.blueprint_id != state.workflow.snapshot().blueprint_id || !same_tools { state.workflow.tools.reset(&app); }
     let _ = app.emit("workflow-status", state.workflow.snapshot());
     Ok(result)

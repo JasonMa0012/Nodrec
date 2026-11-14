@@ -242,6 +242,7 @@ test('region operations stay within display bounds and retain aspect ratio', () 
   const bounds = { x: 0, y: 0, width: 1920, height: 1080 }
   assert.deepEqual(selectionRect({x:100,y:100},{x:9999,y:9999},bounds),{x:100,y:100,width:1820,height:980})
   assert.deepEqual(selectionRect({x:100,y:100},{x:-99,y:-99},bounds),{x:0,y:0,width:100,height:100})
+  assert.deepEqual(selectionRect({x:2100,y:300},{x:0,y:0},{x:1920,y:200,width:2560,height:1440}),{x:1920,y:200,width:180,height:100})
   for (const h of [...handles, 'move']) for (const delta of [-5000, -50, 50, 5000]) {
     const next = transformRegion(r, h, delta, delta, bounds)
     assert.ok(next.x >= 0 && next.y >= 0 && next.x + next.width <= 1920 && next.y + next.height <= 1080)
