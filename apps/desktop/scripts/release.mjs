@@ -63,6 +63,8 @@ if (!buildOnly) {
   const cargoPath = path.join(desktop, 'src-tauri/Cargo.toml')
   await writeFile(cargoPath, (await readFile(cargoPath, 'utf8')).replace(/^(version\s*=\s*")[^"]+("\s*)$/m, `$1${version}$2`))
 }
+run(process.execPath, [cli, 'build', '--no-bundle'])
+run(process.execPath, [path.join(desktop, 'scripts/format-blueprints.mjs')])
 run(process.execPath, [cli, 'build', '--bundles', 'nsis'], { ...process.env, TAURI_SIGNING_PRIVATE_KEY: key, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' })
 run(process.execPath, [path.join(desktop,'scripts/verify-installer-backup.mjs')])
 run(process.execPath, [path.join(desktop, 'scripts/stage-blueprints.mjs'), 'release'])

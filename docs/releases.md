@@ -5,7 +5,8 @@
 - 新增根目录 `_Init.bat`，安装开发工具链与锁定的项目依赖，完成前后端开发构建；README 补充首次初始化步骤。
 - 包含 v0.1.7 之后已提交的蓝图列表、多显示器选区与编码候选回退修复。
 - 本次 `_Init.bat` 完整执行成功，lint、78 项前端测试、63 项 Rust 常规测试通过；1 项真实硬件测试默认跳过。日志见 `out/init-check.log`。
-- `npm exec tauri -- build --no-bundle` 编译 Release 可执行文件通过，版本为 0.1.8，已补齐发行蓝图。正式签名安装包与 GitHub Release 待原始更新签名私钥恢复后生成；未验证真实安装升级及本轮 UI／录制回归。
+- 发布前自动通过隔离的 Release 应用与 CDP 执行所有内置蓝图的现有 F 排列，保存位置及重置的折线路径；验证节点无重叠、重复排列稳定及连线不变，不需要 Computer Use。可独立执行 `npm run blueprints:format`，需先构建 Release 可执行文件。
+- v0.1.8 Release／签名 NSIS 构建、安装器备份回归通过，日志见 `out/release-0.1.8-build.log`。使用应用内置公钥与 minisign-verify 0.3.0 独立验证安装包签名，并确认篡改包被拒绝；自动排列跨进程重复执行后文件保持一致。未验证真实安装升级及本轮 UI／录制回归。
 
 ## 打包和发布
 

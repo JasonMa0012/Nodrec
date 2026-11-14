@@ -4,6 +4,7 @@
   "version": "0.1.8",
   "type": "module",
   "scripts": {
+    "blueprints:format": "node scripts/format-blueprints.mjs",
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
