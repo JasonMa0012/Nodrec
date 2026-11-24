@@ -1,3 +1,9 @@
+// The standalone benchmark has no Tauri application log.
+mod logging {
+    pub fn write(level: &str, source: &str, message: impl Into<String>) {
+        eprintln!("[{level}] {source}: {}", message.into());
+    }
+}
 mod baseline;
 mod current;
 use std::{time::{Duration,Instant},path::PathBuf};

@@ -10,7 +10,7 @@ type Rect = RoutePoint & { width: number; height: number }
 type Link = { source: string; target: string; sourceHandle: string; targetHandle: string }
 type Group = { root: string; members: string[]; positions: Map<string, RoutePoint>; bounds: Rect }
 
-const mediaTypes = new Set(['video_frames', 'audio_samples', 'encoded_video'])
+const mediaTypes = new Set(['video_frames', 'audio_samples', 'encoded_video', 'input_events'])
 const byId = (a: string, b: string) => a.localeCompare(b)
 const intersects = (a: Rect, b: Rect, gap: number) => a.x < b.x + b.width + gap && a.x + a.width + gap > b.x && a.y < b.y + b.height + gap && a.y + a.height + gap > b.y
 

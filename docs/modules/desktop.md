@@ -8,6 +8,8 @@
 
 Overview／Blueprint 切换时，总控栏通过 180ms CSS 过渡展开／收起拖拽把手、内边距和编辑外框。Overview 的把手宽度为 0，且 inert／disabled。状态和计时项在 Overview 中无边框／背景，进入 Blueprint 时渐显编辑外框，删除按钮同步淡入／淡出。系统减少动态效果偏好沿用全局规则，立即完成切换。
 
+Overview 按主窗口 Record 快捷方式绑定的 Screen 显示录制区域。全屏显示 (0, 0) 和显示器物理宽高，选区显示选区工具的当前矩形，缺少选区或全屏目标不明确时显示 “—”。Rectangle 模式保留独立的手填值；只有直接驱动当前矩形的字段可编辑。
+
 全局单选下拉框复用统一 ChevronDown 图形，箭头距右边缘 10px，文本预留 32px，覆盖 Overview、节点／Details、设置和选区菜单。键盘及弹出选项继续使用原生 select，强制颜色模式恢复系统箭头。主窗口首次加载同时同步运行快照的按钮、状态与计时项，Overview 无需切换 Blueprint 即显示完整总控栏。
 
 本轮修复并复验此前记录的 Overview 向下插入与选区会话重置问题，完整 `npm run verify` 已通过。74 项前端单测、59 项常规 Rust 单测及单独硬件故障测试通过，路径／Toggle 的实际界面复验完成；方法、夹具、捕获校准与设备边界见 [本轮验收记录](../testing.md#路径控件toggle-与代码清理验收2026-11-12)。
@@ -85,7 +87,7 @@ React + Tauri 2 桌面应用位于 [apps/desktop](../../apps/desktop)，使用 R
 - Settings 提供启动更新检查、代理、版本和手动更新。应用在安装更新前保存修改；安装器及签名更新细节见 [发布与更新](../releases.md)。
 - 启动、更新、工作流、原生录制以及各 WebView 的控制台／未处理错误共用 `logging.rs` 日志流，日志存储通过回调通知 UI，原生录制／解码探针可独立运行，同时写入终端、Logs 窗口与 `%LOCALAPPDATA%/Nodrec/logs/nodrec-<启动毫秒>-<PID>.log`；缺少 LOCALAPPDATA 时使用临时目录。每条包含时间、级别、来源和可用的蓝图／运行上下文。本次运行全部日志保留，切换蓝图不清除。写入失败在窗口提示并继续保留内存日志。
 - 启动后台记录应用版本、Windows 版本／构建号、CPU、内存、所有 DXGI GPU 的设备 ID／显存／驱动版本、显示器几何／HDR，以及 WebView 版本与缩放。Logs 标题栏提供 Copy all logs 和 Open log folder，复制包括尚未打开面板时产生的日志。开发服务器不监听 `src-tauri/target` 构建目录。
-- 内置 Screen recording 支持真实无声录屏；Operation recording 是不可运行的预览。音频、键鼠录制／回放、差异报告和 MCP 尚未实现。
+- 内置 Screen recording 支持真实无声录屏；Operation recording 默认录制全屏并同步写入键鼠事件与视频帧索引，支持选区、暂停、继续和停止。Screen recording 的 Write MP4 可连接 Keyboard & Mouse Input，同步写输入文件。音频、键鼠回放、差异报告和 MCP 尚未实现。
 
 界面使用英文。通用交互、参数行与字体要求集中记录在 [UI 规范](../ui-guidelines.md)；运行时和媒体接口见 [跨模块接口](../contracts.md)。
 

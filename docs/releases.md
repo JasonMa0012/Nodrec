@@ -1,5 +1,10 @@
 # Windows 发布与更新
 
+## v0.1.9（2026-11-24）
+
+- Overview 跟随 Screen 输入显示录制区域。全屏使用显示器物理尺寸，选区随移动和缩放更新，Rectangle 保留手填值。
+- Operation recording 在录制时输出视频、键鼠事件和逐帧时间索引，可用 `scripts/query-input.py` 按帧或时间查询。Screen recording 模板继续仅录制视频。
+
 ## v0.1.8 发布准备（2026-11-14）
 
 - 新增根目录 `_Init.bat`，安装开发工具链与锁定的项目依赖，完成前后端开发构建；README 补充首次初始化步骤。

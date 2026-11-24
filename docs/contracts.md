@@ -25,7 +25,7 @@
 
 ## 选区工具
 
-- `select_region` 是纯数据／动作节点：Region 输出、Initial Region 输入，以及 select 动作。没有 Execute、Selected 或 Cancelled 执行端口。`get_selected_region` 的 Selected Region 输入优先读取显式连线；旧 V2 文件未连接时按 toolId 读取当前选区。Selected Region 模式缺少选区时拒绝录制，其他模式使用 fallback。选择时遮罩覆盖所有显示器，使用虚拟桌面物理坐标；拖动限制在起点所在屏幕，后端拒绝跨屏区域，并转换为所选显示器内坐标。再次选择也进入遮罩，取消保留旧区域。确认选区时主窗口同步 display、x、y、width、height 和 regionMode 参数；取消不提交。
+- `select_region` 是纯数据／动作节点：Region 输出、Initial Region 输入，以及 select 动作。没有 Execute、Selected 或 Cancelled 执行端口。`get_selected_region` 的 Selected Region 输入优先读取显式连线；旧 V2 文件未连接时按 toolId 读取当前选区。Selected Region 模式缺少选区时拒绝录制，其他模式使用 fallback。选择时遮罩覆盖所有显示器，使用虚拟桌面物理坐标；拖动限制在起点所在屏幕，后端拒绝跨屏区域，并转换为所选显示器内坐标。再次选择也进入遮罩，取消保留旧区域。确认选区时主窗口同步 display 和 regionMode，手填矩形单独保存在 x、y、width、height 参数中。`region_preview` 按指定 graphId 和 screenId 解析与录制共用的 Region 输入，返回区域及由对应手填参数直接驱动的字段。
 - `dispatch_node_action` 在主窗口打开选区；浮动工具条调用 `region_tool_node_action`，携带当前 token、controlId 和 action，由 Rust 校验窗口、工具会话、控件目标及绑定。过期 token 被拒绝。区域变更、比例和显示设置在录制期间被锁定。
 - 每次打开重新校验上次区域；有效 Initial Region 或会话区域直接恢复，无效区域清除并等待框选。区域仅保留在当前蓝图运行时，不跨应用重启保存。DPI 或显示器几何变化使其失效。
 - `region_tool_layout` 更新窗口边界；`region_tool_shape` 更新可见控件原生命中区域；`region_tool_ratio` 同步有限非负比例，0 表示解锁。浮动工具条与主窗口共享录制状态和时钟。
@@ -34,7 +34,7 @@
 
 Tauri 蓝图命令提供索引、原子保存、revision 冲突检测、删除与恢复；内置模板替换前备份。设置通过 `get_settings`／`save_settings` 保存，更新使用 `check_update`／`install_update` 和 `update-progress`。Rust 保留最近检查的更新对象，前端不能提交任意下载地址；安装前保存修改，录制期间拒绝更新安装。详见 [发布与更新](releases.md)。
 
-音频、输入／回放、验证基线及 MCP 边界仍属于后续工作，不将计划视为已实现接口。
+`keyboard_mouse.events` 和 `write.events` 使用 `input_events` 类型；每个接入的 MP4 输出附带版本化的事件与帧索引 JSONL。字段和查询示例见 [Input](modules/input.md)。音频、回放、验证基线及 MCP 边界仍属于后续工作。
 
 ## 桌面路径操作
 

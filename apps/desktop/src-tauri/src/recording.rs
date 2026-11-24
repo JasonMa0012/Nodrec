@@ -3,6 +3,8 @@ use std::{path::{Path, PathBuf}, sync::{Arc, Mutex, mpsc}, thread, time::{Durati
 
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+mod input;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,6 +99,12 @@ pub struct OutputStats {
 pub(super) struct Control {
     pub stop: bool,
     pub paused: bool,
+    timeline: Option<Timeline>,
+    segment: u64,
+    #[cfg(windows)]
+    segment_start_ms: u64,
+    #[cfg(windows)]
+    input_baseline: Option<(u64,std::collections::BTreeSet<u16>)>,
     pub stats: RecordingStats,
 }
 
@@ -130,6 +138,9 @@ impl RecordingSession {
         Self::launch_graph(plan.clone(), vec![(plan,paths)])
     }
     pub fn launch_graph(plan: RecordingPlan, groups: Vec<(RecordingPlan,Vec<PathBuf>)>) -> Self {
+        Self::launch_with_input(plan, groups, Vec::new())
+    }
+    pub fn launch_with_input(plan: RecordingPlan, groups: Vec<(RecordingPlan, Vec<PathBuf>)>, input_paths: Vec<PathBuf>) -> Self {
         let control = Arc::new(Mutex::new(Control::default()));
         {
             let mut state = control.lock().unwrap_or_else(|e| e.into_inner());
@@ -140,7 +151,7 @@ impl RecordingSession {
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
             #[cfg(windows)]
-            let result = windows::record(plan, groups, &shared, &ready_tx).map_err(|error| error.to_string());
+            let result = windows::record(plan, groups, input_paths, &shared, &ready_tx).map_err(|error| error.to_string());
             #[cfg(not(windows))]
             let result: Result<(), String> = { let _ = plan; Err("Screen recording currently requires Windows".into()) };
             let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
@@ -159,13 +170,25 @@ impl RecordingSession {
         });
         Self { control, worker: Some(worker), ready: Arc::new(Mutex::new(ready_rx)) }
     }
-    fn wait_ready(&self) -> Result<(), String> { Self::wait_for_ready(&self.ready) }
+    pub fn wait_ready(&self) -> Result<(), String> { Self::wait_for_ready(&self.ready) }
     pub(crate) fn wait_for_ready(ready: &Arc<Mutex<mpsc::Receiver<Result<(), String>>>>) -> Result<(), String> {
         ready.lock().map_err(|_| "Recording startup channel is unavailable".to_string())?
             .recv_timeout(Duration::from_secs(20)).map_err(|e| format!("Recording startup did not complete: {e}"))?
     }
     pub fn stats(&self) -> RecordingStats { self.control.lock().unwrap_or_else(|e| e.into_inner()).stats.clone() }
-    pub fn pause(&self, paused: bool) { self.control.lock().unwrap_or_else(|e| e.into_inner()).paused = paused; }
+    pub fn pause(&self, paused: bool) { let mut c = self.control.lock().unwrap_or_else(|e| e.into_inner());
+        if c.paused != paused {
+            let previous = c.paused;
+            if let Some(clock) = &mut c.timeline { clock.update(previous); }
+            c.paused = paused;
+            c.segment += 1;
+            #[cfg(windows)]
+            if !paused && c.input_baseline.is_some() {
+                let ticks = (c.timeline.as_ref().unwrap().elapsed.as_nanos() / 100) as u64;
+                c.input_baseline = Some((ticks,input::held_virtual_keys()));
+                c.segment_start_ms = unsafe { ::windows::Win32::System::SystemInformation::GetTickCount64() };
+            }
+        } }
     pub fn request_stop(&self) { self.control.lock().unwrap_or_else(|e| e.into_inner()).stop = true; }
     pub fn stop(mut self) -> Result<RecordingStats, String> {
         self.finish()?;

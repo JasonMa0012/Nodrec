@@ -19,6 +19,8 @@ document.graphs[0].name = 'Custom Recording Graph'
 document.controls.forEach(control=>{control.binding.graphId='custom-recording-graph'})
 document.displays.forEach(display=>{display.binding.graphId='custom-recording-graph'})
 const secondGraph=structuredClone(document.graphs[0])
+document.graphs[0].nodes.push({id:'input',type:'keyboard_mouse',position:{x:400,y:1000},data:{kind:'keyboard_mouse',label:'Keyboard & Mouse Input',config:{}}})
+document.graphs[0].edges.push({id:'capture-input',source:'input',sourceHandle:'out:events',target:'write',targetHandle:'in:events'})
 secondGraph.id='second-graph';secondGraph.name='Second Graph'
 for(const node of secondGraph.nodes){if(node.data.config?.toolId)node.data.config.toolId='second-capture-region';if(node.data.kind==='encode_media_foundation')node.data.config.resolution='1920 × 1080'}
 secondGraph.edges=secondGraph.edges.filter(edge=>!(edge.target==='encode_media_foundation'&&edge.targetHandle==='in:param:resolution'))
@@ -74,6 +76,10 @@ try {
   }
   await until(async()=>evaluate(`!!document.querySelector('.overview-page')`))
   const displays=await evaluate(`window.__TAURI_INTERNALS__.invoke('list_displays')`)
+  const operationPath = path.join(fixture,'blueprints/builtin/operation-recording.nodrec.json')
+  const operation = JSON.parse(await readFile(operationPath,'utf8'))
+  Object.assign(operation.values,{output:path.join(fixture,'operation'),display:displays[0].id})
+  await writeFile(operationPath,JSON.stringify(operation))
   document.values.display=displays[0].id
   localDocument.graphs[0].nodes.find(node=>node.data.kind==='screen').data.config.region.display=displays[0].id
   await writeFile(path.join(fixture,'blueprints/builtin/local-inline.nodrec.json'),JSON.stringify(localDocument))
@@ -250,8 +256,13 @@ try {
   await click('.titlebar button','Stop')
   await until(()=>state('ready'),25000)
   const result=await runtime()
-  assert.ok(result.recording.outputs.length===1 && result.recording.outputs.every(item=>item.finished&&!item.error),JSON.stringify(result))
+  assert.ok(result.recording.outputs.length===3 && result.recording.outputs.every(item=>item.finished&&!item.error),JSON.stringify(result))
   assert.ok(result.recording.encodedFrames>0)
+  for(const suffix of ['.input.jsonl','.frames.jsonl']) {
+    const file=result.recording.outputs.find(out=>out.path.endsWith(suffix))
+    assert.ok(file)
+    assert.equal(JSON.parse((await readFile(file.path,'utf8')).split('\n')[0]).version,2)
+  }
   const filesBeforeCancel=await readdir(path.join(fixture,'recordings'))
   await evaluate(`document.querySelector('.react-flow__node[data-id="screen"] input[aria-label="Start Delay Seconds"]').focus()`)
   await key('a','KeyA',65,2)
@@ -287,6 +298,23 @@ Region action diagnostics: ${JSON.stringify(await evaluate(`({alerts:[...documen
   await click('.workspace-tab button','Overview')
   await until(()=>evaluate(`document.querySelector('.overview-page input[aria-label="Width (physical px)"]')?.value===String(${selection.tool.rect.width})`))
   assert.equal(await evaluate(`document.querySelector('.overview-page select[aria-label="Capture mode"]').value`),'Selected Region')
+  const checkRegion = async (rect, readOnly) => {
+    const expected = ['x','y','width','height'].map(key => String(rect[key]))
+    await until(() => evaluate(`['X','Y','Width','Height'].every((label,i)=>{
+      const field=document.querySelector('.overview-page input[aria-label="'+label+' (physical px)"]')
+      return field?.value===${JSON.stringify(expected)}[i] && field.readOnly===${readOnly}
+    })`))
+  }
+  const setMode = mode => evaluate(`(()=>{const field=document.querySelector('.overview-page select[aria-label="Capture mode"]');field.value=${JSON.stringify(mode)};field.dispatchEvent(new Event('change',{bubbles:true}))})()`)
+  const moved = { ...selection.tool.rect, x: selection.tool.rect.x + 1 }
+  await evaluate(`window.__TAURI_INTERNALS__.invoke('region_tool_action',{token:${JSON.stringify(selection.tool.token)},action:'change',rect:${JSON.stringify(moved)}})`)
+  await checkRegion(moved, true)
+  await setMode('Full Display')
+  await checkRegion({ x:0, y:0, width:selection.tool.display.width, height:selection.tool.display.height }, true)
+  await setMode('Rectangle')
+  await checkRegion(document.values, false)
+  await setMode('Selected Region')
+  await checkRegion(moved, true)
   await evaluate(`window.__TAURI_INTERNALS__.invoke('region_tool_action',{token:${JSON.stringify(selection.tool.token)},action:'reselect',rect:null})`)
   await until(()=>evaluate(`window.__TAURI_INTERNALS__.invoke('region_tool_state').then(state=>state.tool?.picking)`))
   await evaluate(`window.__TAURI_INTERNALS__.invoke('region_tool_action',{token:${JSON.stringify(selection.tool.token)},action:'cancel',rect:null})`)
@@ -335,6 +363,8 @@ Region action diagnostics: ${JSON.stringify(await evaluate(`({alerts:[...documen
   await until(async()=>{const saved=JSON.parse(await readFile(stored,'utf8'));return saved.graphs[0].id==='custom-recording-graph'&&saved.graphs[1].id==='second-graph'&&saved.controls.some(c=>c.binding.graphId==='second-graph'&&c.targets.includes('main'))})
   await evaluate(`[...document.querySelectorAll('.blueprint-select')].find(button=>button.querySelector('.blueprint-name')?.textContent==='Local inline').click()`)
   await until(async()=>(await runtime()).blueprintId==='local-inline')
+  await click('.workspace-tab button','Overview')
+  await checkRegion({x:100,y:100,width:640,height:480}, true)
   await click('.workspace-tab button','Blueprint')
   await until(()=>evaluate(`document.querySelectorAll('.react-flow__node').length===3&&!!document.querySelector('.react-flow__node[data-id="screen"] input[aria-label="Width"]')`))
   assert.equal(await evaluate(`document.querySelector('.react-flow__node[data-id="screen"] input[aria-label="Width"]').value`),'640')
@@ -343,7 +373,9 @@ Region action diagnostics: ${JSON.stringify(await evaluate(`({alerts:[...documen
   await writeFile(path.join(fixture,'local-inline.png'),Buffer.from(localGraphImage.data,'base64'))
   await evaluate(`(()=>{const input=document.querySelector('.react-flow__node[data-id="screen"] input[aria-label="Width"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'642');input.dispatchEvent(new Event('input',{bubbles:true}))})()`)
   await key('s','KeyS',83,2)
-  await until(async()=>{const saved=JSON.parse(await readFile(path.join(fixture,'blueprints/builtin/local-inline.nodrec.json'),'utf8'));return saved.graphs[0].nodes.find(node=>node.id==='screen').data.config.region.width===642})
+  await until(()=>evaluate(`!document.querySelector('.blueprint-save')`))
+  const savedLocal=JSON.parse(await readFile(path.join(fixture,'blueprints/builtin/local-inline.nodrec.json'),'utf8'))
+  assert.equal(savedLocal.graphs[0].nodes.find(node=>node.id==='screen').data.config.region.width,642)
   await click('.titlebar button','Record');await until(()=>state('recording'),25000)
   assert.equal((await runtime()).recording.width,642)
   await delay(500);await click('.titlebar button','Stop');await until(()=>state('ready'),25000)
@@ -351,7 +383,7 @@ Region action diagnostics: ${JSON.stringify(await evaluate(`({alerts:[...documen
   assert.ok(localRecording.outputPath.includes('local-recordings'))
   await evaluate(`(()=>{const input=document.querySelector('.react-flow__node[data-id="write"] input[aria-label="Filename"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'invalid_{unknown}.mp4');input.dispatchEvent(new Event('input',{bubbles:true}))})()`)
   await click('.titlebar button','Record');await until(()=>state('failed'))
-  await until(()=>evaluate(`document.querySelector('.react-flow__node[data-id="screen"] .node-error')?.textContent.includes('Filename')&&[...document.querySelectorAll('.titlebar [role="alert"]')].some(alert=>alert.textContent.includes('Filename'))`))
+  await until(()=>evaluate(`document.querySelector('.react-flow__node[data-id="screen"] .node-error')?.textContent.includes('Filename')&&document.querySelector('.app-notice[role="status"]')?.textContent.includes('Filename')`))
   assert.ok((await runtime()).nodeErrors.some(error=>error.graphId==='custom-recording-graph'&&error.nodeId==='screen'))
   await evaluate(`(()=>{const input=document.querySelector('.react-flow__node[data-id="write"] input[aria-label="Filename"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'collision_{timestamp}.mp4');input.dispatchEvent(new Event('input',{bubbles:true}))})()`)
   await click('.titlebar button','Record');await until(()=>state('recording'),25000)
@@ -359,10 +391,26 @@ Region action diagnostics: ${JSON.stringify(await evaluate(`({alerts:[...documen
   await writeFile(collisionPath,'preserve publication conflict')
   await delay(200);await click('.titlebar button','Stop');await until(()=>state('failed'),25000)
   await until(()=>evaluate(`!!document.querySelector('.react-flow__node[data-id="write"] .node-error')?.textContent`))
-  await until(()=>evaluate(`!!document.querySelector('.titlebar [role="alert"]')?.textContent`))
+  await until(()=>evaluate(`!!document.querySelector('.recording-outputs [role="alert"]')?.textContent`))
   assert.ok((await runtime()).nodeErrors.some(error=>error.nodeId==='write'&&error.graphId==='custom-recording-graph'))
   assert.equal(await readFile(collisionPath,'utf8'),'preserve publication conflict')
-  await writeFile(path.join(fixture,'result.json'),JSON.stringify({fixture,toolbarAnimation,shortcutToolbar:true,nodeReadOnlyShortcuts:true,nodeActionOrder:true,directRemoval:true,deduplication:true,mouseOrder:true,insertionIndicator:true,keyboardOrder:true,saveReload:true,inlineParameters:true,disconnectRestoresLocal:true,countdownCancelled:true,crossWindowControls:true,localRecording,secondGraphRecording,regionRecording,recording:result.recording},null,2))
+  await evaluate(`[...document.querySelectorAll('.blueprint-select')].find(b=>b.textContent.trim()==='Operation recording').click()`)
+  await until(async()=>(await runtime()).blueprintId==='operation-recording')
+  await click('.titlebar button','Record')
+  await until(()=>state('recording'),25000)
+  await delay(700)
+  await click('.titlebar button','Stop')
+  await until(()=>state('ready'),25000)
+  const operationRecording=(await runtime()).recording
+  assert.equal(operationRecording.outputs.length,3)
+  assert.ok(operationRecording.outputs.every(o=>o.finished&&!o.error))
+  const prefix=operationRecording.outputPath.replace(/\.mp4$/i,'')
+  for (const suffix of ['.input.jsonl','.frames.jsonl']) {
+    const lines=(await readFile(prefix+suffix,'utf8')).trimEnd().split('\n')
+    assert.ok(lines.length>=2)
+    assert.equal(JSON.parse(lines[0]).video,path.basename(operationRecording.outputPath))
+  }
+  await writeFile(path.join(fixture,'result.json'),JSON.stringify({fixture,operationRecording,toolbarAnimation,shortcutToolbar:true,nodeReadOnlyShortcuts:true,nodeActionOrder:true,directRemoval:true,deduplication:true,mouseOrder:true,insertionIndicator:true,keyboardOrder:true,saveReload:true,inlineParameters:true,disconnectRestoresLocal:true,countdownCancelled:true,crossWindowControls:true,localRecording,secondGraphRecording,regionRecording,recording:result.recording},null,2))
   console.log(JSON.stringify({fixture,recording:result.recording},null,2))
 } finally {
   socket?.close()

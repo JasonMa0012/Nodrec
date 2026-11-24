@@ -37,6 +37,9 @@ type RuntimeLog = { sequence: number; blueprintId: string | null; runId: string 
 type RecordingStats = { outputs: OutputStatus[]; encoder: string; adapter: string; width: number; height: number; fps: number; durationMs: number; encodedFrames: number; droppedFrames: number; repeatedFrames: number; outputPath: string; stopMs: number | null; error: string | null; finished: boolean }
 type DisplayInfo = { id: string; name: string; width: number; height: number; x: number; y: number; hdr: boolean }
 const DisplayContext = createContext<DisplayInfo[]>([])
+type RegionPreview = { region?: { display: string; mode: string; x: number; y: number; width: number; height: number }; editable: string[]; error?: string }
+const RegionContext = createContext<RegionPreview | null>(null)
+const regionFields = ['x','y','width','height'] as const
 type NodeError = {graphId:string;nodeId:string;message:string}
 type RuntimeSnapshot = { nodeErrors:NodeError[]; blueprintId: string | null; runId: string | null; status: Blueprint['recordState']; frameCount: number; controls: RegisteredControl[]; displays: RegisteredDisplay[]; logs: RuntimeLog[]; error: string | null; recording: RecordingStats | null }
 type RemovedBlueprint = { blueprint: Blueprint; trashName: string | null; savedDocument: string | null }
@@ -197,12 +200,26 @@ function BuiltinBadge() {
     {anchor && createPortal(<span id={tooltipId} className="builtin-tooltip" role="tooltip" style={{ left: Math.max(8, Math.min(anchor.left, window.innerWidth - 368)), top: anchor.bottom + 6 }}>Built-in blueprint. Replaced on every update. Duplicate to keep your changes.</span>, document.body)}</>
 }
 
-function ParameterControl({ definition, value, onChange }: { definition: ParameterDefinition; value: Value; onChange: (value: Value) => void }) {
+function ParameterControl({ definition, value, onChange, overview = false }: { overview?: boolean; definition: ParameterDefinition; value: Value; onChange: (value: Value) => void }) {
   const displays = useContext(DisplayContext)
-  const changed = definition.kind !== 'readonly' && value !== definition.initial
+  const preview = useContext(RegionContext)
+  const field = overview && regionFields.find(key => key === definition.id)
+  const derived = field && preview && !preview.editable.includes(field)
+  let hint = preview?.error
+  if (field && derived) {
+    const region = preview.region
+    if (region?.mode === 'Full Display') {
+      const matches = displays.filter(d => d.id === region.display)
+      const display = matches.length === 1 ? matches[0] : region.display === 'Display 1' && displays.length === 1 ? displays[0] : undefined
+      value = display ? (field === 'x' || field === 'y' ? 0 : display[field]) : '—'
+      if (!display) hint = 'Select a display'
+    } else value = region?.[field] ?? '—'
+  }
+  const changed = !derived && definition.kind !== 'readonly' && value !== definition.initial
   const sizingRef = useParameterSizing(JSON.stringify([value, displays]))
   return <span className="parameter-control-wrap" ref={sizingRef}>
-    {definition.kind === 'boolean' ? <Toggle label={definition.label} checked={Boolean(value)} onChange={onChange} />
+    {derived ? <input className="field-control" aria-label={definition.label} readOnly value={String(value)} title={hint ?? 'Current recording region in physical pixels'} />
+      : definition.kind === 'boolean' ? <Toggle label={definition.label} checked={Boolean(value)} onChange={onChange} />
       : definition.id === 'display' ? <select className="field-control" aria-label={definition.label} value={String(value)} onChange={(event) => onChange(event.target.value)}>
         {!displays.some((display) => display.id === value) && <option value={String(value)}>{String(value)} (select a display)</option>}
         {displays.map((display) => <option key={display.id} value={display.id}>{display.name} · {display.width} × {display.height}{display.hdr ? ' (HDR unsupported)' : ''}</option>)}
@@ -226,7 +243,7 @@ function ParameterCard({ definition, value, pinned, onChange, selected = false, 
     <div className="layout-field-heading">
       {dragProps ? <button type="button" className="parameter-drag-handle" aria-label={`Drag ${definition.label}`} {...dragProps}><GripVertical size={13} /></button> : <GripVertical size={13} />}
       <span className="parameter-label">{definition.label}</span>
-      <ParameterControl definition={definition} value={value} onChange={onChange} />
+      <ParameterControl overview definition={definition} value={value} onChange={onChange} />
       <button type="button" className={`icon-button pin-button${pinned ? ' pinned' : ''}`} aria-label={pinned ? 'Unpin parameter' : 'Pin parameter'} onClick={(event) => { event.stopPropagation(); onPin?.() }}><Pin size={14} /></button>
     </div>
   </div>
@@ -318,7 +335,7 @@ function ParameterField({ blueprint, definition, update, compact = false, inline
   const changed = definition.kind !== 'readonly' && value !== definition.initial
   return <label className={`parameter-field${compact ? ' compact' : ''}${inline ? ' inline' : ''}${definition.kind === 'boolean' ? ' boolean-field' : ''}${changed ? ' has-reset' : ''}`}>
     <span className="parameter-label">{definition.label}</span>
-    <ParameterControl definition={definition} value={value} onChange={(value) => update((current) => ({ ...current, values: { ...current.values, [definition.id]: value } }))} />
+    <ParameterControl overview definition={definition} value={value} onChange={(value) => update((current) => ({ ...current, values: { ...current.values, [definition.id]: value } }))} />
   </label>
 }
 
@@ -956,10 +973,11 @@ export default function App() {
   const [displays, setDisplays] = useState<DisplayInfo[]>([])
   useEffect(() => {
     if (!isTauri()) return
-    const refresh = () => { void invoke<DisplayInfo[]>('list_displays').then(setDisplays).catch((error) => setNotice(`Cannot enumerate displays: ${String(error)}`)) }
+    const refresh = () => { void invoke<DisplayInfo[]>('list_displays').then(next => setDisplays(current => JSON.stringify(current) === JSON.stringify(next) ? current : next)).catch((error) => { setDisplays([]); setNotice(`Cannot enumerate displays: ${String(error)}`) }) }
     refresh()
     window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
+    const timer = window.setInterval(() => { if (document.hasFocus()) refresh() }, 3000)
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh) }
   }, [])
   const [logs, setLogs] = useState<RuntimeLog[]>([])
   const [logsOpen, setLogsOpen] = useState(false)
@@ -991,6 +1009,22 @@ export default function App() {
   const activationKey = activeBlueprintId && activeDocumentJson ? `${activeBlueprintId}:${activeDocumentJson}` : ''
   const runtimeLocked = ['starting', 'recording', 'paused', 'stopping'].includes(status)
   const actionsReady = runtimeLocked || activationKey === activatedDocumentKey
+  const recordBinding = activeBlueprint?.controls.find(control => control.binding.action === 'record' && (control.targets?.includes('main') ?? true))?.binding
+  const screens = !recordBinding && activeBlueprint ? blueprintGraphs(activeBlueprint).flatMap(graph =>
+    graph.nodes.filter(node => node.data.kind === 'screen').map(node => ({graphId: graph.id, nodeId: node.id}))) : []
+  const previewBinding = recordBinding ?? (screens.length === 1 ? screens[0] : undefined)
+  const graphId = previewBinding?.graphId
+  const screenId = previewBinding?.nodeId
+  const [regionRevision, refreshRegion] = useState(0)
+  const [preview, setPreview] = useState<(RegionPreview & { blueprintId: string }) | null>(null)
+  useEffect(() => {
+    if (!graphId || !screenId || !activeBlueprintId || !actionsReady || !isTauri()) return
+    let live = true
+    void invoke<RegionPreview>('region_preview', { blueprintId: activeBlueprintId, graphId, screenId })
+      .then(result => { if (live) setPreview({ ...result, blueprintId: activeBlueprintId }) })
+      .catch(error => { if (live) setPreview({ editable: [], error: String(error), blueprintId: activeBlueprintId }) })
+    return () => { live = false }
+  }, [graphId, screenId, activeBlueprintId, actionsReady, activatedDocumentKey, regionRevision])
   const updateBlueprint = useCallback((value: Blueprint | ((current: Blueprint) => Blueprint)) => {
     if (!activeBlueprintId) return
     setBlueprints((current) => current.map((blueprint) => {
@@ -1102,10 +1136,13 @@ export default function App() {
     }
     void Promise.all([
       listen<RuntimeSnapshot>('workflow-status', (event) => apply(event.payload)),
+      listen('region-reset', () => refreshRegion(n => n + 1)),
+      listen<{ blueprintId: string }>('region-tool', ({payload}) => {
+        if (payload.blueprintId === activeBlueprintIdRef.current) refreshRegion(n => n + 1)
+      }),
       listen<{blueprintId:string;display:{id:string};rect:{x:number;y:number;width:number;height:number}|null}>('region-confirmed', ({payload}) => {
         if (!payload.rect || payload.blueprintId !== activeBlueprintIdRef.current) return
-        const {x,y,width,height}=payload.rect
-        setBlueprints(current=>current.map(blueprint=>blueprint.id===payload.blueprintId && !['starting','recording','paused','stopping'].includes(blueprint.recordState) ? {...blueprint,values:{...blueprint.values,display:payload.display.id,regionMode:'Selected Region',x,y,width,height}} : blueprint))
+        setBlueprints(current=>current.map(blueprint=>blueprint.id===payload.blueprintId && !['starting','recording','paused','stopping'].includes(blueprint.recordState) ? {...blueprint,values:{...blueprint.values,display:payload.display.id,regionMode:'Selected Region'}} : blueprint))
       }),
     ]).then((listeners) => { if (disposed) listeners.forEach((stop) => stop()); else unlisten = listeners })
     return () => { disposed = true; unlisten.forEach((stop) => stop()) }
@@ -1261,7 +1298,7 @@ export default function App() {
   const workspaceTabs:EditorTab[] = activeBlueprint ? [{id:'overview',kind:'overview'},{id:'blueprint',kind:'blueprint'},...activeBlueprint.tabs.filter(tab=>tab.kind==='card')] : []
   const selectedTabId=workspaceTabs.some(tab=>tab.id===activeBlueprint?.activeTab)?activeBlueprint?.activeTab:'overview'
   const contextBlueprint = menuBlueprint ? blueprints.find((blueprint) => blueprint.id === menuBlueprint.id) : null
-  return <DisplayContext.Provider value={displays}><div className="desktop-window" inert={updating}>
+  return <DisplayContext.Provider value={displays}><RegionContext.Provider value={graphId ? (preview && preview.blueprintId === activeBlueprintId ? preview : { editable: [] }) : null}><div className="desktop-window" inert={updating}>
     <TitleBar shortcutBlueprint={activeBlueprint??null} editingShortcuts={page==='workspace'&&activeBlueprint?.activeTab==='blueprint'&&!runtimeLocked} updateShortcuts={updateBlueprint} displays={registeredDisplays} durationMs={recording?.durationMs ?? 0} controls={controls} status={status} controlsDisabled={!activeBlueprint?.supported || !actionsReady} sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((current) => !current)} navigate={selectPage} showLogs={showLogs} />
     <Group className="desktop-panels" orientation="vertical" defaultLayout={{ workspace: 78, logs: 22 }} resizeTargetMinimumSize={{ fine: 8, coarse: 12 }}>
     <Panel id="workspace" minSize="35%" className="desktop-main-panel">
@@ -1316,6 +1353,6 @@ export default function App() {
       <button role="menuitem" className="danger-action" disabled={runtimeLocked && contextBlueprint.id === activeBlueprintId} onClick={() => { void removeBlueprint(contextBlueprint.id) }}>Delete</button>
     </div>, document.body)}
     <BlueprintDialog key={`${dialog?.kind ?? 'none'}-${dialog?.blueprintId ?? ''}`} dialog={dialog} initialName={dialog?.kind === 'rename' ? blueprints.find((blueprint) => blueprint.id === dialog.blueprintId)?.name ?? '' : ''} onClose={() => setDialog(null)} onSave={saveName} />
-  </div></DisplayContext.Provider>
+  </div></RegionContext.Provider></DisplayContext.Provider>
 }
 

@@ -6,7 +6,7 @@ import {
   type Connection, type ConnectionLineComponentProps, type Edge, type EdgeProps, type EdgeChange, type Node, type NodeChange, type NodeProps,
 } from '@xyflow/react'
 import {
-  AudioLines, Copy, FileOutput, FolderOpen, GitBranch, ListPlus, Monitor, MousePointer2,
+  AudioLines, Keyboard, Copy, FileOutput, FolderOpen, GitBranch, ListPlus, Monitor, MousePointer2,
   Settings, Square, Video, Workflow,
 } from 'lucide-react'
 import { connectedNodeIds, ribbonOffsets, routePoints, roundedPath, type RoutePoint } from './graph-interactions'
@@ -66,7 +66,7 @@ const icons = {
   select_region: MousePointer2, get_selected_region: MousePointer2,
   read_parameter: Settings, constant: Square, make_boolean: Square, make_byte: Square, make_integer: Square, make_integer64: Square, make_float: Square, make_double: Square, make_name: Square, make_string: Square, make_text: Square, compare: GitBranch,
   region: MousePointer2, path: FileOutput, screen: Monitor,
-  audio: AudioLines, encode_media_foundation: Video, write: FileOutput,
+  keyboard_mouse: Keyboard, audio: AudioLines, encode_media_foundation: Video, write: FileOutput,
 }
 
 function Port({ port, side, connected, editor, hideLabel = false }: { hideLabel?: boolean; port: NodePortDefinition; side: 'in' | 'out'; connected: boolean; editor?:ReactNode }) {

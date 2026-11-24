@@ -156,6 +156,11 @@ async fn region_tool_node_action(app: tauri::AppHandle, window: tauri::WebviewWi
 }
 
 #[tauri::command]
+fn region_preview(state: State<'_, AppState>, blueprint_id: String, graph_id: String, screen_id: String) -> Value {
+    state.workflow.region_preview(&blueprint_id, &graph_id, &screen_id).unwrap_or_else(|error| serde_json::json!({"error":error,"editable":[]}))
+}
+
+#[tauri::command]
 fn runtime_snapshot(state: State<'_, AppState>) -> workflow::RuntimeSnapshot {
     state.workflow.snapshot()
 }
@@ -202,6 +207,7 @@ pub fn run() {
 
             dispatch_node_action,
             runtime_snapshot,
+            region_preview,
             region_tool_state,
             region_tool_action,
             region_tool_layout,

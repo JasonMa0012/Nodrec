@@ -84,6 +84,7 @@ impl RegionTools {
     pub fn reset(&self, app: &AppHandle) {
         self.close(app);
         self.0.lock().unwrap_or_else(|e| e.into_inner()).selected.clear();
+        let _ = app.emit("region-reset", ());
     }
     pub fn selected(&self) -> HashMap<String, Value> { self.0.lock().unwrap_or_else(|e| e.into_inner()).selected.clone() }
     pub fn snapshot(&self) -> Option<Tool> { self.0.lock().unwrap_or_else(|e| e.into_inner()).active.clone() }

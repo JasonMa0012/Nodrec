@@ -50,7 +50,7 @@ Rust 单运行时和 Tauri 命令已实现，并由 Release WebView 实际验证
 
 ## 验收
 
-T01 真实无声录屏闭环通过 `test:recording` 和 `test:blueprint-runtime`；T04、T06、T09、T10 的键鼠、回放、MCP 和跨平台能力仍待实现。
+T01 真实无声录屏闭环通过 `test:recording` 和 `test:blueprint-runtime`；T04 键鼠采集随录屏会话开始、暂停、恢复和停止，验收及文件格式见 [Input](input.md)。回放、MCP 和跨平台能力待实现。
 
 ## 未来规划
 

@@ -1,20 +1,26 @@
 {
   "id": "operation-recording",
   "name": "Operation recording",
-  "replay": true,
+  "replay": false,
   "values": {
-    "display": "Display 1 · 2560 × 1440",
+    "display": "Display 1",
+    "regionMode": "Full Display",
+    "x": 0,
+    "y": 0,
+    "width": 897,
+    "height": 360,
     "region": "x: 0, y: 0, w: 2560, h: 1440",
     "cursor": true,
     "delay": "0",
-    "resolution": "1920 × 1080",
-    "fps": "60",
+    "resolution": "Source Size",
+    "fps": 60,
     "codec": "H.264",
+    "encodingMode": "Hardware Auto",
     "bitrate": "20",
-    "systemAudio": true,
-    "microphone": false,
-    "device": "System default",
-    "sampleRate": "48 kHz",
+    "systemAudio": "Not available yet",
+    "microphone": "Not available yet",
+    "device": "Not available yet",
+    "sampleRate": "Not available yet",
     "output": "C:/Recordings",
     "filename": "{blueprint}_{timestamp}",
     "pointer": "Semantic + absolute fallback",
@@ -24,12 +30,18 @@
   },
   "labels": {
     "display": "Display",
+    "regionMode": "Capture mode",
+    "x": "X (physical px)",
+    "y": "Y (physical px)",
+    "width": "Width (physical px)",
+    "height": "Height (physical px)",
     "region": "Region",
     "cursor": "Show cursor",
     "delay": "Start delay (s)",
     "resolution": "Resolution",
     "fps": "Frame rate",
     "codec": "Encoder",
+    "encodingMode": "Encoding mode",
     "bitrate": "Bitrate (Mbps)",
     "systemAudio": "System audio",
     "microphone": "Microphone",
@@ -48,9 +60,12 @@
       "name": "Recording settings",
       "parameters": [
         "display",
-        "region",
-        "cursor",
-        "delay"
+        "regionMode",
+        "x",
+        "y",
+        "width",
+        "height",
+        "cursor"
       ]
     },
     {
@@ -60,12 +75,13 @@
         "resolution",
         "fps",
         "codec",
+        "encodingMode",
         "bitrate"
       ]
     },
     {
       "id": "audio",
-      "name": "Audio",
+      "name": "Audio (not available yet)",
       "parameters": [
         "systemAudio",
         "microphone",
@@ -79,22 +95,6 @@
       "parameters": [
         "output",
         "filename"
-      ]
-    },
-    {
-      "id": "input",
-      "name": "Input recording",
-      "parameters": [
-        "pointer",
-        "keyboard",
-        "mouse"
-      ]
-    },
-    {
-      "id": "verification",
-      "name": "Replay & verification",
-      "parameters": [
-        "threshold"
       ]
     }
   ],
@@ -113,7 +113,43 @@
         "pinned": true,
         "columns": [
           {
-            "id": "region",
+            "id": "regionMode",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "x",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "y",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "width",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
+        "columns": [
+          {
+            "id": "height",
             "weight": 1
           }
         ]
@@ -123,15 +159,6 @@
         "columns": [
           {
             "id": "cursor",
-            "weight": 1
-          }
-        ]
-      },
-      {
-        "pinned": false,
-        "columns": [
-          {
-            "id": "delay",
             "weight": 1
           }
         ]
@@ -166,7 +193,16 @@
         ]
       },
       {
-        "pinned": false,
+        "pinned": true,
+        "columns": [
+          {
+            "id": "encodingMode",
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "pinned": true,
         "columns": [
           {
             "id": "bitrate",
@@ -232,46 +268,6 @@
           }
         ]
       }
-    ],
-    "input": [
-      {
-        "pinned": true,
-        "columns": [
-          {
-            "id": "pointer",
-            "weight": 1
-          }
-        ]
-      },
-      {
-        "pinned": true,
-        "columns": [
-          {
-            "id": "keyboard",
-            "weight": 1
-          }
-        ]
-      },
-      {
-        "pinned": true,
-        "columns": [
-          {
-            "id": "mouse",
-            "weight": 1
-          }
-        ]
-      }
-    ],
-    "verification": [
-      {
-        "pinned": true,
-        "columns": [
-          {
-            "id": "threshold",
-            "weight": 1
-          }
-        ]
-      }
     ]
   },
   "overviewLayouts": {
@@ -281,7 +277,7 @@
         "x": 0,
         "y": 0,
         "w": 6,
-        "h": 12,
+        "h": 17,
         "minW": 3,
         "maxW": 12
       },
@@ -290,43 +286,25 @@
         "x": 6,
         "y": 0,
         "w": 6,
-        "h": 10,
+        "h": 12,
         "minW": 3,
         "maxW": 12
       },
       {
         "i": "audio",
         "x": 0,
-        "y": 12,
+        "y": 17,
         "w": 6,
-        "h": 10,
+        "h": 8,
         "minW": 3,
         "maxW": 12
       },
       {
         "i": "output",
         "x": 6,
-        "y": 12,
+        "y": 17,
         "w": 6,
-        "h": 7,
-        "minW": 3,
-        "maxW": 12
-      },
-      {
-        "i": "input",
-        "x": 0,
-        "y": 22,
-        "w": 6,
-        "h": 12,
-        "minW": 3,
-        "maxW": 12
-      },
-      {
-        "i": "verification",
-        "x": 6,
-        "y": 22,
-        "w": 6,
-        "h": 7,
+        "h": 6,
         "minW": 3,
         "maxW": 12
       }
@@ -337,7 +315,7 @@
         "x": 0,
         "y": 0,
         "w": 1,
-        "h": 12,
+        "h": 17,
         "minW": 1,
         "maxW": 1,
         "isResizable": false
@@ -345,37 +323,7 @@
       {
         "i": "video",
         "x": 0,
-        "y": 12,
-        "w": 1,
-        "h": 10,
-        "minW": 1,
-        "maxW": 1,
-        "isResizable": false
-      },
-      {
-        "i": "audio",
-        "x": 0,
-        "y": 22,
-        "w": 1,
-        "h": 10,
-        "minW": 1,
-        "maxW": 1,
-        "isResizable": false
-      },
-      {
-        "i": "output",
-        "x": 0,
-        "y": 32,
-        "w": 1,
-        "h": 7,
-        "minW": 1,
-        "maxW": 1,
-        "isResizable": false
-      },
-      {
-        "i": "input",
-        "x": 0,
-        "y": 39,
+        "y": 17,
         "w": 1,
         "h": 12,
         "minW": 1,
@@ -383,11 +331,21 @@
         "isResizable": false
       },
       {
-        "i": "verification",
+        "i": "audio",
         "x": 0,
-        "y": 51,
+        "y": 29,
         "w": 1,
-        "h": 7,
+        "h": 8,
+        "minW": 1,
+        "maxW": 1,
+        "isResizable": false
+      },
+      {
+        "i": "output",
+        "x": 0,
+        "y": 37,
+        "w": 1,
+        "h": 6,
         "minW": 1,
         "maxW": 1,
         "isResizable": false
@@ -411,25 +369,602 @@
     {
       "id": "output",
       "name": "Output"
-    },
-    {
-      "id": "input",
-      "name": "Input"
     }
   ],
-  "supported": false,
+  "supported": true,
   "schemaVersion": 2,
   "graphs": [
     {
       "name": "Recording",
-      "nodes": [],
+      "nodes": [
+        {
+          "id": "log-select-region",
+          "type": "select_region",
+          "position": {
+            "x": -944,
+            "y": 120
+          },
+          "data": {
+            "kind": "select_region",
+            "label": "Select Region",
+            "config": {
+              "toolId": "capture-region",
+              "display": "Display 1",
+              "initialRegion": null
+            }
+          }
+        },
+        {
+          "id": "picker-display",
+          "type": "read_parameter",
+          "position": {
+            "x": -1440,
+            "y": 171
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read Display",
+            "config": {
+              "parameterId": "display"
+            }
+          }
+        },
+        {
+          "id": "region",
+          "type": "region",
+          "position": {
+            "x": -944,
+            "y": 354
+          },
+          "data": {
+            "kind": "region",
+            "label": "Screen Region",
+            "config": {
+              "display": "Display 1",
+              "mode": "Rectangle",
+              "x": 0,
+              "y": 0,
+              "width": 897,
+              "height": 360
+            }
+          }
+        },
+        {
+          "id": "screen",
+          "type": "screen",
+          "position": {
+            "x": 120,
+            "y": 120
+          },
+          "data": {
+            "kind": "screen",
+            "label": "Capture Screen",
+            "config": {
+              "cursor": true,
+              "fps": 60,
+              "startDelaySeconds": 0
+            }
+          }
+        },
+        {
+          "id": "encode_media_foundation",
+          "type": "encode_media_foundation",
+          "position": {
+            "x": 1128,
+            "y": 160
+          },
+          "data": {
+            "kind": "encode_media_foundation",
+            "label": "Media Foundation Encode",
+            "config": {
+              "codec": "H.264",
+              "resolution": "Source Size",
+              "bitrate": "20",
+              "encodingMode": "Hardware Auto"
+            }
+          }
+        },
+        {
+          "id": "path",
+          "type": "path",
+          "position": {
+            "x": 2032,
+            "y": 287.890625
+          },
+          "data": {
+            "kind": "path",
+            "label": "Output Path",
+            "config": {
+              "directory": "C:/Recordings",
+              "filename": "{blueprint}_{timestamp}.mp4"
+            }
+          }
+        },
+        {
+          "id": "write",
+          "type": "write",
+          "position": {
+            "x": 2512,
+            "y": 160
+          },
+          "data": {
+            "kind": "write",
+            "label": "Write MP4",
+            "config": {}
+          }
+        },
+        {
+          "id": "selected-region",
+          "type": "get_selected_region",
+          "position": {
+            "x": -412,
+            "y": 160
+          },
+          "data": {
+            "kind": "get_selected_region",
+            "label": "Get Selected Region",
+            "config": {
+              "toolId": "capture-region",
+              "mode": "Selected Region"
+            }
+          }
+        },
+        {
+          "id": "parameter-display",
+          "type": "read_parameter",
+          "position": {
+            "x": -1440,
+            "y": 340
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read display",
+            "config": {
+              "parameterId": "display"
+            }
+          }
+        },
+        {
+          "id": "parameter-regionMode",
+          "type": "read_parameter",
+          "position": {
+            "x": -908,
+            "y": 618
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read regionMode",
+            "config": {
+              "parameterId": "regionMode"
+            }
+          }
+        },
+        {
+          "id": "parameter-x",
+          "type": "read_parameter",
+          "position": {
+            "x": -1440,
+            "y": 481
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read x",
+            "config": {
+              "parameterId": "x"
+            }
+          }
+        },
+        {
+          "id": "parameter-y",
+          "type": "read_parameter",
+          "position": {
+            "x": -1440,
+            "y": 622
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read y",
+            "config": {
+              "parameterId": "y"
+            }
+          }
+        },
+        {
+          "id": "parameter-width",
+          "type": "read_parameter",
+          "position": {
+            "x": -1440,
+            "y": 763
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read width",
+            "config": {
+              "parameterId": "width"
+            }
+          }
+        },
+        {
+          "id": "parameter-height",
+          "type": "read_parameter",
+          "position": {
+            "x": -1440,
+            "y": 904
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read height",
+            "config": {
+              "parameterId": "height"
+            }
+          }
+        },
+        {
+          "id": "parameter-cursor",
+          "type": "read_parameter",
+          "position": {
+            "x": -376,
+            "y": 379
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read cursor",
+            "config": {
+              "parameterId": "cursor"
+            }
+          }
+        },
+        {
+          "id": "parameter-fps",
+          "type": "read_parameter",
+          "position": {
+            "x": -376,
+            "y": 520
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read fps",
+            "config": {
+              "parameterId": "fps"
+            }
+          }
+        },
+        {
+          "id": "parameter-resolution",
+          "type": "read_parameter",
+          "position": {
+            "x": 684,
+            "y": 237.890625
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read resolution",
+            "config": {
+              "parameterId": "resolution"
+            }
+          }
+        },
+        {
+          "id": "parameter-bitrate",
+          "type": "read_parameter",
+          "position": {
+            "x": 684,
+            "y": 378.890625
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read bitrate",
+            "config": {
+              "parameterId": "bitrate"
+            }
+          }
+        },
+        {
+          "id": "parameter-encodingMode",
+          "type": "read_parameter",
+          "position": {
+            "x": 684,
+            "y": 519.890625
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read encodingMode",
+            "config": {
+              "parameterId": "encodingMode"
+            }
+          }
+        },
+        {
+          "id": "parameter-output",
+          "type": "read_parameter",
+          "position": {
+            "x": 1588,
+            "y": 287.890625
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read output",
+            "config": {
+              "parameterId": "output"
+            }
+          }
+        },
+        {
+          "id": "parameter-filename",
+          "type": "read_parameter",
+          "position": {
+            "x": 1588,
+            "y": 428.890625
+          },
+          "data": {
+            "kind": "read_parameter",
+            "label": "Read filename",
+            "config": {
+              "parameterId": "filename"
+            }
+          }
+        },
+        {
+          "id": "input",
+          "type": "keyboard_mouse",
+          "position": {
+            "x": 120,
+            "y": 1065
+          },
+          "data": {
+            "kind": "keyboard_mouse",
+            "label": "Keyboard & Mouse Input",
+            "config": {}
+          }
+        }
+      ],
       "id": "recording",
-      "edges": []
+      "edges": [
+        {
+          "id": "e-picker-display-log-select-region-param:display",
+          "source": "picker-display",
+          "sourceHandle": "out:value",
+          "target": "log-select-region",
+          "targetHandle": "in:param:display",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-region-selected-region-fallback",
+          "source": "region",
+          "sourceHandle": "out:region",
+          "target": "selected-region",
+          "targetHandle": "in:fallback",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-selected-region-screen-region",
+          "source": "selected-region",
+          "sourceHandle": "out:region",
+          "target": "screen",
+          "targetHandle": "in:region",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-screen-encode-frames",
+          "source": "screen",
+          "sourceHandle": "out:frames",
+          "target": "encode_media_foundation",
+          "targetHandle": "in:frames",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-encode-write-video",
+          "source": "encode_media_foundation",
+          "sourceHandle": "out:video",
+          "target": "write",
+          "targetHandle": "in:video",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-path-write-path",
+          "source": "path",
+          "sourceHandle": "out:path",
+          "target": "write",
+          "targetHandle": "in:path",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-display-region-param:display",
+          "source": "parameter-display",
+          "sourceHandle": "out:value",
+          "target": "region",
+          "targetHandle": "in:param:display",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-regionMode-selected-region-param:mode",
+          "source": "parameter-regionMode",
+          "sourceHandle": "out:value",
+          "target": "selected-region",
+          "targetHandle": "in:param:mode",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-x-region-param:x",
+          "source": "parameter-x",
+          "sourceHandle": "out:value",
+          "target": "region",
+          "targetHandle": "in:param:x",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-y-region-param:y",
+          "source": "parameter-y",
+          "sourceHandle": "out:value",
+          "target": "region",
+          "targetHandle": "in:param:y",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-width-region-param:width",
+          "source": "parameter-width",
+          "sourceHandle": "out:value",
+          "target": "region",
+          "targetHandle": "in:param:width",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-height-region-param:height",
+          "source": "parameter-height",
+          "sourceHandle": "out:value",
+          "target": "region",
+          "targetHandle": "in:param:height",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-cursor-screen-param:cursor",
+          "source": "parameter-cursor",
+          "sourceHandle": "out:value",
+          "target": "screen",
+          "targetHandle": "in:param:cursor",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-fps-encode-param:fps",
+          "source": "parameter-fps",
+          "sourceHandle": "out:value",
+          "target": "screen",
+          "targetHandle": "in:param:fps",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-resolution-encode-param:resolution",
+          "source": "parameter-resolution",
+          "sourceHandle": "out:value",
+          "target": "encode_media_foundation",
+          "targetHandle": "in:param:resolution",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-bitrate-encode-param:bitrate",
+          "source": "parameter-bitrate",
+          "sourceHandle": "out:value",
+          "target": "encode_media_foundation",
+          "targetHandle": "in:param:bitrate",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-encodingMode-encode-param:encodingMode",
+          "source": "parameter-encodingMode",
+          "sourceHandle": "out:value",
+          "target": "encode_media_foundation",
+          "targetHandle": "in:param:encodingMode",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-output-path-param:directory",
+          "source": "parameter-output",
+          "sourceHandle": "out:value",
+          "target": "path",
+          "targetHandle": "in:param:directory",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-parameter-filename-path-param:filename",
+          "source": "parameter-filename",
+          "sourceHandle": "out:value",
+          "target": "path",
+          "targetHandle": "in:param:filename",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-log-select-region-selected-region-selected",
+          "source": "log-select-region",
+          "sourceHandle": "out:region",
+          "target": "selected-region",
+          "targetHandle": "in:selected",
+          "type": "smoothstep"
+        },
+        {
+          "id": "e-input-write-events",
+          "source": "input",
+          "sourceHandle": "out:events",
+          "target": "write",
+          "targetHandle": "in:events",
+          "type": "smoothstep"
+        }
+      ]
     }
   ],
-  "controls": [],
-  "displays": [],
+  "controls": [
+    {
+      "id": "select-region",
+      "label": "Select region",
+      "icon": "crop",
+      "enabled": true,
+      "targets": [
+        "main"
+      ],
+      "binding": {
+        "nodeId": "log-select-region",
+        "graphId": "recording",
+        "action": "select"
+      }
+    },
+    {
+      "id": "start-recording",
+      "label": "Record",
+      "icon": "play",
+      "enabled": true,
+      "targets": [
+        "main",
+        "region:capture-region"
+      ],
+      "binding": {
+        "action": "record",
+        "nodeId": "screen",
+        "graphId": "recording"
+      }
+    }
+  ],
+  "displays": [
+    {
+      "id": "recording-status",
+      "targets": [
+        "main",
+        "region:capture-region"
+      ],
+      "order": 4,
+      "source": "status",
+      "format": "text",
+      "binding": {
+        "graphId": "recording",
+        "nodeId": "screen",
+        "action": "record"
+      }
+    },
+    {
+      "id": "recording-time",
+      "targets": [
+        "main",
+        "region:capture-region"
+      ],
+      "order": 5,
+      "source": "elapsed",
+      "format": "HH:mm:ss",
+      "binding": {
+        "graphId": "recording",
+        "nodeId": "screen",
+        "action": "record"
+      }
+    }
+  ],
   "controlOrder": {
-    "main": []
+    "main": [
+      "select-region",
+      "start-recording",
+      "recording-status",
+      "recording-time"
+    ],
+    "region:capture-region": [
+      "start-recording",
+      "recording-status",
+      "recording-time"
+    ]
   }
 }

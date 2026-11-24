@@ -12,10 +12,10 @@ const fixture=path.join(desktop,'src-tauri/target',`performance-${Date.now()}`)
 await mkdir(path.join(fixture,'src'),{recursive:true})
 for(const name of ['baseline','current']){
   await mkdir(path.join(fixture,'src',name),{recursive:true})
-  for(const file of ['recording.rs','recording/windows.rs']){
+  for(const file of ['recording.rs','recording/windows.rs',...(name==='current'?['recording/input.rs']:[])]){
     const source=`apps/desktop/src-tauri/src/${file}`
     const data=name==='baseline'?(await run('git',['show',`${baseline}:${source}`],{cwd:repo,maxBuffer:4*1024*1024})).stdout:await readFile(path.join(repo,source),'utf8')
-    await writeFile(path.join(fixture,'src',file==='recording.rs'?`${name}.rs`:`${name}/windows.rs`),data)
+    await writeFile(path.join(fixture,'src',file==='recording.rs'?`${name}.rs`:`${name}/${path.basename(file)}`),data)
   }
 }
 const manifest=await readFile(path.join(desktop,'src-tauri/Cargo.toml'),'utf8')

@@ -17,7 +17,7 @@ export type OverviewLayouts = ResponsiveLayouts<'wide' | 'narrow'>
 export type ParameterCard = { id: string; name: string; parameters: string[] }
 export type TreeFolder = { id: string; name: string }
 export type BlueprintSelection = { kind: 'nodes'; keys: string[] } | { kind: 'node' | 'parameter' | 'card' | 'folder'; key: string } | null
-export type NodeKind = 'define_value' | 'read_value' | 'select_region' | 'get_selected_region' | 'read_parameter' | 'constant' | 'make_boolean' | 'make_byte' | 'make_integer' | 'make_integer64' | 'make_float' | 'make_double' | 'make_name' | 'make_string' | 'make_text' | 'compare' | 'region' | 'path' | 'screen' | 'audio' | 'encode_media_foundation' | 'write'
+export type NodeKind = 'define_value' | 'read_value' | 'select_region' | 'get_selected_region' | 'read_parameter' | 'constant' | 'make_boolean' | 'make_byte' | 'make_integer' | 'make_integer64' | 'make_float' | 'make_double' | 'make_name' | 'make_string' | 'make_text' | 'compare' | 'region' | 'path' | 'screen' | 'audio' | 'keyboard_mouse' | 'encode_media_foundation' | 'write'
 export type BlueprintNodeData = { label: string; kind: NodeKind; enabled?: boolean; actionOrder?: string[]; note?: string; config?: Record<string, unknown> }
 export type BlueprintNode = Node<BlueprintNodeData>
 
@@ -42,7 +42,7 @@ export function copyNamedValues(nodes: BlueprintNode[], existing: readonly Bluep
   })
 }
 export type BlueprintScope = 'builtin' | 'user'
-export type PinValueType = 'value' | 'boolean' | 'byte' | 'integer' | 'integer64' | 'float' | 'double' | 'name' | 'string' | 'text' | 'object' | 'soft_object' | 'class' | 'soft_class' | 'interface' | 'delegate' | 'struct' | 'vector' | 'rotator' | 'transform' | 'region' | 'path' | 'video_frames' | 'audio_samples' | 'encoded_video'
+export type PinValueType = 'value' | 'boolean' | 'byte' | 'integer' | 'integer64' | 'float' | 'double' | 'name' | 'string' | 'text' | 'object' | 'soft_object' | 'class' | 'soft_class' | 'interface' | 'delegate' | 'struct' | 'vector' | 'rotator' | 'transform' | 'region' | 'path' | 'video_frames' | 'audio_samples' | 'encoded_video' | 'input_events'
 export type NodePortDefinition = { id: string; label: string; valueType: PinValueType }
 export type NodeTypeDefinition = { provider?: string | null; actions?: string[]; choices?: Record<string, string[]>; kind: NodeKind; label: string; category: string; inputs: NodePortDefinition[]; outputs: NodePortDefinition[]; inputParameters: string[]; defaultConfig: Record<string, unknown> }
 export type RegisteredDisplay = { binding?:RegisteredControl['binding']; targetOrder?: Record<string, number>; id: string; targets: string[]; order: number; source: 'status' | 'elapsed'; format: 'text' | 'HH:mm:ss' }
@@ -94,7 +94,7 @@ export function pinTypeColor(valueType: string): string {
   const type = valueType === 'value' ? 'wildcard'
     : valueType === 'region' ? 'struct'
       : valueType === 'path' ? 'string'
-        : ['video_frames', 'audio_samples', 'encoded_video'].includes(valueType) ? 'object' : valueType
+        : ['video_frames', 'audio_samples', 'encoded_video', 'input_events'].includes(valueType) ? 'object' : valueType
   return uePinColors[type] ?? uePinColors.default!
 }
 

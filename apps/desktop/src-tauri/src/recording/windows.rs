@@ -519,6 +519,7 @@ impl EncoderBranch {
 }
 
 struct PacketOutputs {
+    first_pts: Option<i64>,
     encoder_error: Option<String>,
     paths: Vec<PathBuf>,
     writers: Vec<PacketWriter>,
@@ -541,6 +542,7 @@ impl PacketOutputs {
         }).collect()
     }
     fn send(&mut self, packet: Packet) -> Result<()> {
+        self.first_pts = Some(self.first_pts.map_or(packet.time, |t| t.min(packet.time)));
         let mut delivered = 0;
         for (index, writer) in self.writers.iter_mut().enumerate() {
             if writer.sender.is_none() { continue; }
@@ -634,10 +636,11 @@ fn writer(output_path: PathBuf, format: EncodedVideoFormat, packets: mpsc::Recei
     result
 }
 
-pub fn record(mut plan: RecordingPlan, mut groups: Vec<(RecordingPlan,Vec<PathBuf>)>, control: &Arc<Mutex<Control>>, ready: &SyncSender<std::result::Result<(),String>>) -> Result<()> {
+pub fn record(mut plan: RecordingPlan, mut groups: Vec<(RecordingPlan,Vec<PathBuf>)>, input_paths: Vec<PathBuf>, control: &Arc<Mutex<Control>>, ready: &SyncSender<std::result::Result<(),String>>) -> Result<()> {
     let paths: Vec<_> = groups.iter().flat_map(|(_,paths)| paths.iter().cloned()).collect();
     if paths.is_empty() { return Err(failure("Recording has no output paths")); }
     super::validate_output_paths(&paths).map_err(failure)?;
+    super::input::preflight(&input_paths, &paths).map_err(failure)?;
     for path in &paths {
         std::fs::create_dir_all(path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."))).map_err(|e| failure(e.to_string()))?;
         if path.exists() || temp_path(path).exists() { return Err(failure(format!("Recording output already exists: {}",path.display()))); }
@@ -696,7 +699,7 @@ pub fn record(mut plan: RecordingPlan, mut groups: Vec<(RecordingPlan,Vec<PathBu
         if !header.is_empty() { output_type.GetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &mut header, None)?; }
         let format = EncodedVideoFormat { codec: "h264".into(), width: plan.output_width, height: plan.output_height, fps: plan.fps, bitrate: plan.bitrate, header };
         encoder_initializing = false;
-        let mut packet_outputs = PacketOutputs { encoder_error:None, paths:paths.clone(), writers:vec![], errors:vec![] };
+        let mut packet_outputs = PacketOutputs { first_pts:None, encoder_error:None, paths:paths.clone(), writers:vec![], errors:vec![] };
         for path in &paths {
             let (packet_tx, packet_rx) = mpsc::sync_channel((plan.fps*2) as usize);
             let (writer_tx, writer_rx) = mpsc::sync_channel(1);
@@ -739,13 +742,26 @@ pub fn record(mut plan: RecordingPlan, mut groups: Vec<(RecordingPlan,Vec<PathBu
             state.stats = RecordingStats { encoder: branches.iter().map(|branch|branch.encoder.name.as_str()).collect::<Vec<_>>().join(", "), adapter: text16(&desc.Description), width: plan.output_width, height: plan.output_height, fps: plan.fps, output_path: plan.path.to_string_lossy().into(), partial_path: temp_path(&plan.path).to_string_lossy().into(), ..Default::default() };
         }
 
-        let mut clock = Timeline::new();
+        let mut input_failures = Vec::new();
+        let input = super::input::Capture::start(&input_paths,
+            &branches.iter().map(|branch| (&branch.plan, branch.outputs.stats(false))).collect::<Vec<_>>(),
+            &display.info, control.clone(), &mut input_failures);
+        for output in &input_failures {
+            if let Some(error) = &output.error { initialization_errors.push(format!("{}: {error}", output.path)); }
+        }
+        failed_outputs.extend(input_failures);
+        {
+            let mut state = control.lock().unwrap();
+            if input.is_some() { state.input_baseline = Some((0, super::input::held_virtual_keys())); }
+            state.segment_start_ms = ::windows::Win32::System::SystemInformation::GetTickCount64();
+            state.timeline = Some(Timeline::new());
+        }
         let _ = ready.send(Ok(()));
         let run_result = (|| -> Result<()> {
             loop {
-                let (stop, paused) = { let c = control.lock().unwrap_or_else(|e| e.into_inner()); (c.stop,c.paused) };
+                let (stop, paused, elapsed) = { let mut c = control.lock().unwrap_or_else(|e| e.into_inner()); let paused = c.paused; (c.stop,paused,c.timeline.as_mut().unwrap().update(paused)) };
                 if stop { break; }
-                let elapsed = clock.update(paused);
+
                 let frames = source_gpu.update(&capture, &plan, &display.info)?;
                 for branch in &mut branches {
                 if branch.failed { continue; }
@@ -774,6 +790,7 @@ pub fn record(mut plan: RecordingPlan, mut groups: Vec<(RecordingPlan,Vec<PathBu
             Ok(())
         })();
         let stopped_at = Instant::now();
+        let input = input.map(|capture| capture.stop());
         drop(capture);
         let mut errors = initialization_errors;
         for branch in &mut branches {
@@ -798,6 +815,16 @@ pub fn record(mut plan: RecordingPlan, mut groups: Vec<(RecordingPlan,Vec<PathBu
         }
         for outputs in &mut failed_writers { if let Err(error) = outputs.finish(false) { errors.push(error.to_string()); } }
         control.lock().unwrap_or_else(|error| error.into_inner()).stats.outputs = branches.iter().flat_map(|branch|branch.outputs.stats(true)).chain(failed_writers.iter().flat_map(|outputs|outputs.stats(true))).chain(failed_outputs.iter().cloned()).collect();
+        if let Some(result) = input {
+            let outputs = control.lock().unwrap().stats.outputs.clone();
+            let origins = branches.iter().flat_map(|branch| branch.outputs.paths.iter().filter_map(|path| Some((path.clone(), branch.outputs.first_pts?)))).collect();
+            let sidecars = super::input::finish(result, &outputs, &origins);
+            for stat in sidecars {
+                if let Some(error) = &stat.error { errors.push(format!("{}: {error}", stat.path)); }
+                let mut state = control.lock().unwrap();
+                state.stats.outputs.push(stat);
+            }
+        }
         control.lock().unwrap_or_else(|e| e.into_inner()).stats.stop_ms = Some(stopped_at.elapsed().as_millis() as u64);
         run_result?;
         if !errors.is_empty() { return Err(failure(errors.join("; "))); }
@@ -879,14 +906,60 @@ mod tests {
         let stats = session.stop().unwrap();
         assert!(stats.encoder.contains("Software") && stats.encoded_frames > 0 && fallback.is_file(), "CPU fallback did not produce a recording: {stats:?}");
         std::fs::write(directory.join("cpu-fallback.json"),serde_json::to_vec_pretty(&stats).unwrap()).unwrap();
+        *RECORDING_FAULT.lock().unwrap() = None;
+        verify_input_pause_and_output_isolation(&display, &directory);
         println!("Live fault artifacts: {}",directory.display());
+    }
+    fn verify_input_pause_and_output_isolation(display: &DisplayInfo, dir: &Path) {
+        use ::windows::Win32::UI::Input::KeyboardAndMouse::{mouse_event,MOUSEEVENTF_MOVE,MOUSEEVENTF_MOVE_NOCOALESCE};
+        let healthy = dir.join("healthy.mp4");
+        let blocked = dir.join("blocked.mp4");
+        let plan = RecordingPlan {display:display.id.clone(),full_display:false,x:0,y:0,width:320,height:180,output_width:0,output_height:0,fps:60,bitrate:2_000_000,software:true,cursor:true,path:healthy.clone()};
+        let scaled = dir.join("scaled.mp4");
+        let mut second = plan.clone();
+        second.output_width = 160;
+        second.output_height = 90;
+        second.path = scaled.clone();
+        let groups = vec![(plan.clone(),vec![healthy.clone(),blocked.clone()]),(second,vec![scaled.clone()])];
+        let mut session = RecordingSession::launch_with_input(plan,groups,vec![healthy.clone(),blocked.clone(),scaled.clone()]);
+        session.wait_ready().unwrap();
+        let send = |tag| {
+            for dx in [-1,1] { unsafe { mouse_event(MOUSEEVENTF_MOVE | MOUSEEVENTF_MOVE_NOCOALESCE,dx,0,0,tag); } }
+            thread::sleep(Duration::from_millis(150));
+        };
+        send(0x4e4401);
+        session.pause(true);
+        send(0x4e4402);
+        session.pause(false);
+        send(0x4e4403);
+        let collision = blocked.with_extension("input.jsonl");
+        std::fs::write(&collision,b"reserved").unwrap();
+        assert!(session.finish().is_err());
+        assert_eq!(std::fs::read(&collision).unwrap(),b"reserved");
+        let outputs = session.stats().outputs;
+        assert_eq!(outputs.iter().filter(|o|o.finished && o.error.is_none()).count(),7);
+        assert!(healthy.is_file() && blocked.is_file() && healthy.with_extension("frames.jsonl").is_file());
+        assert!(blocked.with_extension("input.partial.jsonl").is_file());
+        let events = std::fs::read_to_string(healthy.with_extension("input.jsonl")).unwrap();
+        let scaled_events = std::fs::read_to_string(scaled.with_extension("input.jsonl")).unwrap();
+        assert!(events.lines().skip(1).eq(scaled_events.lines().skip(1)));
+        let scaled_header: serde_json::Value = serde_json::from_str(scaled_events.lines().next().unwrap()).unwrap();
+        assert_eq!(scaled_header["output_size"], serde_json::json!([160,90]));
+        let initial: serde_json::Value = serde_json::from_str(events.lines().nth(1).unwrap()).unwrap();
+        assert_eq!(initial["type"],"state");
+        assert_eq!(initial["t"],0);
+        let tags: Vec<_> = events.lines().map(|s|serde_json::from_str::<serde_json::Value>(s).unwrap())
+            .filter(|row|row.get(0).and_then(|k|k.as_str())==Some("mouse"))
+            .filter_map(|row|row[1+scaled_header["columns"]["mouse"].as_array().unwrap().iter().position(|v|v=="extra").unwrap()].as_u64()).filter(|v|(0x4e4401..=0x4e4403).contains(v)).collect();
+        assert_eq!(tags,[0x4e4401,0x4e4401,0x4e4403,0x4e4403]);
+        eprintln!("Input pause and output isolation: {}",dir.display());
     }
     #[test]
     fn encoder_failure_closes_and_marks_only_its_outputs() {
         use std::sync::atomic::AtomicUsize;
         let (sender, receiver) = mpsc::sync_channel(1);
         let writer = PacketWriter {sender:Some(sender),worker:None,budget:Arc::new(AtomicUsize::new(0))};
-        let mut outputs = PacketOutputs {encoder_error:None,paths:vec!["failed.mp4".into()],writers:vec![writer],errors:vec![]};
+        let mut outputs = PacketOutputs {first_pts:None,encoder_error:None,paths:vec!["failed.mp4".into()],writers:vec![writer],errors:vec![]};
         outputs.fail_all("device lost");
         assert!(receiver.recv().is_err());
         assert!(outputs.stats(false)[0].error.as_ref().unwrap().contains("device lost"));
@@ -899,7 +972,7 @@ mod tests {
         let (slow_tx, _slow_rx) = mpsc::sync_channel(0);
         let (healthy_tx, healthy_rx) = mpsc::sync_channel(2);
         let make = |sender| PacketWriter { sender:Some(sender),worker:None,budget:Arc::new(AtomicUsize::new(0)) };
-        let mut outputs = PacketOutputs { encoder_error:None, paths:vec!["slow.mp4".into(),"healthy.mp4".into()], writers:vec![make(slow_tx),make(healthy_tx)],errors:vec![] };
+        let mut outputs = PacketOutputs { first_pts:None, encoder_error:None, paths:vec!["slow.mp4".into(),"healthy.mp4".into()], writers:vec![make(slow_tx),make(healthy_tx)],errors:vec![] };
         let packet = Packet {bytes:Arc::from([1u8]),time:0,duration:1,key:1};
         outputs.send(packet.clone()).unwrap();
         assert!(outputs.writers[0].sender.is_none());

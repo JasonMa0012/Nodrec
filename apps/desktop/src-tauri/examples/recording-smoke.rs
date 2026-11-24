@@ -23,7 +23,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let blocked = if args.iter().any(|argument| argument == "--block-publish") {
         Some(paths.get(1).ok_or("--block-publish requires --copy-output")?.clone())
     } else { None };
-    let session = if args.iter().any(|argument| argument == "--second-encoder") {
+    let session = if args.iter().any(|a| a == "--input") {
+        let session = RecordingSession::launch_with_input(plan.clone(), vec![(plan, paths.clone())], vec![paths[0].clone()]);
+        session.wait_ready()?;
+        session
+    } else if args.iter().any(|argument| argument == "--second-encoder") {
         let second_path = paths.get(1).ok_or("--second-encoder requires --copy-output")?.clone();
         let mut second = plan.clone();
         second.output_width = 640; second.output_height = 360; second.path = second_path.clone();
@@ -77,6 +81,10 @@ fn verify(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         media.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
         media.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
         reader.SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32, None, &media)?;
+        let index_path = std::path::Path::new(path).with_extension("frames.jsonl");
+        let index = if index_path.try_exists()? {
+            Some(std::fs::read_to_string(index_path)?.lines().skip(1).map(serde_json::from_str::<serde_json::Value>).collect::<Result<Vec<_>,_>>()?)
+        } else { None };
         let mut frames = 0; let mut last = -1i64; let mut first = 0i64;
         let mut last_hash = None; let mut changes = 0; let mut sample_written = false;
         loop {
@@ -114,12 +122,20 @@ fn verify(path: &str) -> Result<(), Box<dyn std::error::Error>> {
                     let suffix = if frames == 0 { "first" } else { sample_written = true; "sample" };
                     std::fs::write(format!("{path}.{suffix}.bmp"), bmp)?;
                 }
+                if let Some(rows) = &index {
+                    let pts = |i:usize,k:usize| if rows[i].is_array() { &rows[i][k] } else { &rows[i][["start","end"][k]] };
+                    if rows[frames].is_object() { assert_eq!(rows[frames]["frame"],frames); }
+                    assert_eq!(*pts(frames,0),time);
+                    if frames > 0 { assert_eq!(*pts(frames-1,1),time); }
+                    if frames+1 == rows.len() { assert_eq!(*pts(frames,1),time+sample.GetSampleDuration()?); }
+                }
                 if frames == 0 { first = time; }
                 last = time; frames += 1;
             }
             if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 { break; }
         }
         assert!(frames > 0);
+        if let Some(rows) = index { assert_eq!(rows.len(), frames); }
         println!("Decoded H.264 MP4 {}x{}: {frames} frames, first={first}, last={last} (100 ns), sceneChanges={changes}", size>>32, size&0xffffffff);
         drop(reader); MFShutdown()?; CoUninitialize();
     }

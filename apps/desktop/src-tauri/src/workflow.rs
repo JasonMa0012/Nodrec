@@ -67,9 +67,10 @@ pub fn node_catalog() -> Vec<NodeType> {
         node_type("region", "Screen Region", "Values", vec![], vec![port("region", "Region", "region")], vec!["display", "mode", "x", "y", "width", "height"], json!({"display":"Display 1","mode":"Full Display","x":0,"y":0,"width":897,"height":360})),
         node_type("path", "Output Path", "Values", vec![], vec![port("path", "Path", "path")], vec!["directory", "filename"], json!({"directory":"C:/Recordings","filename":"{blueprint}_{timestamp}.mp4"})),
         node_type("screen", "Capture Screen", "Streams", vec![port("region", "Region", "region")], vec![port("frames", "Frames", "video_frames")], vec!["cursor", "fps", "startDelaySeconds"], json!({"cursor":true,"fps":60,"startDelaySeconds":0,"region":{"display":"Display 1","mode":"Full Display","x":0,"y":0,"width":897,"height":360}})),
+        node_type("keyboard_mouse", "Keyboard & Mouse Input", "Streams", vec![], vec![port("events", "Input Events", "input_events")], vec![], json!({})),
         node_type("audio", "Capture Audio", "Streams", vec![], vec![port("audio", "Audio", "audio_samples")], vec![], json!({})),
         node_type("encode_media_foundation", "Media Foundation Encode", "Streams", vec![port("frames", "Frames", "video_frames"), port("audio", "Audio (not supported yet)", "audio_samples")], vec![port("video", "Video", "encoded_video")], vec!["codec", "resolution", "bitrate", "encodingMode"], json!({"codec":"H.264","resolution":"Source Size","bitrate":"20","encodingMode":"Hardware Auto"})),
-        node_type("write", "Write MP4", "Streams", vec![port("video", "Video", "encoded_video"), port("path", "Path", "path")], vec![], vec![], json!({"path":{"directory":"C:/Recordings","filename":"{blueprint}_{timestamp}.mp4"}})),
+        node_type("write", "Write MP4", "Streams", vec![port("video", "Video", "encoded_video"), port("path", "Path", "path"), port("events", "Input Events", "input_events")], vec![], vec![], json!({"path":{"directory":"C:/Recordings","filename":"{blueprint}_{timestamp}.mp4"}})),
     ]
 }
 
@@ -187,6 +188,30 @@ impl WorkflowRuntime {
         document
     }
 
+    pub fn region_preview(&self, blueprint_id: &str, graph_id: &str, screen_id: &str) -> Result<Value, String> {
+        let state = self.state.lock().map_err(|_| "Workflow state is unavailable")?;
+        if state.blueprint_id.as_deref() != Some(blueprint_id) { return Err("Blueprint is no longer active".into()); }
+        let document = action_document(state.document.as_ref().ok_or("No active blueprint")?, graph_id)?;
+        drop(state);
+        let document = execution_document(&self.evaluation_document(&document), &[screen_id.to_owned()])?;
+        let screen = nodes(&document).iter().find(|n| node_id(n) == screen_id && node_kind(n) == "screen").ok_or("Screen not found")?;
+        let region = screen_region(&document, screen, &resolved_node_config(&document, screen)?)?;
+        let mut source = pipeline_source(&document, screen_id, "region", "region", "region").ok();
+        if let Some(selector) = source.filter(|n| node_kind(n) == "get_selected_region") {
+            source = if resolved_node_config(&document, selector)?["mode"] == "Rectangle" {
+                pipeline_source(&document, node_id(selector), "fallback", "region", "region").ok()
+            } else { None };
+        }
+        let mut editable = Vec::new();
+        if let Some(rectangle) = source.filter(|n| node_kind(n) == "region" && region["mode"] == "Rectangle") {
+            for field in ["x", "y", "width", "height"] {
+                if pipeline_source(&document, node_id(rectangle), &format!("param:{field}"), "read_parameter", "value")
+                    .is_ok_and(|n| node_config(n)["parameterId"] == field) { editable.push(field); }
+            }
+        }
+        Ok(json!({"region":region,"editable":editable}))
+    }
+
     pub fn snapshot(&self) -> RuntimeSnapshot {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if let Some(session) = &state.session {
@@ -251,7 +276,16 @@ impl WorkflowRuntime {
                     };
                     state.run_graph = graph_id.clone();
                     state.run_source = id.clone();
-                    state.output_nodes = outputs.iter().map(|output| (output.plan.path.to_string_lossy().into_owned(),(output.node_id.clone(),output.encoder_id.clone()))).collect();
+                    state.output_nodes.clear();
+                    for output in &outputs {
+                        let owner = (output.node_id.clone(),output.encoder_id.clone());
+                        state.output_nodes.insert(output.plan.path.display().to_string(),owner.clone());
+                        if output.input {
+                            for extension in ["input.jsonl","frames.jsonl"] {
+                                state.output_nodes.insert(output.plan.path.with_extension(extension).display().to_string(),owner.clone());
+                            }
+                        }
+                    }
                     state.status = "starting";
                     state.run_id = Some(format!("run-{}", now_nanos()));
                     state.error = None;
@@ -308,15 +342,16 @@ impl WorkflowRuntime {
 
     fn start_pipeline(&self, app: &AppHandle, document: &Value, source: &str, generation: u64) -> Result<(), String> {
         let evaluated = self.evaluation_document(document);
-        let (plan, groups) = {
+        let (plan, groups, input_paths) = {
             let outputs = compile_recording_outputs(&evaluated, source)?;
             let plan = outputs[0].plan.clone();
+            let input_paths = outputs.iter().filter(|o| o.input).map(|o| o.plan.path.clone()).collect();
             let mut groups: Vec<(String,RecordingPlan,Vec<std::path::PathBuf>)> = Vec::new();
             for output in outputs {
                 if let Some((_,_,paths)) = groups.iter_mut().find(|(id,_,_)| id == &output.encoder_id) { paths.push(output.plan.path); }
                 else { groups.push((output.encoder_id,output.plan.clone(),vec![output.plan.path])); }
             }
-            (plan, groups.into_iter().map(|(_,plan,paths)|(plan,paths)).collect())
+            (plan, groups.into_iter().map(|(_,plan,paths)|(plan,paths)).collect(), input_paths)
         };
         let deadline = std::time::Instant::now() + recording_delay(&evaluated, source)?;
         while std::time::Instant::now() < deadline {
@@ -335,7 +370,7 @@ impl WorkflowRuntime {
                 state.error = None;
             }
             if state.status != "starting" { return Err("Workflow is already active".into()); }
-            let session = RecordingSession::launch_graph(plan, groups);
+            let session = RecordingSession::launch_with_input(plan, groups, input_paths);
             let ready = session.ready.clone();
             state.session = Some(session);
             ready
@@ -964,6 +999,14 @@ fn pipeline_source<'a>(document: &'a Value, target: &str, input: &str, kind: &st
     Ok(source)
 }
 
+fn screen_region(document: &Value, screen: &Value, config: &Value) -> Result<Value, String> {
+    if !edges(document).iter().any(|edge| edge["target"] == node_id(screen) && edge["targetHandle"] == "in:region") {
+        return Ok(config["region"].clone());
+    }
+    let region = pipeline_source(document, node_id(screen), "region", "region", "region")?;
+    if node_kind(region) == "region" { resolved_node_config(document, region) } else { selected_region(document, region) }
+}
+
 fn recording_plan(document: &Value, output_id: Option<&str>) -> Result<RecordingPlan, String> {
     let output = nodes(document).iter().find(|node| Some(node_id(node)) == output_id && node_kind(node) == "write")
         .ok_or_else(|| "Start Pipeline must reference a Write MP4 node".to_string())?;
@@ -975,10 +1018,7 @@ fn recording_plan(document: &Value, output_id: Option<&str>) -> Result<Recording
     let screen = pipeline_source(document, node_id(encoder), "frames", "screen", "frames")?;
     let e = resolved_node_config(document, encoder)?;
     let s = resolved_node_config(document, screen)?;
-    let r = if edges(document).iter().any(|edge| edge["target"] == node_id(screen) && edge["targetHandle"] == "in:region") {
-        let region = pipeline_source(document, node_id(screen), "region", "region", "region")?;
-        if node_kind(region) == "region" { resolved_node_config(document, region)? } else { selected_region(document, region)? }
-    } else { s["region"].clone() };
+    let r = screen_region(document, screen, &s)?;
     let p = if edges(document).iter().any(|edge| edge["target"] == node_id(output) && edge["targetHandle"] == "in:path") {
         resolved_node_config(document, pipeline_source(document, node_id(output), "path", "path", "path")?)?
     } else { resolved_node_config(document, output)?["path"].clone() };
@@ -1021,6 +1061,7 @@ fn recording_plan(document: &Value, output_id: Option<&str>) -> Result<Recording
 }
 
 struct CompiledRecordingOutput {
+    input: bool,
     node_id: String,
     encoder_id: String,
     plan: RecordingPlan,
@@ -1045,6 +1086,7 @@ fn execution_document(document: &Value, outputs: &[String]) -> Result<Value, Str
             queue.push_back(node_config(node)["definitionId"].as_str().unwrap_or_default().to_string());
         }
         for edge in edges(document).iter().filter(|edge| edge["target"] == id) {
+            if node_kind(node) == "write" && edge["targetHandle"] == "in:events" && nodes(document).iter().any(|n| n["id"] == edge["source"] && node_kind(n) == "keyboard_mouse" && n["data"]["enabled"] == false) { continue; }
             let (source, handle) = enabled_source(document,edge["source"].as_str().unwrap_or_default(),edge["sourceHandle"].as_str().unwrap_or_default(),&mut HashSet::new())?;
             let mut connection = edge.clone();
             connection["source"] = json!(node_id(source)); connection["sourceHandle"] = json!(handle);
@@ -1084,8 +1126,10 @@ fn compile_recording_outputs(document: &Value, source_id: &str) -> Result<Vec<Co
     let mut compiled = Vec::new();
     for output_id in output_ids {
         let encoder = pipeline_source(document, &output_id, "video", "encode_media_foundation", "video")?;
+        let input = edges(document).iter().any(|edge| edge["target"] == output_id && edge["targetHandle"] == "in:events");
+        if input { pipeline_source(document, &output_id, "events", "keyboard_mouse", "events")?; }
         let plan = recording_plan(document, Some(&output_id))?;
-        compiled.push(CompiledRecordingOutput {node_id:output_id,encoder_id:node_id(encoder).into(),plan});
+        compiled.push(CompiledRecordingOutput {input,node_id:output_id,encoder_id:node_id(encoder).into(),plan});
     }
     if compiled.is_empty() { return Err("Recording source has no enabled output".into()); }
     crate::recording::validate_output_paths(compiled.iter().map(|output| &output.plan.path))?;
@@ -1490,6 +1534,19 @@ mod tests {
     }
 
     #[test]
+    fn input_capture_is_optional_per_writer() {
+        let mut doc = document();
+        let opted_in = |doc: &Value| compile_recording_outputs(doc, "screen").unwrap()[0].input;
+        assert!(!opted_in(&doc));
+        doc["graphs"][0]["nodes"].as_array_mut().unwrap().push(json!({"id":"input","type":"keyboard_mouse","position":{"x":0,"y":0},"data":{"kind":"keyboard_mouse","label":"Input","config":{}}}));
+        assert!(!opted_in(&doc));
+        doc["graphs"][0]["edges"].as_array_mut().unwrap().push(json!({"id":"input-link","source":"input","sourceHandle":"out:events","target":"write","targetHandle":"in:events"}));
+        assert!(opted_in(&doc));
+        doc["graphs"][0]["nodes"].as_array_mut().unwrap().last_mut().unwrap()["data"]["enabled"] = json!(false);
+        assert!(!opted_in(&doc));
+    }
+
+    #[test]
     fn value_catalog_has_make_nodes_for_each_primitive_type() {
         let catalog = node_catalog();
         for (kind, value_type) in [
@@ -1656,13 +1713,13 @@ mod tests {
         for name in ["screen-recording", "operation-recording"] {
             let document: Value = serde_json::from_slice(&std::fs::read(directory.join(format!("{name}.nodrec.json"))).unwrap()).unwrap();
             assert!(validate_document(&document, false).is_empty(), "{name}: {:?}", validate_document(&document, false));
-            if name == "screen-recording" {
-                assert!(validate_document(&document, true).is_empty());
-                assert_eq!(execute_initialization(&document).unwrap().len(), 4);
-            } else {
-                assert!(validate_document(&document, true).iter().any(|error| error.contains("preview")));
-                assert_eq!(execute_initialization(&document).unwrap().len(), 0);
-            }
+            assert!(validate_document(&document, true).is_empty());
+            assert_eq!(execute_initialization(&document).unwrap().len(), 4);
+            let mut run = document;
+            if name == "screen-recording" { run["values"]["regionMode"] = json!("Full Display"); }
+            let outputs = compile_recording_outputs(&run, "screen").unwrap();
+            assert_eq!(outputs.len(), 1);
+            assert_eq!(outputs[0].input, name == "operation-recording");
         }
     }
 }
